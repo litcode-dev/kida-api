@@ -164,6 +164,7 @@ async def delete_category(db: AsyncSession, kit_id: uuid.UUID, category_id: uuid
             await s3_service.delete_object(sample.file_s3_key)
         if sample.preview_s3_key:
             await s3_service.delete_object(sample.preview_s3_key)
+        await db.delete(sample)
 
     await db.delete(category)
     await db.commit()

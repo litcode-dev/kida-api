@@ -27,7 +27,7 @@ async def seed():
         if "admin@litmusic.app" not in existing_emails:
             users_to_add.append(User(
                 id=uuid.uuid4(),
-                email="admin@litmusic.app",
+                email="admin@kida.app",
                 password_hash=await hash_password("admin1234"),
                 full_name="LitMusic Admin",
                 role=UserRole.admin,
@@ -35,7 +35,7 @@ async def seed():
         if "producer@litmusic.app" not in existing_emails:
             users_to_add.append(User(
                 id=uuid.uuid4(),
-                email="producer@litmusic.app",
+                email="producer@kida.app",
                 password_hash=await hash_password("producer1234"),
                 full_name="Test Producer",
                 role=UserRole.producer,
@@ -43,7 +43,7 @@ async def seed():
         if "user@litmusic.app" not in existing_emails:
             users_to_add.append(User(
                 id=uuid.uuid4(),
-                email="user@litmusic.app",
+                email="user@kida.app",
                 password_hash=await hash_password("user1234"),
                 full_name="Test User",
                 role=UserRole.user,

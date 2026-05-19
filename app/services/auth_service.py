@@ -6,6 +6,7 @@ import bcrypt
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from app.config import get_settings
 from app.models.user import User, UserRole
 from app.exceptions import UnauthorizedError, ConflictError
@@ -135,11 +136,25 @@ async def find_or_create_oauth_user(
         oauth_provider_id=provider_id,
     )
     db.add(user)
-    await db.commit()
-    await db.refresh(user)
-    from app.tasks.notification_tasks import send_registration_email
-    send_registration_email.delay(str(user.id))
-    return user
+    try:
+        await db.commit()
+        await db.refresh(user)
+        from app.tasks.notification_tasks import send_registration_email
+        send_registration_email.delay(str(user.id))
+        return user
+    except IntegrityError:
+        await db.rollback()
+        user = await db.scalar(select(User).where(User.email == email))
+        if not user:
+            raise
+        if not user.oauth_provider:
+            user.oauth_provider = provider
+            user.oauth_provider_id = provider_id
+            if avatar_url:
+                user.avatar_url = avatar_url
+            await db.commit()
+            await db.refresh(user)
+        return user
 
 
 async def get_user_by_id(db: AsyncSession, user_id: str) -> User:
