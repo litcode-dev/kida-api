@@ -1,5 +1,3 @@
-
-
 services:
   api:
     build: .
@@ -13,7 +11,13 @@ services:
         condition: service_healthy
     volumes:
       - .:/app
-    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
   db:
     image: postgres:16-alpine
@@ -45,15 +49,24 @@ services:
     build: .
     env_file: .env
     depends_on:
-      - db
-      - redis
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    entrypoint: []
     command: celery -A app.tasks.celery_app.celery_app worker --loglevel=info
 
   beat:
     build: .
     env_file: .env
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    entrypoint: []
     command: celery -A app.tasks.celery_app.celery_app beat --loglevel=info
 
 volumes:
