@@ -134,9 +134,14 @@ async def update_loop(db: AsyncSession, loop_id: uuid.UUID, data: LoopUpdate) ->
 
 async def delete_loop(db: AsyncSession, loop_id: uuid.UUID) -> None:
     loop = await get_loop(db, loop_id)
-    if loop.file_s3_key:
-        await s3_service.delete_object(loop.file_s3_key)
-    if loop.preview_s3_key:
-        await s3_service.delete_object(loop.preview_s3_key)
+    keys_to_delete = [
+        s3_service.s3_key_for_raw_loop(str(loop_id)),
+        loop.file_s3_key,
+        loop.preview_s3_key,
+        loop.thumbnail_s3_key,
+    ]
+    for key in keys_to_delete:
+        if key:
+            await s3_service.delete_object(key)
     await db.delete(loop)
     await db.commit()
