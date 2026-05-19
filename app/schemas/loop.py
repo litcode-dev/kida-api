@@ -57,6 +57,7 @@ class LoopResponse(BaseModel):
     price: Decimal
     is_free: bool
     is_paid: bool
+    store_product_id: str | None = None
     preview_s3_key: str | None = Field(default=None, exclude=True)
     thumbnail_s3_key: str | None = Field(default=None, exclude=True)
     preview_url: str | None = None

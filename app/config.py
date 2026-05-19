@@ -75,6 +75,13 @@ class Settings(BaseSettings):
     ai_extra_credits_price: int = 50000        # ₦500 in kobo
     ai_extra_credits_quantity: int = 5         # slots per extra purchase
 
+    # IAP — Apple
+    apple_shared_secret: str = ""  # App-specific shared secret from App Store Connect
+
+    # IAP — Google
+    android_package_name: str = "com.litcode.kida"
+    google_service_account_json: str = "{}"  # Full service account JSON as a string
+
 
 @lru_cache
 def get_settings() -> Settings:

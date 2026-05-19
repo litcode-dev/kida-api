@@ -44,6 +44,7 @@ class DrumKitResponse(BaseModel):
     thumbnail_url: str | None = None
     tags: list[str]
     is_free: bool
+    store_product_id: str | None = None
     categories: list[DrumKitCategoryResponse] = []
     created_at: datetime
 

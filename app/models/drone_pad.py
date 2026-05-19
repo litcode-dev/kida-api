@@ -51,6 +51,7 @@ class DronePad(Base):
     duration: Mapped[int] = mapped_column(Integer, nullable=False)
     price: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
     is_free: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    store_product_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     file_s3_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
     preview_s3_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
     thumbnail_s3_key: Mapped[str | None] = mapped_column(String(500), nullable=True)

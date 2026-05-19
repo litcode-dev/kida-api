@@ -42,6 +42,7 @@ class DronePadResponse(BaseModel):
     duration: int
     price: Decimal
     is_free: bool
+    store_product_id: str | None = None
     category_id: uuid.UUID | None = None
     category: DronePadCategoryResponse | None = None
     preview_s3_key: str | None = Field(default=None, exclude=True)
