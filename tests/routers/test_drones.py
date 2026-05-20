@@ -2,7 +2,7 @@ import pytest
 import uuid
 from decimal import Decimal
 from unittest.mock import patch, AsyncMock
-from app.models.drone_pad import DronePad, MusicalKey
+from app.models.drone_pad import Drone, DronePad, MusicalKey
 from app.models.user import User, UserRole
 from app.services.auth_service import hash_password, create_access_token
 
@@ -17,15 +17,29 @@ async def _create_user(db, role=UserRole.user):
     return user
 
 
-async def _create_drone(db, user_id, title="Dark Piano Pad", key=MusicalKey.C, is_free=True, status="ready"):
-    drone = DronePad(
-        id=uuid.uuid4(), title=title, key=key,
-        duration=30, price=Decimal("0.00"), is_free=is_free,
-        created_by=user_id, status=status,
+async def _create_drone(
+    db,
+    user_id,
+    title="Dark Piano Pad",
+    key=MusicalKey.C,
+    is_free=True,
+    status="ready",
+):
+    drone = Drone(
+        id=uuid.uuid4(), title=title,
+        price=Decimal("0.00"), is_free=is_free,
+        created_by=user_id,
     )
     db.add(drone)
+    await db.flush()
+    pad = DronePad(
+        id=uuid.uuid4(), drone_id=drone.id, key=key,
+        duration=30, status=status,
+    )
+    db.add(pad)
     await db.commit()
-    return drone
+    pad.drone = drone
+    return pad
 
 
 @pytest.mark.asyncio
@@ -61,7 +75,10 @@ async def test_list_drones_by_title_excludes_processing(client, db_session):
 @pytest.mark.asyncio
 async def test_download_by_title_returns_signed_urls(client, db_session):
     user = await _create_user(db_session)
-    drone = await _create_drone(db_session, user.id, title="Dark Piano Pad", key=MusicalKey.C, is_free=True, status="ready")
+    drone = await _create_drone(
+        db_session, user.id, title="Dark Piano Pad", key=MusicalKey.C,
+        is_free=True, status="ready"
+    )
     drone.file_s3_key = "drones/fake-key.wav"
     await db_session.commit()
 
@@ -123,7 +140,10 @@ async def test_download_by_title_excludes_unpurchased_paid_drone(client, db_sess
 async def test_download_by_title_increments_download_count(client, db_session):
     from sqlalchemy import select as sa_select
     user = await _create_user(db_session)
-    drone = await _create_drone(db_session, user.id, title="Count Test Pad", key=MusicalKey.C, is_free=True, status="ready")
+    drone = await _create_drone(
+        db_session, user.id, title="Count Test Pad", key=MusicalKey.C,
+        is_free=True, status="ready"
+    )
     drone.file_s3_key = "drones/count-key.wav"
     await db_session.commit()
 
@@ -139,4 +159,5 @@ async def test_download_by_title_increments_download_count(client, db_session):
     assert resp.status_code == 200
 
     await db_session.refresh(drone)
-    assert drone.download_count == 1
+    await db_session.refresh(drone.drone)
+    assert drone.drone.download_count == 1

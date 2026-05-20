@@ -7,7 +7,7 @@ import uuid
 from app.database import get_db
 from app.middleware.auth_middleware import get_current_user
 from app.services import drone_service, s3_service, cache_service
-from app.schemas.drone_pad import DronePadFilter, DronePadResponse, DronePadCategoryResponse
+from app.schemas.drone_pad import DronePadFilter, DroneResponse, DronePadCategoryResponse
 from app.schemas.common import success
 from app.models.drone_pad import MusicalKey
 
@@ -56,7 +56,7 @@ async def list_drones_by_title(db: AsyncSession = Depends(get_db)):
     items = [
         {
             "title": g["title"],
-            "drones": [DronePadResponse.model_validate(d).model_dump(mode="json") for d in g["drones"]],
+            "drones": [DroneResponse.model_validate(d).model_dump(mode="json") for d in g["drones"]],
         }
         for g in groups
     ]
@@ -91,7 +91,7 @@ async def list_drones(
     )
     drones, total = await drone_service.list_drones(db, filters)
     return success({
-        "items": [DronePadResponse.model_validate(d).model_dump() for d in drones],
+        "items": [DroneResponse.model_validate(d).model_dump(mode="json") for d in drones],
         "total": total,
         "page": page,
         "page_size": page_size,
@@ -101,13 +101,17 @@ async def list_drones(
 @router.get("/{drone_id}")
 async def get_drone(drone_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     drone = await drone_service.get_drone(db, drone_id)
-    return success(DronePadResponse.model_validate(drone).model_dump())
+    return success(DroneResponse.model_validate(drone).model_dump(mode="json"))
 
 
 @router.get("/{drone_id}/preview")
 async def stream_preview(drone_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     drone = await drone_service.get_drone(db, drone_id)
-    url = await s3_service.generate_presigned_url(drone.preview_s3_key, expiry_seconds=300)
+    pad = next((p for p in drone.pads if p.preview_s3_key), None)
+    if pad is None:
+        from app.exceptions import NotFoundError
+        raise NotFoundError(f"Drone {drone_id} has no preview")
+    url = await s3_service.generate_presigned_url(pad.preview_s3_key, expiry_seconds=300)
 
     async def _stream():
         async with httpx.AsyncClient() as client:
@@ -124,16 +128,5 @@ async def download_drone(
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
 ):
-    drone = await drone_service.get_drone(db, drone_id)
-    await drone_service.check_download_entitlement(db, user, drone)
-
-    download_url = await s3_service.get_download_url(drone.file_s3_key, expiry_seconds=900)
-    drone.download_count += 1
-    await db.commit()
-
-    return success({
-        "signed_url": download_url,
-        "aes_key": drone.aes_key,
-        "aes_iv": drone.aes_iv,
-        "expires_in_seconds": 900,
-    })
+    items = await drone_service.get_drone_downloads(db, user, drone_id)
+    return success({"items": items, "total": len(items)})

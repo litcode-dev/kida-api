@@ -7,7 +7,13 @@ from app.middleware.auth_middleware import require_admin, require_producer
 from app.services import loop_service, stem_pack_service, drone_service, drum_kit_service, cache_service
 from app.schemas.loop import LoopCreate, LoopUpdate, LoopResponse
 from app.schemas.stem_pack import StemPackCreate, StemCreate, StemPackResponse, StemResponse
-from app.schemas.drone_pad import DronePadCreate, DronePadUpdate, DronePadResponse, DronePadCategoryCreate, DronePadCategoryResponse
+from app.schemas.drone_pad import (
+    DronePadCategoryCreate,
+    DronePadCategoryResponse,
+    DronePadCreate,
+    DronePadUpdate,
+    DroneResponse,
+)
 from app.schemas.drum_kit import DrumKitCreate, DrumKitResponse
 from app.schemas.user import UserResponse
 from app.schemas.common import success
@@ -274,6 +280,7 @@ async def upload_drone(
     file: UploadFile = File(...),
     thumbnail: UploadFile | None = File(None),
     title: str = Form(...),
+    description: str | None = Form(None),
     key: MusicalKey = Form(...),
     price: Decimal | None = Form(None),
     is_free: bool = Form(False),
@@ -284,11 +291,19 @@ async def upload_drone(
     from app.exceptions import AppError
     if not is_free and price is None:
         raise AppError("price is required for paid drone pads", status_code=422)
-    data = DronePadCreate(title=title, key=key, price=price, is_free=is_free, category_id=category_id)
+    data = DronePadCreate(
+        title=title,
+        description=description,
+        key=key,
+        price=price,
+        is_free=is_free,
+        category_id=category_id,
+    )
     drone = await drone_service.create_drone(db, file, data, producer.id, thumbnail=thumbnail)
     from app.tasks.upload_tasks import process_drone_upload
-    process_drone_upload.delay(str(drone.id))
-    return success(DronePadResponse.model_validate(drone).model_dump(), "Drone pad upload queued")
+    for pad in drone.pads:
+        process_drone_upload.delay(str(pad.id))
+    return success(DroneResponse.model_validate(drone).model_dump(), "Drone pad upload queued")
 
 
 @router.post("/drones/bulk")
@@ -296,6 +311,7 @@ async def bulk_upload_drones(
     files: list[UploadFile] = File(...),
     keys: str = Form(...),  # comma-separated MusicalKey values matching files order
     title: str = Form(...),
+    description: str | None = Form(None),
     price: Decimal | None = Form(None),
     is_free: bool = Form(False),
     category_id: uuid.UUID | None = Form(None),
@@ -320,17 +336,18 @@ async def bulk_upload_drones(
             status_code=422,
         )
 
-    drones = await drone_service.bulk_create_drones(
-        db, files, validated_keys, title, price, is_free, category_id, producer.id, thumbnail=thumbnail
+    drone, pads = await drone_service.bulk_create_drones(
+        db, files, validated_keys, title, price, is_free, category_id, producer.id,
+        thumbnail=thumbnail, description=description
     )
 
     from app.tasks.upload_tasks import process_drone_upload
-    for drone in drones:
-        process_drone_upload.delay(str(drone.id))
+    for pad in pads:
+        process_drone_upload.delay(str(pad.id))
 
     return success(
-        [DronePadResponse.model_validate(d).model_dump() for d in drones],
-        f"{len(drones)} drone pad(s) upload queued",
+        DroneResponse.model_validate(drone).model_dump(),
+        f"{len(pads)} drone pad(s) upload queued",
     )
 
 
@@ -348,7 +365,10 @@ async def bulk_drone_upload_status(
         raise AppError("Invalid UUID in ids", status_code=422)
 
     drones = await drone_service.get_drones_by_ids(db, validated_ids)
-    return success([{"id": str(d.id), "key": d.key, "status": d.status} for d in drones])
+    return success([
+        {"id": str(d.id), "drone_id": str(d.drone_id), "key": d.key, "status": d.status}
+        for d in drones
+    ])
 
 
 @router.get("/drones/{drone_id}/status")
@@ -358,7 +378,11 @@ async def drone_upload_status(
     producer=Depends(require_producer),
 ):
     drone = await drone_service.get_drone(db, drone_id)
-    return success({"id": str(drone.id), "status": drone.status})
+    return success({
+        "id": str(drone.id),
+        "status": "ready" if all(p.status == "ready" for p in drone.pads) else "processing",
+        "pads": [{"id": str(p.id), "key": p.key, "status": p.status} for p in drone.pads],
+    })
 
 
 @router.put("/drones/{drone_id}")
@@ -369,7 +393,7 @@ async def update_drone(
     admin=Depends(require_admin),
 ):
     drone = await drone_service.update_drone(db, drone_id, body)
-    return success(DronePadResponse.model_validate(drone).model_dump(), "Drone pad updated")
+    return success(DroneResponse.model_validate(drone).model_dump(), "Drone pad updated")
 
 
 @router.delete("/drones/{drone_id}")

@@ -191,8 +191,8 @@ def process_drone_upload(self, drone_id: str):
 
         try:
             async with SessionLocal() as db:
-                drone = await db.get(DronePad, uuid.UUID(drone_id))
-                if not drone:
+                pad = await db.get(DronePad, uuid.UUID(drone_id))
+                if not pad:
                     return
 
                 try:
@@ -213,12 +213,16 @@ def process_drone_upload(self, drone_id: str):
                     audio, sr = sf.read(io.BytesIO(wav_bytes))
                     duration = int(len(audio) / sr)
 
-                    drone.file_s3_key = enc_key
-                    drone.preview_s3_key = prev_key
-                    drone.aes_key = aes_key
-                    drone.aes_iv = aes_iv
-                    drone.duration = duration
-                    drone.status = "ready"
+                    pad.file_s3_key = enc_key
+                    pad.preview_s3_key = prev_key
+                    if settings.s3_cloudfront_url:
+                        pad.preview_url = f"{settings.s3_cloudfront_url.rstrip('/')}/{prev_key}"
+                    else:
+                        pad.preview_url = prev_key
+                    pad.aes_key = aes_key
+                    pad.aes_iv = aes_iv
+                    pad.duration = duration
+                    pad.status = "ready"
                     await db.commit()
 
                     s3.delete_object(Bucket=settings.s3_bucket_name, Key=raw_key)
@@ -227,7 +231,7 @@ def process_drone_upload(self, drone_id: str):
                     try:
                         raise self.retry(exc=exc)
                     except MaxRetriesExceededError:
-                        drone.status = "failed"
+                        pad.status = "failed"
                         await db.commit()
                         raise
         finally:
