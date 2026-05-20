@@ -1,4 +1,4 @@
-from fastapi import APIRouter, BackgroundTasks, Depends, UploadFile, File, Form
+from fastapi import APIRouter, Depends, UploadFile, File, Form
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from decimal import Decimal
@@ -290,18 +290,22 @@ async def upload_drone(
 
 @router.post("/drones/bulk")
 async def bulk_upload_drones(
-    background_tasks: BackgroundTasks,
     files: list[UploadFile] = File(...),
     keys: str = Form(...),  # comma-separated MusicalKey values matching files order
     title: str = Form(...),
-    price: Decimal = Form(...),
+    price: Decimal | None = Form(None),
     is_free: bool = Form(False),
     category_id: uuid.UUID | None = Form(None),
     thumbnail: UploadFile | None = File(None),
     db: AsyncSession = Depends(get_db),
     producer=Depends(require_producer),
 ):
+    import asyncio as _asyncio
     from app.exceptions import AppError
+    from app.services import s3_service as _s3
+
+    if not is_free and price is None:
+        raise AppError("price is required for paid drone pads", status_code=422)
 
     parsed_keys = [k.strip() for k in keys.split(",") if k.strip()]
     try:
@@ -319,35 +323,17 @@ async def bulk_upload_drones(
         db, files, validated_keys, title, price, is_free, category_id, producer.id, thumbnail=thumbnail
     )
 
-    from app.services import s3_service as _s3
-    import structlog as _structlog
-
-    async def _upload_and_queue(drone_id: str, wav_bytes: bytes) -> None:
-        try:
-            raw_key = _s3.s3_key_for_raw_drone(drone_id)
-            await _s3.upload_bytes(raw_key, wav_bytes, "audio/wav")
-            from app.tasks.upload_tasks import process_drone_upload
-            process_drone_upload.delay(drone_id)
-        except Exception as exc:
-            _structlog.get_logger().error(
-                "bulk_drone_upload_failed", drone_id=drone_id, error=str(exc)
-            )
-            try:
-                from app.database import AsyncSessionLocal
-                from app.models.drone_pad import DronePad as _DronePad
-                async with AsyncSessionLocal() as _db:
-                    _drone = await _db.get(_DronePad, uuid.UUID(drone_id))
-                    if _drone:
-                        _drone.status = "failed"
-                        await _db.commit()
-            except Exception as db_exc:
-                _structlog.get_logger().error(
-                    "bulk_drone_status_update_failed", drone_id=drone_id, error=str(db_exc)
-                )
-
     uploads_map = {drone_id: wav_bytes for drone_id, wav_bytes in uploads}
+
+    async def _upload_raw(drone_id: str) -> None:
+        raw_key = _s3.s3_key_for_raw_drone(drone_id)
+        await _s3.upload_bytes(raw_key, uploads_map[drone_id], "audio/wav")
+
+    await _asyncio.gather(*[_upload_raw(str(d.id)) for d in drones])
+
+    from app.tasks.upload_tasks import process_drone_upload
     for drone in drones:
-        background_tasks.add_task(_upload_and_queue, str(drone.id), uploads_map[str(drone.id)])
+        process_drone_upload.delay(str(drone.id))
 
     return success(
         [DronePadResponse.model_validate(d).model_dump() for d in drones],
