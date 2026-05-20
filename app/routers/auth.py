@@ -9,7 +9,7 @@ from app.services import auth_service
 from app.services import oauth_service
 from app.schemas.user import (
     UserRegister, UserLogin, UserResponse, TokenResponse,
-    RefreshRequest, OAuthCallbackRequest, GoogleTokenRequest,
+    RefreshRequest, OAuthCallbackRequest, GoogleTokenRequest, DeleteAccountRequest,
 )
 from app.schemas.common import success
 
@@ -77,6 +77,26 @@ async def logout(
 @router.get("/me")
 async def me(user=Depends(get_current_user)):
     return success(UserResponse.model_validate(user).model_dump())
+
+
+@router.delete(
+    "/me",
+    summary="Delete account",
+    description=(
+        "Permanently deletes the authenticated user's account and all associated data. "
+        "Pass `refresh_token` in the body to also revoke the current session. "
+        "This action is irreversible."
+    ),
+    responses={401: {"description": "Missing or invalid token"}},
+)
+async def delete_account(
+    body: DeleteAccountRequest,
+    db: AsyncSession = Depends(get_db),
+    redis: Redis = Depends(get_redis),
+    user=Depends(get_current_user),
+):
+    await auth_service.delete_user(db, user, redis, body.refresh_token)
+    return success(message="Account deleted")
 
 
 @router.get("/oauth/google")

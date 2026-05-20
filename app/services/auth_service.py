@@ -157,6 +157,13 @@ async def find_or_create_oauth_user(
         return user
 
 
+async def delete_user(db: AsyncSession, user: User, redis: Redis, refresh_token: str | None) -> None:
+    if refresh_token:
+        await revoke_refresh_token(redis, refresh_token)
+    await db.delete(user)
+    await db.commit()
+
+
 async def get_user_by_id(db: AsyncSession, user_id: str) -> User:
     import uuid as _uuid
     user = await db.get(User, _uuid.UUID(user_id))
