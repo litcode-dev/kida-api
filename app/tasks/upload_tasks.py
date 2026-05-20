@@ -143,9 +143,14 @@ def process_drum_sample_upload(self, sample_id: str):
                     sample.aes_iv = aes_iv
                     sample.duration = duration
                     sample.status = "ready"
+                    kit_id = sample.drum_kit_id
                     await db.commit()
 
                     s3.delete_object(Bucket=settings.s3_bucket_name, Key=raw_key)
+
+                    from app.services import cache_service as _cache
+                    await _cache.delete(f"drum_kit:detail:{kit_id}")
+                    await _cache.delete_pattern("drum_kit:list:*")
 
                 except Exception as exc:
                     try:

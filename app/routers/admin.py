@@ -482,9 +482,11 @@ async def list_drum_kits_admin(
         page=page,
         page_size=page_size,
     )
+    import asyncio as _asyncio
+    from app.routers.drum_kits import _kit_to_dict
     kits, total = await drum_kit_service.list_drum_kits(db, filters)
     return success({
-        "items": [DrumKitResponse.model_validate(k).model_dump() for k in kits],
+        "items": list(await _asyncio.gather(*[_kit_to_dict(k) for k in kits])),
         "total": total,
         "page": page,
         "page_size": page_size,
