@@ -169,23 +169,6 @@ async def list_drones(db: AsyncSession, filters: DronePadFilter) -> tuple[list[D
     return list(result.all()), total or 0
 
 
-async def list_drones_grouped_by_title(db: AsyncSession) -> list[dict]:
-    drones = list(await db.scalars(
-        select(Drone)
-        .options(
-            selectinload(Drone.category),
-            selectinload(Drone.pads).selectinload(DronePad.drone),
-        )
-        .where(Drone.id.in_(select(DronePad.drone_id).where(DronePad.status == "ready")))
-        .order_by(Drone.title)
-        .limit(500)
-    ))
-    groups: dict[str, list[Drone]] = {}
-    for drone in drones:
-        groups.setdefault(drone.title, []).append(drone)
-    return [{"title": title, "drones": drone_list} for title, drone_list in groups.items()]
-
-
 async def get_drones_by_ids(db: AsyncSession, drone_ids: list[uuid.UUID]) -> list[DronePad]:
     result = await db.scalars(
         select(DronePad)
@@ -307,33 +290,6 @@ async def _download_items_for_pads(
         })
     await db.commit()
     return results
-
-
-async def get_category_downloads(
-    db: AsyncSession, user: User, category_id: uuid.UUID
-) -> list[dict]:
-    await get_category(db, category_id)
-    pads = list(await db.scalars(
-        select(DronePad)
-        .join(Drone)
-        .options(selectinload(DronePad.drone))
-        .where(Drone.category_id == category_id, DronePad.status == "ready")
-        .order_by(Drone.title, DronePad.key)
-    ))
-    return await _download_items_for_pads(db, user, pads)
-
-
-async def get_title_downloads(db: AsyncSession, user: User, title: str) -> list[dict]:
-    pads = list(await db.scalars(
-        select(DronePad)
-        .join(Drone)
-        .options(selectinload(DronePad.drone))
-        .where(func.lower(Drone.title) == title.lower(), DronePad.status == "ready")
-        .order_by(DronePad.key)
-    ))
-    if not pads:
-        raise NotFoundError(f"No drone pads found with title '{title}'")
-    return await _download_items_for_pads(db, user, pads)
 
 
 async def get_drone_downloads(db: AsyncSession, user: User, drone_id: uuid.UUID) -> list[dict]:
