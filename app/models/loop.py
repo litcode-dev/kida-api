@@ -39,7 +39,7 @@ class Loop(Base):
     slug: Mapped[str] = mapped_column(String(300), unique=True, index=True, nullable=False)
     genre: Mapped[Genre] = mapped_column(SAEnum(Genre), nullable=False, index=True)
     bpm: Mapped[int] = mapped_column(Integer, nullable=False)
-    key: Mapped[str] = mapped_column(String(50), nullable=False)
+    key: Mapped[str | None] = mapped_column(String(50), nullable=True)
     duration: Mapped[int] = mapped_column(Integer, nullable=False)
     tempo_feel: Mapped[TempoFeel] = mapped_column(SAEnum(TempoFeel), nullable=False)
     tags: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)

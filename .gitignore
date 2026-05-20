@@ -2,6 +2,10 @@
 .env
 *.env
 
+# GCP / service account credentials
+*-credentials.json
+kida-81292-88057d59a476.json
+
 # Python
 __pycache__/
 *.py[cod]

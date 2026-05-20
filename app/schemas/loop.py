@@ -10,7 +10,7 @@ class LoopCreate(BaseModel):
     description: str | None = None
     genre: Genre
     bpm: int
-    key: str
+    key: str | None = None
     tempo_feel: TempoFeel
     tags: list[str] = []
     price: Decimal
