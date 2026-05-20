@@ -1,7 +1,7 @@
 """flatten drum samples to kit — remove category layer
 
 Revision ID: p5q47l26m3n8
-Revises: o4p36k15l2m8
+Revises: r7s69n48o5p0
 Create Date: 2026-05-20
 """
 from alembic import op
@@ -9,7 +9,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import UUID
 
 revision = "p5q47l26m3n8"
-down_revision = "o4p36k15l2m8"
+down_revision = "r7s69n48o5p0"
 branch_labels = None
 depends_on = None
 

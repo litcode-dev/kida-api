@@ -1,14 +1,14 @@
 """make loop key nullable
 
-Revision ID: o4p36k15l2m8
-Revises: n3o25j04k1l7
+Revision ID: r7s69n48o5p0
+Revises: o4p36k15l2m8
 Create Date: 2026-05-20 00:00:00.000000
 """
 from alembic import op
 import sqlalchemy as sa
 
-revision = "o4p36k15l2m8"
-down_revision = "n3o25j04k1l7"
+revision = "r7s69n48o5p0"
+down_revision = "o4p36k15l2m8"
 branch_labels = None
 depends_on = None
 
