@@ -405,7 +405,22 @@ async def delete_drone(
 
 # --- Drum kit endpoints ---
 
-@router.post("/drum-kits")
+@router.post(
+    "/drum-kits",
+    summary="Create drum kit",
+    description=(
+        "Creates a drum kit and uploads all samples in one request. "
+        "For paid kits (`is_free=false`), `price` is required — `store_product_id` is auto-generated. "
+        "Samples are queued for background processing after upload; their `status` starts as `processing`."
+    ),
+    response_description="Created drum kit with samples",
+    responses={
+        401: {"description": "Missing or invalid token"},
+        403: {"description": "Producer or admin role required"},
+        422: {"description": "Validation error — missing price for paid kit, or sample/label count mismatch"},
+    },
+    status_code=201,
+)
 async def create_drum_kit(
     thumbnail: UploadFile | None = File(None),
     title: str = Form(...),
@@ -440,7 +455,16 @@ async def create_drum_kit(
     return success(DrumKitResponse.model_validate(kit).model_dump(), "Drum kit created, samples queued for processing")
 
 
-@router.get("/drum-kits")
+@router.get(
+    "/drum-kits",
+    summary="List drum kits (admin)",
+    description="Paginated list of all drum kits with samples. Supports the same filters as the public endpoint.",
+    response_description="Paginated drum kit list",
+    responses={
+        401: {"description": "Missing or invalid token"},
+        403: {"description": "Producer or admin role required"},
+    },
+)
 async def list_drum_kits_admin(
     search: str | None = None,
     is_free: bool | None = None,
@@ -468,7 +492,17 @@ async def list_drum_kits_admin(
 
 
 
-@router.delete("/drum-kits/{kit_id}")
+@router.delete(
+    "/drum-kits/{kit_id}",
+    summary="Delete drum kit",
+    description="Permanently deletes the drum kit and all associated S3 assets (samples, thumbnail). Irreversible.",
+    response_description="Deletion confirmation",
+    responses={
+        401: {"description": "Missing or invalid token"},
+        403: {"description": "Admin role required"},
+        404: {"description": "Drum kit not found"},
+    },
+)
 async def delete_drum_kit(
     kit_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),

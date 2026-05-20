@@ -23,15 +23,38 @@ structlog.configure(
 
 settings = get_settings()
 
+_tags_metadata = [
+    {"name": "auth", "description": "Registration, login, token refresh, and OAuth (Google)."},
+    {"name": "loops", "description": "Browse and download individual audio loops."},
+    {"name": "stem-packs", "description": "Browse and download multi-stem packs."},
+    {"name": "drum-kits", "description": "Browse and download drum kits with individual sample files."},
+    {"name": "drones", "description": "Browse and download drone pad audio files."},
+    {"name": "payments", "description": "Initiate and verify purchases via Flutterwave or Paystack."},
+    {"name": "purchases", "description": "View the authenticated user's purchase history."},
+    {"name": "downloads", "description": "Retrieve signed download URLs for purchased content."},
+    {"name": "likes", "description": "Like and unlike loops."},
+    {"name": "subscriptions", "description": "Manage user subscriptions."},
+    {"name": "ai", "description": "AI-assisted loop generation (requires AI-enabled account)."},
+    {"name": "admin", "description": "Content management and user administration. Requires producer or admin role."},
+    {"name": "health", "description": "Service health check."},
+]
+
 app = FastAPI(
     title="LitMusic API",
     version="1.0.0",
+    description=(
+        "Backend API for the LitMusic marketplace. "
+        "All responses use the envelope format: `{status, data, message}`. "
+        "Authenticated endpoints require a Bearer token obtained from `/api/v1/auth/login`."
+    ),
     docs_url="/docs",
     redoc_url="/redoc",
+    openapi_tags=_tags_metadata,
     swagger_ui_parameters={
         "persistAuthorization": True,
         "tryItOutEnabled": True,
         "displayRequestDuration": True,
+        "defaultModelsExpandDepth": -1,
     },
 )
 

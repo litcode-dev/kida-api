@@ -1,6 +1,6 @@
 import asyncio
 from datetime import datetime, timedelta, timezone
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
@@ -21,6 +21,11 @@ from app.exceptions import NotFoundError, EntitlementError, AppError
 
 router = APIRouter(prefix="/drum-kits", tags=["drum-kits"])
 
+_401 = {"description": "Missing or invalid token"}
+_403 = {"description": "Valid token but no purchase for this paid kit"}
+_404 = {"description": "Drum kit not found"}
+_409 = {"description": "No ready samples available yet — still processing"}
+
 
 def _list_cache_key(search, is_free, tags, page, page_size) -> str:
     return f"drum_kit:list:{search}:{is_free}:{tags}:{page}:{page_size}"
@@ -33,13 +38,18 @@ async def _kit_to_dict(kit) -> dict:
     return data
 
 
-@router.get("")
+@router.get(
+    "",
+    summary="List drum kits",
+    description="Returns a paginated list of drum kits. No authentication required.",
+    response_description="Paginated drum kit list",
+)
 async def list_drum_kits(
-    search: str | None = None,
-    is_free: bool | None = None,
-    tags: str | None = None,
-    page: int = 1,
-    page_size: int = 20,
+    search: str | None = Query(None, description="Case-insensitive title search"),
+    is_free: bool | None = Query(None, description="Filter by free (`true`) or paid (`false`)"),
+    tags: str | None = Query(None, description="Comma-separated tags, e.g. `trap,808`"),
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(20, ge=1, le=100, description="Results per page (max 100)"),
     db: AsyncSession = Depends(get_db),
 ):
     cache_key = _list_cache_key(search, is_free, tags, page, page_size)
@@ -65,7 +75,13 @@ async def list_drum_kits(
     return success(data)
 
 
-@router.get("/{kit_id}")
+@router.get(
+    "/{kit_id}",
+    summary="Get drum kit detail",
+    description="Returns a single drum kit with all its samples. No authentication required.",
+    response_description="Drum kit detail with samples",
+    responses={404: _404},
+)
 async def get_drum_kit(kit_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     cache_key = f"drum_kit:detail:{kit_id}"
     cached = await cache_service.get(cache_key)
@@ -86,7 +102,17 @@ async def get_drum_kit(kit_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     return success(data)
 
 
-@router.get("/{kit_id}/download")
+@router.get(
+    "/{kit_id}/download",
+    summary="Download drum kit",
+    description=(
+        "Returns signed S3 URLs and AES decryption keys for all ready samples. "
+        "**Auth required.** For paid kits, the user must have a purchase record. "
+        "Signed URLs expire in **15 minutes**."
+    ),
+    response_description="Signed download URLs and AES keys for each sample",
+    responses={401: _401, 403: _403, 404: _404, 409: _409},
+)
 async def download_drum_kit(
     kit_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
