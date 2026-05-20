@@ -275,12 +275,15 @@ async def upload_drone(
     thumbnail: UploadFile | None = File(None),
     title: str = Form(...),
     key: MusicalKey = Form(...),
-    price: Decimal = Form(...),
+    price: Decimal | None = Form(None),
     is_free: bool = Form(False),
     category_id: uuid.UUID | None = Form(None),
     db: AsyncSession = Depends(get_db),
     producer=Depends(require_producer),
 ):
+    from app.exceptions import AppError
+    if not is_free and price is None:
+        raise AppError("price is required for paid drone pads", status_code=422)
     data = DronePadCreate(title=title, key=key, price=price, is_free=is_free, category_id=category_id)
     drone = await drone_service.create_drone(db, file, data, producer.id, thumbnail=thumbnail)
     from app.tasks.upload_tasks import process_drone_upload

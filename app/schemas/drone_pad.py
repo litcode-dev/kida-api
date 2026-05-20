@@ -22,7 +22,7 @@ class DronePadCategoryResponse(BaseModel):
 class DronePadCreate(BaseModel):
     title: str
     key: MusicalKey
-    price: Decimal
+    price: Decimal | None = None
     is_free: bool = False
     category_id: uuid.UUID | None = None
 
@@ -40,7 +40,7 @@ class DronePadResponse(BaseModel):
     title: str
     key: MusicalKey
     duration: int
-    price: Decimal
+    price: Decimal | None = None
     is_free: bool
     store_product_id: str | None = None
     category_id: uuid.UUID | None = None
