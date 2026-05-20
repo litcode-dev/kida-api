@@ -27,6 +27,7 @@ class DrumSampleResponse(BaseModel):
     label: str
     duration: int
     status: str
+    preview_url: str | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

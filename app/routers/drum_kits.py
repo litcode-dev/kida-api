@@ -31,10 +31,19 @@ def _list_cache_key(search, is_free, tags, page, page_size) -> str:
     return f"drum_kit:list:{search}:{is_free}:{tags}:{page}:{page_size}"
 
 
+async def _sample_preview_url(sample) -> str | None:
+    if sample.preview_s3_key:
+        return await s3_service.get_download_url(sample.preview_s3_key)
+    return None
+
+
 async def _kit_to_dict(kit) -> dict:
     data = DrumKitResponse.model_validate(kit).model_dump(mode="json")
     if kit.thumbnail_s3_key:
         data["thumbnail_url"] = await s3_service.get_download_url(kit.thumbnail_s3_key)
+    preview_urls = await asyncio.gather(*[_sample_preview_url(s) for s in kit.samples])
+    for sample_data, preview_url in zip(data["samples"], preview_urls):
+        sample_data["preview_url"] = preview_url
     return data
 
 
