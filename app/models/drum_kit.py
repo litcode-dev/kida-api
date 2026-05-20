@@ -21,24 +21,8 @@ class DrumKit(Base):
     created_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    categories: Mapped[list["DrumKitCategory"]] = relationship(
-        "DrumKitCategory", back_populates="drum_kit", lazy="noload"
-    )
-
-
-class DrumKitCategory(Base):
-    __tablename__ = "drum_kit_categories"
-
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    drum_kit_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("drum_kits.id", ondelete="CASCADE"), nullable=False
-    )
-    name: Mapped[str] = mapped_column(String(100), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-
-    drum_kit: Mapped["DrumKit"] = relationship("DrumKit", back_populates="categories")
     samples: Mapped[list["DrumSample"]] = relationship(
-        "DrumSample", back_populates="category", lazy="noload"
+        "DrumSample", back_populates="drum_kit", lazy="noload"
     )
 
 
@@ -46,8 +30,8 @@ class DrumSample(Base):
     __tablename__ = "drum_samples"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    category_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("drum_kit_categories.id", ondelete="CASCADE"), nullable=False
+    drum_kit_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("drum_kits.id", ondelete="CASCADE"), nullable=False
     )
     label: Mapped[str] = mapped_column(String(100), nullable=False)
     file_s3_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
@@ -58,4 +42,4 @@ class DrumSample(Base):
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="processing")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    category: Mapped["DrumKitCategory"] = relationship("DrumKitCategory", back_populates="samples")
+    drum_kit: Mapped["DrumKit"] = relationship("DrumKit", back_populates="samples")

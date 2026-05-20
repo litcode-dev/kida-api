@@ -1,7 +1,6 @@
 from fastapi import APIRouter, BackgroundTasks, Depends, UploadFile, File, Form
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
-from sqlalchemy.orm import selectinload
 from decimal import Decimal
 from app.database import get_db
 from app.middleware.auth_middleware import require_admin, require_producer
@@ -9,12 +8,12 @@ from app.services import loop_service, stem_pack_service, drone_service, drum_ki
 from app.schemas.loop import LoopCreate, LoopUpdate, LoopResponse
 from app.schemas.stem_pack import StemPackCreate, StemCreate, StemPackResponse, StemResponse
 from app.schemas.drone_pad import DronePadCreate, DronePadUpdate, DronePadResponse, DronePadCategoryCreate, DronePadCategoryResponse
-from app.schemas.drum_kit import DrumKitCreate, DrumKitResponse, DrumKitCategoryResponse
+from app.schemas.drum_kit import DrumKitCreate, DrumKitResponse
 from app.schemas.user import UserResponse
 from app.schemas.common import success
 from app.models.loop import Genre, TempoFeel
 from app.models.drone_pad import MusicalKey
-from app.models.drum_kit import DrumKit, DrumKitCategory
+from app.models.drum_kit import DrumKit
 from app.models.user import User, UserRole
 from app.exceptions import NotFoundError
 import uuid
@@ -413,22 +412,32 @@ async def create_drum_kit(
     description: str | None = Form(None),
     tags: str = Form(""),
     is_free: bool = Form(True),
+    store_product_id: str | None = Form(None),
+    sample_files: list[UploadFile] = File(...),
+    sample_labels: str = Form(...),  # comma-separated labels matching sample_files order
     db: AsyncSession = Depends(get_db),
     producer=Depends(require_producer),
 ):
+    import structlog as _structlog
+    labels = [l.strip() for l in sample_labels.split(",") if l.strip()]
     data = DrumKitCreate(
         title=title,
         description=description,
         tags=[t.strip() for t in tags.split(",") if t.strip()],
         is_free=is_free,
+        store_product_id=store_product_id,
     )
-    import structlog as _structlog
-    kit = await drum_kit_service.create_drum_kit(db, data, producer.id, thumbnail=thumbnail)
+    kit, sample_ids = await drum_kit_service.create_drum_kit(
+        db, data, producer.id, sample_files, labels, thumbnail=thumbnail
+    )
+    from app.tasks.upload_tasks import process_drum_sample_upload
+    for sid in sample_ids:
+        process_drum_sample_upload.delay(sid)
     try:
         await cache_service.delete_pattern("drum_kit:list:*")
     except Exception as e:
         _structlog.get_logger().warning("cache_invalidation_failed", endpoint="create_drum_kit", error=str(e))
-    return success(DrumKitResponse.model_validate(kit).model_dump(), "Drum kit created")
+    return success(DrumKitResponse.model_validate(kit).model_dump(), "Drum kit created, samples queued for processing")
 
 
 @router.get("/drum-kits")
@@ -448,53 +457,6 @@ async def list_drum_kits_admin(
         "page_size": page_size,
     })
 
-
-@router.post("/drum-kits/{kit_id}/categories")
-async def create_drum_kit_category(
-    kit_id: uuid.UUID,
-    name: str = Form(...),
-    # Up to 9 sample files; FastAPI accepts repeated form fields as a list
-    sample_files: list[UploadFile] = File(...),
-    sample_labels: str = Form(...),  # comma-separated labels matching sample_files order
-    db: AsyncSession = Depends(get_db),
-    producer=Depends(require_producer),
-):
-    labels = [l.strip() for l in sample_labels.split(",") if l.strip()]
-    category, sample_ids = await drum_kit_service.create_category_with_samples(
-        db, kit_id, name, sample_files, labels
-    )
-    from app.tasks.upload_tasks import process_drum_sample_upload
-    for sid in sample_ids:
-        process_drum_sample_upload.delay(sid)
-
-    result = await db.execute(
-        select(DrumKitCategory)
-        .options(selectinload(DrumKitCategory.samples))
-        .where(DrumKitCategory.id == category.id)
-    )
-    category = result.scalar_one()
-    import structlog as _structlog
-    try:
-        await cache_service.delete(f"drum_kit:detail:{kit_id}")
-    except Exception as e:
-        _structlog.get_logger().warning("cache_invalidation_failed", endpoint="create_drum_kit_category", error=str(e))
-    return success(DrumKitCategoryResponse.model_validate(category).model_dump(), "Category created, samples queued for processing")
-
-
-@router.delete("/drum-kits/{kit_id}/categories/{category_id}")
-async def delete_drum_kit_category(
-    kit_id: uuid.UUID,
-    category_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
-    admin=Depends(require_admin),
-):
-    import structlog as _structlog
-    await drum_kit_service.delete_category(db, kit_id, category_id)
-    try:
-        await cache_service.delete(f"drum_kit:detail:{kit_id}")
-    except Exception as e:
-        _structlog.get_logger().warning("cache_invalidation_failed", endpoint="delete_drum_kit_category", error=str(e))
-    return success(message="Category deleted")
 
 
 @router.delete("/drum-kits/{kit_id}")

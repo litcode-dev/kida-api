@@ -10,10 +10,7 @@ class DrumKitCreate(BaseModel):
     description: str | None = None
     tags: list[str] = []
     is_free: bool = True
-
-
-class DrumKitCategoryCreate(BaseModel):
-    name: str
+    store_product_id: str | None = None
 
 
 class DrumSampleResponse(BaseModel):
@@ -21,16 +18,6 @@ class DrumSampleResponse(BaseModel):
     label: str
     duration: int
     status: str
-    created_at: datetime
-
-    model_config = {"from_attributes": True}
-
-
-class DrumKitCategoryResponse(BaseModel):
-    id: uuid.UUID
-    drum_kit_id: uuid.UUID
-    name: str
-    samples: list[DrumSampleResponse] = []
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -45,7 +32,7 @@ class DrumKitResponse(BaseModel):
     tags: list[str]
     is_free: bool
     store_product_id: str | None = None
-    categories: list[DrumKitCategoryResponse] = []
+    samples: list[DrumSampleResponse] = []
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -61,16 +48,10 @@ class DrumSampleDownloadItem(BaseModel):
     expires_in_seconds: int = DOWNLOAD_EXPIRY_SECONDS
 
 
-class DrumKitCategoryDownloadItem(BaseModel):
-    id: uuid.UUID
-    name: str
-    samples: list[DrumSampleDownloadItem]
-
-
 class DrumKitDownloadResponse(BaseModel):
     kit_id: uuid.UUID
     title: str
-    categories: list[DrumKitCategoryDownloadItem]
+    samples: list[DrumSampleDownloadItem]
     expires_in_seconds: int = DOWNLOAD_EXPIRY_SECONDS
 
 
