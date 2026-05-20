@@ -1,6 +1,7 @@
 import uuid
+from decimal import Decimal
 from datetime import datetime
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, model_validator
 
 DOWNLOAD_EXPIRY_SECONDS = 900  # 15 minutes
 
@@ -10,7 +11,15 @@ class DrumKitCreate(BaseModel):
     description: str | None = None
     tags: list[str] = []
     is_free: bool = True
-    store_product_id: str | None = None
+    price: Decimal | None = None
+
+    @model_validator(mode="after")
+    def price_required_for_paid(self) -> "DrumKitCreate":
+        if not self.is_free and self.price is None:
+            raise ValueError("price is required for paid drum kits")
+        if self.is_free:
+            self.price = None
+        return self
 
 
 class DrumSampleResponse(BaseModel):
@@ -31,6 +40,7 @@ class DrumKitResponse(BaseModel):
     thumbnail_url: str | None = None
     tags: list[str]
     is_free: bool
+    price: Decimal | None = None
     store_product_id: str | None = None
     samples: list[DrumSampleResponse] = []
     created_at: datetime

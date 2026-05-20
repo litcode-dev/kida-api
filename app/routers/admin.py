@@ -412,7 +412,7 @@ async def create_drum_kit(
     description: str | None = Form(None),
     tags: str = Form(""),
     is_free: bool = Form(True),
-    store_product_id: str | None = Form(None),
+    price: Decimal | None = Form(None),
     sample_files: list[UploadFile] = File(...),
     sample_labels: str = Form(...),  # comma-separated labels matching sample_files order
     db: AsyncSession = Depends(get_db),
@@ -425,7 +425,7 @@ async def create_drum_kit(
         description=description,
         tags=[t.strip() for t in tags.split(",") if t.strip()],
         is_free=is_free,
-        store_product_id=store_product_id,
+        price=price,
     )
     kit, sample_ids = await drum_kit_service.create_drum_kit(
         db, data, producer.id, sample_files, labels, thumbnail=thumbnail
@@ -442,13 +442,22 @@ async def create_drum_kit(
 
 @router.get("/drum-kits")
 async def list_drum_kits_admin(
+    search: str | None = None,
+    is_free: bool | None = None,
+    tags: str | None = None,
     page: int = 1,
     page_size: int = 20,
     db: AsyncSession = Depends(get_db),
     producer=Depends(require_producer),
 ):
     from app.schemas.drum_kit import DrumKitFilter
-    filters = DrumKitFilter(page=page, page_size=page_size)
+    filters = DrumKitFilter(
+        search=search,
+        is_free=is_free,
+        tags=[t.strip() for t in tags.split(",") if t.strip()] if tags else None,
+        page=page,
+        page_size=page_size,
+    )
     kits, total = await drum_kit_service.list_drum_kits(db, filters)
     return success({
         "items": [DrumKitResponse.model_validate(k).model_dump() for k in kits],

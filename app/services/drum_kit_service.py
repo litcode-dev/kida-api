@@ -44,15 +44,19 @@ async def create_drum_kit(
         thumb_key = s3_service.s3_key_for_drum_kit_thumbnail(kit_id, ext)
         await s3_service.upload_bytes(thumb_key, thumb_bytes, content_type)
 
+    slug = _slugify(data.title, kit_id)
+    store_product_id = None if data.is_free else f"com.litmusic.drumkit.{slug}"
+
     kit = DrumKit(
         id=uuid.UUID(kit_id),
         title=data.title,
-        slug=_slugify(data.title, kit_id),
+        slug=slug,
         description=data.description,
         thumbnail_s3_key=thumb_key,
         tags=data.tags,
         is_free=data.is_free,
-        store_product_id=data.store_product_id,
+        price=data.price,
+        store_product_id=store_product_id,
         created_by=created_by,
     )
     db.add(kit)
