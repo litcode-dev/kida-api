@@ -303,9 +303,7 @@ async def bulk_upload_drones(
     db: AsyncSession = Depends(get_db),
     producer=Depends(require_producer),
 ):
-    import asyncio as _asyncio
     from app.exceptions import AppError
-    from app.services import s3_service as _s3
 
     if not is_free and price is None:
         raise AppError("price is required for paid drone pads", status_code=422)
@@ -322,17 +320,9 @@ async def bulk_upload_drones(
             status_code=422,
         )
 
-    drones, uploads, _thumb_key = await drone_service.bulk_create_drones(
+    drones = await drone_service.bulk_create_drones(
         db, files, validated_keys, title, price, is_free, category_id, producer.id, thumbnail=thumbnail
     )
-
-    uploads_map = {drone_id: wav_bytes for drone_id, wav_bytes in uploads}
-
-    async def _upload_raw(drone_id: str) -> None:
-        raw_key = _s3.s3_key_for_raw_drone(drone_id)
-        await _s3.upload_bytes(raw_key, uploads_map[drone_id], "audio/wav")
-
-    await _asyncio.gather(*[_upload_raw(str(d.id)) for d in drones])
 
     from app.tasks.upload_tasks import process_drone_upload
     for drone in drones:

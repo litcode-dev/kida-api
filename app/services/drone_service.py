@@ -172,14 +172,7 @@ async def bulk_create_drones(
     category_id: uuid.UUID | None,
     created_by: uuid.UUID,
     thumbnail: UploadFile | None = None,
-) -> tuple[list[DronePad], list[tuple[str, bytes]], str | None]:
-    """
-    Validate files and create DB records synchronously.
-    Returns (drones, [(drone_id, wav_bytes), ...], thumb_key) so the
-    caller can push S3 uploads to a background task and respond immediately.
-    """
-    import asyncio
-
+) -> list[DronePad]:
     if len(files) != len(keys):
         from app.exceptions import AppError
         raise AppError("Number of files must match number of keys", status_code=422)
@@ -196,15 +189,14 @@ async def bulk_create_drones(
         thumb_key = s3_service.s3_key_for_drone_thumbnail(shared_thumb_id, ext)
         await s3_service.upload_bytes(thumb_key, thumb_bytes, content_type)
 
-    # Validate all files in parallel — fast (CPU-bound sf.read in thread pool)
-    validated: list[bytes] = list(
-        await asyncio.gather(*[validate_wav_upload(f) for f in files])
-    )
-
     drones = []
-    uploads: list[tuple[str, bytes]] = []
-    for wav_bytes, key in zip(validated, keys):
+    for file, key in zip(files, keys):
         drone_id = str(uuid.uuid4())
+        wav_bytes = await validate_wav_upload(file)
+        raw_key = s3_service.s3_key_for_raw_drone(drone_id)
+        await s3_service.upload_bytes(raw_key, wav_bytes, "audio/wav")
+        del wav_bytes
+
         drone = DronePad(
             id=uuid.UUID(drone_id),
             title=title,
@@ -219,7 +211,6 @@ async def bulk_create_drones(
         )
         db.add(drone)
         drones.append(drone)
-        uploads.append((drone_id, wav_bytes))
 
     await db.commit()
     loaded = await db.scalars(
@@ -228,7 +219,7 @@ async def bulk_create_drones(
         .where(DronePad.id.in_([d.id for d in drones]))
         .order_by(DronePad.key)
     )
-    return list(loaded.all()), uploads, thumb_key
+    return list(loaded.all())
 
 
 async def get_category_downloads(
