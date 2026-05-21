@@ -98,21 +98,24 @@ async def test_list_drones_returns_cached_data_on_hit(client, db_session):
     cached = {"items": [{"id": "abc", "title": "Cached"}], "total": 1, "page": 1, "page_size": 50}
 
     with patch("app.routers.drones.cache_service.get", new=AsyncMock(return_value=cached)), \
-         patch("app.routers.drones.cache_service.set", new=AsyncMock()) as mock_set:
+         patch("app.routers.drones.cache_service.set", new=AsyncMock()) as mock_set, \
+         patch("app.routers.drones.drone_service.list_drones", new=AsyncMock()) as mock_db:
         resp = await client.get("/api/v1/drones")
 
     assert resp.status_code == 200
     assert resp.json()["data"] == cached
     mock_set.assert_not_awaited()
+    mock_db.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_list_drones_cache_key_encodes_filters(client, db_session):
     with patch("app.routers.drones.cache_service.get", new=AsyncMock(return_value=None)) as mock_get, \
          patch("app.routers.drones.cache_service.set", new=AsyncMock()):
-        await client.get("/api/v1/drones?key=A&is_free=true&page=2&page_size=10")
+        resp = await client.get("/api/v1/drones?key=A&is_free=true&page=2&page_size=10")
 
-    mock_get.assert_awaited_once_with("drone:list:A:True:none:2:10")
+    assert resp.status_code == 200
+    mock_get.assert_awaited_once_with("drone:list:A:true:none:2:10")
 
 
 @pytest.mark.asyncio

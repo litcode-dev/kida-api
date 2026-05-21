@@ -48,7 +48,7 @@ async def list_drones(
 ):
     cache_key = (
         f"drone:list:{key.value if key else 'none'}"
-        f":{is_free if is_free is not None else 'none'}"
+        f":{str(is_free).lower() if is_free is not None else 'none'}"
         f":{category_id or 'none'}"
         f":{page}:{page_size}"
     )
