@@ -45,7 +45,6 @@ async def create_loop(
         slug=_slugify(data.title, loop_id),
         genre=data.genre,
         bpm=data.bpm,
-        key=data.key,
         duration=0,
         tempo_feel=data.tempo_feel,
         tags=data.tags,

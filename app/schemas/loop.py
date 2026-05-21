@@ -10,7 +10,6 @@ class LoopCreate(BaseModel):
     description: str | None = None
     genre: Genre
     bpm: int
-    key: str | None = None
     tempo_feel: TempoFeel
     tags: list[str] = []
     price: Decimal
@@ -29,7 +28,6 @@ class LoopUpdate(BaseModel):
     description: str | None = None
     genre: Genre | None = None
     bpm: int | None = None
-    key: str | None = None
     tempo_feel: TempoFeel | None = None
     tags: list[str] | None = None
     price: Decimal | None = None
@@ -49,7 +47,7 @@ class LoopResponse(BaseModel):
     slug: str
     genre: Genre
     bpm: int
-    key: str
+    key: str | None = None
     duration: int
     tempo_feel: TempoFeel
     description: str | None = None

@@ -36,7 +36,6 @@ async def upload_loop(
     title: str = Form(...),
     genre: Genre = Form(...),
     bpm: int = Form(...),
-    key: str = Form(...),
     tempo_feel: TempoFeel = Form(...),
     price: Decimal = Form(...),
     is_free: bool = Form(False),
@@ -45,7 +44,7 @@ async def upload_loop(
     producer=Depends(require_producer),
 ):
     data = LoopCreate(
-        title=title, genre=genre, bpm=bpm, key=key,
+        title=title, genre=genre, bpm=bpm,
         tempo_feel=tempo_feel, price=price, is_free=is_free,
         tags=[t.strip() for t in tags.split(",") if t.strip()],
     )
