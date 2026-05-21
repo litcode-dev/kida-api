@@ -6,7 +6,7 @@ import bcrypt
 import structlog
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from sqlalchemy.exc import IntegrityError
 from app.config import get_settings
 from app.models.user import User, UserRole
@@ -161,8 +161,61 @@ async def find_or_create_oauth_user(
 
 
 async def delete_user(db: AsyncSession, user: User, redis: Redis, refresh_token: str | None) -> None:
+    from app.models.ai_generation import AIGeneration
+    from app.models.download import Download
+    from app.models.like import Like
+    from app.models.purchase import Purchase
+    from app.models.subscription import Subscription
+    from app.models.loop import Loop
+    from app.models.stem_pack import StemPack, Stem
+    from app.models.drum_kit import DrumKit
+    from app.models.drone_pad import DronePadCategory, Drone, DronePad
+
     if refresh_token:
         await revoke_refresh_token(redis, refresh_token)
+
+    uid = user.id
+
+    # Transactional records owned by the user
+    await db.execute(delete(AIGeneration).where(AIGeneration.user_id == uid))
+    await db.execute(delete(Download).where(Download.user_id == uid))
+    await db.execute(delete(Like).where(Like.user_id == uid))
+    await db.execute(delete(Purchase).where(Purchase.user_id == uid))
+    await db.execute(delete(Subscription).where(Subscription.user_id == uid))
+
+    # Producer content created by the user — delete children before parents
+    loop_ids = (await db.scalars(select(Loop.id).where(Loop.created_by == uid))).all()
+    if loop_ids:
+        await db.execute(delete(Download).where(Download.loop_id.in_(loop_ids)))
+        await db.execute(delete(Like).where(Like.loop_id.in_(loop_ids)))
+        await db.execute(delete(Purchase).where(Purchase.loop_id.in_(loop_ids)))
+        await db.execute(delete(Loop).where(Loop.id.in_(loop_ids)))
+
+    stem_pack_ids = (await db.scalars(select(StemPack.id).where(StemPack.created_by == uid))).all()
+    if stem_pack_ids:
+        await db.execute(delete(Stem).where(Stem.stem_pack_id.in_(stem_pack_ids)))
+        await db.execute(delete(Purchase).where(Purchase.stem_pack_id.in_(stem_pack_ids)))
+        await db.execute(delete(Like).where(Like.stem_pack_id.in_(stem_pack_ids)))
+        await db.execute(delete(StemPack).where(StemPack.id.in_(stem_pack_ids)))
+
+    drum_kit_ids = (await db.scalars(select(DrumKit.id).where(DrumKit.created_by == uid))).all()
+    if drum_kit_ids:
+        await db.execute(delete(Download).where(Download.drum_kit_id.in_(drum_kit_ids)))
+        await db.execute(delete(Purchase).where(Purchase.drum_kit_id.in_(drum_kit_ids)))
+        await db.execute(delete(DrumKit).where(DrumKit.id.in_(drum_kit_ids)))
+
+    drone_cat_ids = (await db.scalars(select(DronePadCategory.id).where(DronePadCategory.created_by == uid))).all()
+    if drone_cat_ids:
+        drone_ids = (await db.scalars(select(Drone.id).where(Drone.category_id.in_(drone_cat_ids)))).all()
+        if drone_ids:
+            drone_pad_ids = (await db.scalars(select(DronePad.id).where(DronePad.drone_id.in_(drone_ids)))).all()
+            if drone_pad_ids:
+                await db.execute(delete(Download).where(Download.drone_pad_id.in_(drone_pad_ids)))
+                await db.execute(delete(Purchase).where(Purchase.drone_pad_id.in_(drone_pad_ids)))
+                await db.execute(delete(DronePad).where(DronePad.id.in_(drone_pad_ids)))
+            await db.execute(delete(Drone).where(Drone.id.in_(drone_ids)))
+        await db.execute(delete(DronePadCategory).where(DronePadCategory.id.in_(drone_cat_ids)))
+
     await db.delete(user)
     await db.commit()
 
