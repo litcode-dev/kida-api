@@ -41,6 +41,10 @@ async def send_email(to: str, subject: str, html: str) -> None:
     settings = get_settings()
     backend = settings.email_backend
 
+    if backend == "fallback":
+        await _send_with_fallback(settings, to, subject, html)
+        return
+
     if backend == "resend":
         if not settings.resend_api_key:
             log.warning("email.skipped", reason="RESEND_API_KEY not configured", to=to)
@@ -60,6 +64,32 @@ async def send_email(to: str, subject: str, html: str) -> None:
                   status=exc.response.status_code, body=exc.response.text)
     except Exception as exc:
         log.error("email.failed", to=to, subject=subject, backend=backend, error=str(exc))
+
+
+async def _send_with_fallback(settings, to: str, subject: str, html: str) -> None:
+    if not settings.resend_api_key:
+        log.warning("email.fallback.resend_skipped", reason="RESEND_API_KEY not configured", to=to)
+    else:
+        try:
+            await _send_via_resend(settings, to, subject, html)
+            log.info("email.sent", to=to, subject=subject, backend="resend")
+            return
+        except httpx.HTTPStatusError as exc:
+            log.warning("email.fallback.resend_failed", to=to,
+                        status=exc.response.status_code, body=exc.response.text)
+        except Exception as exc:
+            log.warning("email.fallback.resend_failed", to=to, error=str(exc))
+
+    if not settings.smtp_user or not settings.smtp_password:
+        log.error("email.failed", to=to, subject=subject,
+                  reason="Resend failed and SMTP credentials not configured")
+        return
+
+    try:
+        await _send_via_smtp(settings, to, subject, html)
+        log.info("email.sent", to=to, subject=subject, backend="smtp")
+    except Exception as exc:
+        log.error("email.failed", to=to, subject=subject, backend="smtp", error=str(exc))
 
 
 # ── Templates ─────────────────────────────────────────────────────────────────
