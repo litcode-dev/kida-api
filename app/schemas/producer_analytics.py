@@ -35,8 +35,8 @@ class AnalyticsParams(BaseModel):
     def resolve_window(self) -> tuple[datetime | None, datetime | None]:
         if self.from_date and self.to_date:
             return (
-                datetime.combine(self.from_date, datetime.min.time()),
-                datetime.combine(self.to_date, datetime.max.time()),
+                datetime.combine(self.from_date, datetime.min.time(), tzinfo=timezone.utc),
+                datetime.combine(self.to_date, datetime.max.time(), tzinfo=timezone.utc),
             )
         delta_map = {"7d": 7, "30d": 30, "90d": 90}
         if self.period.value in delta_map:

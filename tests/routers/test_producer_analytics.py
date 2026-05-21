@@ -90,7 +90,7 @@ async def _make_drone(db, producer_id):
     await db.commit()
     pad = DronePad(
         id=uuid.uuid4(), drone_id=drone.id,
-        key=MusicalKey.C, status="ready",
+        key=MusicalKey.C, status="ready", duration=0,
     )
     db.add(pad)
     await db.commit()
@@ -100,6 +100,7 @@ async def _make_drone(db, producer_id):
 async def _make_kit(db, producer_id):
     kit = DrumKit(
         id=uuid.uuid4(), title="Test Kit",
+        slug=f"kit-{uuid.uuid4().hex[:6]}",
         price=Decimal("9.99"), is_free=False,
         download_count=0, created_by=producer_id,
     )
