@@ -102,18 +102,34 @@ async def _send_with_fallback(settings, to: str, subject: str, html: str, text: 
 
 # ── Shared footer snippets ─────────────────────────────────────────────────────
 
-def _html_footer(unsubscribe_email: str = "support@litcode.com.ng") -> str:
+def _brand_footer(unsubscribe_email: str = "support@litcode.com.ng") -> str:
     year = datetime.now(timezone.utc).year
     return f"""
-      <!-- COMPLIANCE FOOTER -->
-      <tr><td style="background:#f2ede4;padding:20px 32px;border-top:1px solid #ddd8ce;text-align:center;">
-        <p style="margin:0;font-size:11px;color:#999;line-height:1.6;">
-          Kida &mdash; Professional Music Production Samples<br>
-          Lagos, Nigeria &middot; <a href="https://kida.litcode.com.ng" style="color:#999;text-decoration:none;">kida.litcode.com.ng</a><br>
-          &copy; {year} Litcode. All rights reserved.<br>
-          <a href="mailto:{unsubscribe_email}?subject=Unsubscribe"
-             style="color:#999;text-decoration:underline;font-size:11px;">Unsubscribe</a>
-        </p>
+      <!-- BRAND FOOTER -->
+      <tr><td style="background:#0a0a0a;padding:24px 32px;border-radius:0 0 8px 8px;">
+        <table width="100%" cellpadding="0" cellspacing="0">
+          <tr>
+            <td style="width:40px;vertical-align:middle;">
+              <img src="https://d2q7nhojr9v45l.cloudfront.net/logo/logo.png"
+                   alt="Kida" width="36" height="36"
+                   style="display:block;border-radius:4px;" />
+            </td>
+            <td style="padding-left:12px;vertical-align:middle;">
+              <p style="margin:0;font-size:11px;font-weight:700;color:#fff;letter-spacing:0.1em;text-transform:uppercase;">KIDA</p>
+              <p style="margin:2px 0 0 0;font-size:11px;color:#aaa;">Professional Music Production Samples</p>
+            </td>
+          </tr>
+          <tr>
+            <td colspan="2" style="padding-top:16px;border-top:1px solid #1f1f1f;margin-top:16px;">
+              <p style="margin:12px 0 0 0;font-size:11px;color:#555;line-height:1.8;">
+                Lagos, Nigeria &middot; <a href="https://kida.litcode.com.ng" style="color:#555;text-decoration:none;">kida.litcode.com.ng</a><br>
+                &copy; {year} Litcode. All rights reserved.<br>
+                <a href="mailto:{unsubscribe_email}?subject=Unsubscribe"
+                   style="color:#555;text-decoration:underline;font-size:11px;">Unsubscribe</a>
+              </p>
+            </td>
+          </tr>
+        </table>
       </td></tr>"""
 
 
@@ -122,7 +138,7 @@ def _text_footer() -> str:
     return (
         f"\n\n---\n"
         f"Kida | Professional Music Production Samples\n"
-        f"Lagos, Nigeria | kida.litcode.com.ng\n"
+        f"Nigeria | kida.litcode.com.ng\n"
         f"© {year} Litcode. All rights reserved.\n"
         f"To unsubscribe, email support@litcode.com.ng with subject: Unsubscribe"
     )
@@ -188,32 +204,11 @@ def registration_html(full_name: str) -> str:
               <p style="margin:0;font-size:28px;font-weight:800;color:#0a0a0a;">10</p>
               <p style="margin:4px 0 0 0;font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:#888;">Genres</p>
             </td>
-            <td style="text-align:right;">
-              <p style="margin:0;font-size:28px;font-weight:800;color:#0a0a0a;">0</p>
-              <p style="margin:4px 0 0 0;font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:#888;">Subscriptions</p>
-            </td>
           </tr>
         </table>
       </td></tr>
 
-      <!-- BRAND FOOTER -->
-      <tr><td style="background:#0a0a0a;padding:24px 32px;">
-        <table width="100%" cellpadding="0" cellspacing="0">
-          <tr>
-            <td style="width:40px;vertical-align:middle;">
-              <img src="https://d2q7nhojr9v45l.cloudfront.net/logo/logo.png"
-                   alt="Kida" width="36" height="36"
-                   style="display:block;border-radius:4px;" />
-            </td>
-            <td style="padding-left:12px;vertical-align:middle;">
-              <p style="margin:0;font-size:11px;font-weight:700;color:#fff;letter-spacing:0.1em;text-transform:uppercase;">KIDA</p>
-              <p style="margin:2px 0 0 0;font-size:11px;color:#fff;">Professional Music Production Samples</p>
-            </td>
-          </tr>
-        </table>
-      </td></tr>
-
-      {_html_footer()}
+      {_brand_footer()}
 
     </table>
   </td></tr>
@@ -280,24 +275,7 @@ def account_deleted_html(full_name: str) -> str:
         </a>
       </td></tr>
 
-      <!-- BRAND FOOTER -->
-      <tr><td style="background:#0a0a0a;padding:24px 32px;">
-        <table width="100%" cellpadding="0" cellspacing="0">
-          <tr>
-            <td style="width:40px;vertical-align:middle;">
-              <img src="https://d2q7nhojr9v45l.cloudfront.net/logo/logo.png"
-                   alt="Kida" width="36" height="36"
-                   style="display:block;border-radius:4px;" />
-            </td>
-            <td style="padding-left:12px;vertical-align:middle;">
-              <p style="margin:0;font-size:11px;font-weight:700;color:#fff;letter-spacing:0.1em;text-transform:uppercase;">KIDA</p>
-              <p style="margin:2px 0 0 0;font-size:11px;color:#fff;">Professional Music Production Samples</p>
-            </td>
-          </tr>
-        </table>
-      </td></tr>
-
-      {_html_footer()}
+      {_brand_footer()}
 
     </table>
   </td></tr>
@@ -375,24 +353,7 @@ def purchase_html(full_name: str, product_title: str, product_type: str, amount:
         </a>
       </td></tr>
 
-      <!-- BRAND FOOTER -->
-      <tr><td style="background:#0a0a0a;padding:24px 32px;">
-        <table width="100%" cellpadding="0" cellspacing="0">
-          <tr>
-            <td style="width:40px;vertical-align:middle;">
-              <img src="https://d2q7nhojr9v45l.cloudfront.net/logo/logo.png"
-                   alt="Kida" width="36" height="36"
-                   style="display:block;border-radius:4px;" />
-            </td>
-            <td style="padding-left:12px;vertical-align:middle;">
-              <p style="margin:0;font-size:11px;font-weight:700;color:#fff;letter-spacing:0.1em;text-transform:uppercase;">KIDA</p>
-              <p style="margin:2px 0 0 0;font-size:11px;color:#fff;">Professional Music Production Samples</p>
-            </td>
-          </tr>
-        </table>
-      </td></tr>
-
-      {_html_footer()}
+      {_brand_footer()}
 
     </table>
   </td></tr>
