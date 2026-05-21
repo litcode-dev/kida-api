@@ -200,10 +200,10 @@ def registration_html(full_name: str) -> str:
       <tr><td style="background:#0a0a0a;padding:24px 32px;">
         <table width="100%" cellpadding="0" cellspacing="0">
           <tr>
-            <td style="width:36px;vertical-align:middle;">
-              <div style="width:32px;height:32px;background:#1FBF62;border-radius:4px;
-                          text-align:center;line-height:32px;color:#fff;
-                          font-size:12px;font-weight:800;letter-spacing:0.05em;">LM</div>
+            <td style="width:40px;vertical-align:middle;">
+              <img src="https://d2q7nhojr9v45l.cloudfront.net/logo/logo.png"
+                   alt="Kida" width="36" height="36"
+                   style="display:block;border-radius:4px;" />
             </td>
             <td style="padding-left:12px;vertical-align:middle;">
               <p style="margin:0;font-size:11px;font-weight:700;color:#fff;letter-spacing:0.1em;text-transform:uppercase;">KIDA</p>
@@ -284,10 +284,10 @@ def account_deleted_html(full_name: str) -> str:
       <tr><td style="background:#0a0a0a;padding:24px 32px;">
         <table width="100%" cellpadding="0" cellspacing="0">
           <tr>
-            <td style="width:36px;vertical-align:middle;">
-              <div style="width:32px;height:32px;background:#1FBF62;border-radius:4px;
-                          text-align:center;line-height:32px;color:#fff;
-                          font-size:12px;font-weight:800;letter-spacing:0.05em;">LM</div>
+            <td style="width:40px;vertical-align:middle;">
+              <img src="https://d2q7nhojr9v45l.cloudfront.net/logo/logo.png"
+                   alt="Kida" width="36" height="36"
+                   style="display:block;border-radius:4px;" />
             </td>
             <td style="padding-left:12px;vertical-align:middle;">
               <p style="margin:0;font-size:11px;font-weight:700;color:#fff;letter-spacing:0.1em;text-transform:uppercase;">KIDA</p>
@@ -379,10 +379,10 @@ def purchase_html(full_name: str, product_title: str, product_type: str, amount:
       <tr><td style="background:#0a0a0a;padding:24px 32px;">
         <table width="100%" cellpadding="0" cellspacing="0">
           <tr>
-            <td style="width:36px;vertical-align:middle;">
-              <div style="width:32px;height:32px;background:#1FBF62;border-radius:4px;
-                          text-align:center;line-height:32px;color:#fff;
-                          font-size:12px;font-weight:800;letter-spacing:0.05em;">LM</div>
+            <td style="width:40px;vertical-align:middle;">
+              <img src="https://d2q7nhojr9v45l.cloudfront.net/logo/logo.png"
+                   alt="Kida" width="36" height="36"
+                   style="display:block;border-radius:4px;" />
             </td>
             <td style="padding-left:12px;vertical-align:middle;">
               <p style="margin:0;font-size:11px;font-weight:700;color:#fff;letter-spacing:0.1em;text-transform:uppercase;">KIDA</p>
