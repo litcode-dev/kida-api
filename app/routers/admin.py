@@ -299,10 +299,10 @@ async def upload_drone(
         category_id=category_id,
     )
     drone = await drone_service.create_drone(db, file, data, producer.id, thumbnail=thumbnail)
+    import structlog as _structlog
     try:
         await cache_service.delete_pattern("drone:list:*")
     except Exception as e:
-        import structlog as _structlog
         _structlog.get_logger().warning("cache_invalidation_failed", endpoint="upload_drone", error=str(e))
     from app.tasks.upload_tasks import process_drone_upload
     for pad in drone.pads:
@@ -344,10 +344,10 @@ async def bulk_upload_drones(
         db, files, validated_keys, title, price, is_free, category_id, producer.id,
         thumbnail=thumbnail, description=description
     )
+    import structlog as _structlog
     try:
         await cache_service.delete_pattern("drone:list:*")
     except Exception as e:
-        import structlog as _structlog
         _structlog.get_logger().warning("cache_invalidation_failed", endpoint="bulk_upload_drones", error=str(e))
     from app.tasks.upload_tasks import process_drone_upload
     for pad in pads:
@@ -401,10 +401,10 @@ async def update_drone(
     admin=Depends(require_admin),
 ):
     drone = await drone_service.update_drone(db, drone_id, body)
+    import structlog as _structlog
     try:
         await cache_service.delete_pattern("drone:list:*")
     except Exception as e:
-        import structlog as _structlog
         _structlog.get_logger().warning("cache_invalidation_failed", endpoint="update_drone", error=str(e))
     return success(DroneResponse.model_validate(drone).model_dump(), "Drone pad updated")
 
@@ -416,10 +416,10 @@ async def delete_drone(
     admin=Depends(require_admin),
 ):
     await drone_service.delete_drone(db, drone_id)
+    import structlog as _structlog
     try:
         await cache_service.delete_pattern("drone:list:*")
     except Exception as e:
-        import structlog as _structlog
         _structlog.get_logger().warning("cache_invalidation_failed", endpoint="delete_drone", error=str(e))
     return success(message="Drone pad deleted")
 
