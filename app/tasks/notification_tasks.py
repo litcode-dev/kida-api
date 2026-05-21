@@ -1,9 +1,14 @@
 import asyncio
+import structlog
 from app.tasks.celery_app import celery_app
+
+log = structlog.get_logger()
 
 
 @celery_app.task
 def send_registration_email(user_id: str):
+    log.info("registration_email.task_started", user_id=user_id)
+
     async def _run():
         from app.database import AsyncSessionLocal
         from app.models.user import User
@@ -13,12 +18,15 @@ def send_registration_email(user_id: str):
         async with AsyncSessionLocal() as db:
             user = await db.get(User, uuid.UUID(user_id))
             if not user:
+                log.warning("registration_email.user_not_found", user_id=user_id)
                 return
+            log.info("registration_email.sending", user_id=user_id, email=user.email)
             await send_email(
                 to=user.email,
                 subject="Welcome to LitMusic!",
                 html=registration_html(user.full_name),
             )
+            log.info("registration_email.done", user_id=user_id, email=user.email)
 
     asyncio.run(_run())
 

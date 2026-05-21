@@ -3,6 +3,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 import jwt
 import bcrypt
+import structlog
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -12,6 +13,7 @@ from app.models.user import User, UserRole
 from app.exceptions import UnauthorizedError, ConflictError
 
 settings = get_settings()
+log = structlog.get_logger()
 
 ALGORITHM = "HS256"
 REFRESH_PREFIX = "refresh:"
@@ -141,6 +143,7 @@ async def find_or_create_oauth_user(
         await db.refresh(user)
         from app.tasks.notification_tasks import send_registration_email
         send_registration_email.delay(str(user.id))
+        log.info("registration_email.queued", user_id=str(user.id), email=user.email)
         return user
     except IntegrityError:
         await db.rollback()
