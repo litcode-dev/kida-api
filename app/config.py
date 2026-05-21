@@ -43,7 +43,7 @@ class Settings(BaseSettings):
     # Email
     email_backend: str = "resend"  # "resend" | "smtp"
     resend_api_key: str = ""
-    resend_from: str = "Kida <noreply@kida.litcode.com.ng>"
+    resend_from: str = "Kida <noreply@litcode.com.ng>"
     smtp_host: str = "smtp.gmail.com"
     smtp_port: int = 587
     smtp_user: str = ""
