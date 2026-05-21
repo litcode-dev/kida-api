@@ -10,6 +10,7 @@ from app.config import get_settings
 # TTLs
 TTL_DRONE_CATEGORIES = 3600   # 1 hour  – categories change infrequently
 TTL_DRONE_TITLES = 300        # 5 minutes
+TTL_DRONE_LIST = 300          # 5 minutes — invalidated explicitly on writes
 TTL_DRUM_KIT_LIST = 300       # 5 minutes
 TTL_DRUM_KIT_DETAIL = 600     # 10 minutes
 
