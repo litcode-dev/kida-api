@@ -180,6 +180,76 @@ def registration_html(full_name: str) -> str:
 </html>"""
 
 
+def account_deleted_html(full_name: str) -> str:
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#e8e3d9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#e8e3d9;">
+  <tr><td align="center" style="padding:32px 16px;">
+    <table width="520" cellpadding="0" cellspacing="0" style="max-width:520px;width:100%;">
+
+      <!-- HEADER -->
+      <tr><td style="background:#0a0a0a;padding:24px 32px 0 32px;border-radius:8px 8px 0 0;">
+        <table width="100%" cellpadding="0" cellspacing="0">
+          <tr>
+            <td style="color:#fff;font-size:11px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;">KIDA</td>
+            <td align="right" style="color:#fff;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;">GOODBYE</td>
+          </tr>
+        </table>
+      </td></tr>
+
+      <!-- HERO -->
+      <tr><td style="background:#0a0a0a;padding:32px 32px 8px 32px;">
+        <p style="margin:0 0 16px 0;color:#1FBF62;font-size:12px;font-weight:800;letter-spacing:0.15em;text-transform:uppercase;">ACCOUNT DELETED.</p>
+        <p style="margin:0;font-size:52px;font-weight:800;line-height:1.05;color:#fff;letter-spacing:-0.02em;">Until</p>
+        <p style="margin:0;font-size:52px;font-weight:800;line-height:1.05;color:#1FBF62;letter-spacing:-0.02em;">next time.</p>
+      </td></tr>
+
+      <!-- META STRIP -->
+      <tr><td style="background:#0a0a0a;padding:24px 32px 28px 32px;border-bottom:1px solid #1f1f1f;">
+        <p style="margin:0;color:#fff;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;">2026 &nbsp;&middot;&nbsp; PREMIUM LOOPS &nbsp;&middot;&nbsp; STEM PACKS</p>
+      </td></tr>
+
+      <!-- BODY -->
+      <tr><td style="background:#f2ede4;padding:36px 32px 28px 32px;">
+        <p style="margin:0 0 8px 0;font-size:17px;font-weight:700;color:#0a0a0a;">Hi {full_name},</p>
+        <p style="margin:0 0 28px 0;font-size:15px;line-height:1.6;color:#333;">
+          Your Kida account has been permanently deleted. All your data has been removed from our systems.
+          We're sorry to see you go — if you ever want to come back, you're always welcome.
+        </p>
+        <a href="https://kida.litcode.com.ng"
+           style="display:inline-block;padding:14px 28px;background:#0a0a0a;color:#fff;
+                  font-size:14px;font-weight:700;text-decoration:none;border-radius:4px;
+                  letter-spacing:0.02em;">
+          Come Back &rarr;
+        </a>
+      </td></tr>
+
+      <!-- FOOTER -->
+      <tr><td style="background:#0a0a0a;padding:24px 32px;border-radius:0 0 8px 8px;">
+        <table width="100%" cellpadding="0" cellspacing="0">
+          <tr>
+            <td style="width:36px;vertical-align:middle;">
+              <div style="width:32px;height:32px;background:#1FBF62;border-radius:4px;
+                          text-align:center;line-height:32px;color:#fff;
+                          font-size:12px;font-weight:800;letter-spacing:0.05em;">LM</div>
+            </td>
+            <td style="padding-left:12px;vertical-align:middle;">
+              <p style="margin:0;font-size:11px;font-weight:700;color:#fff;letter-spacing:0.1em;text-transform:uppercase;">KIDA</p>
+              <p style="margin:2px 0 0 0;font-size:11px;color:#fff;">Professional Music Production Samples</p>
+            </td>
+          </tr>
+        </table>
+      </td></tr>
+
+    </table>
+  </td></tr>
+</table>
+</body>
+</html>"""
+
+
 def purchase_html(full_name: str, product_title: str, product_type: str, amount: str) -> str:
     return f"""<!DOCTYPE html>
 <html>
