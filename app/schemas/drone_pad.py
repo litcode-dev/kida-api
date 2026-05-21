@@ -31,11 +31,9 @@ class DronePadCreate(BaseModel):
 class DronePadUpdate(BaseModel):
     title: str | None = None
     description: str | None = None
-    key: MusicalKey | None = None
     price: Decimal | None = None
     is_free: bool | None = None
     category_id: uuid.UUID | None = None
-    thumbnail_url: str | None = None
 
 
 class DronePadResponse(BaseModel):

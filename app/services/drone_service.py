@@ -297,14 +297,30 @@ async def get_drone_downloads(db: AsyncSession, user: User, drone_id: uuid.UUID)
     return await _download_items_for_pads(db, user, list(drone.pads))
 
 
-async def update_drone(db: AsyncSession, drone_id: uuid.UUID, data: DronePadUpdate) -> Drone:
+async def update_drone(
+    db: AsyncSession,
+    drone_id: uuid.UUID,
+    data: DronePadUpdate,
+    thumbnail: UploadFile | None = None,
+) -> Drone:
     drone = await get_drone(db, drone_id)
-    values = data.model_dump(exclude_none=True)
-    pad_key = values.pop("key", None)
-    for field, value in values.items():
+
+    if thumbnail:
+        old_thumb_key = drone.pads[0].thumbnail_s3_key if drone.pads else None
+        if old_thumb_key:
+            await s3_service.delete_object(old_thumb_key)
+        thumb_bytes = await thumbnail.read()
+        content_type = thumbnail.content_type or "image/jpeg"
+        ext = content_type.split("/")[-1] if "/" in content_type else "jpg"
+        new_thumb_key = s3_service.s3_key_for_drone_thumbnail(str(drone_id), ext)
+        await s3_service.upload_bytes(new_thumb_key, thumb_bytes, content_type)
+        drone.thumbnail_url = _thumbnail_url_for_key(new_thumb_key)
+        for pad in drone.pads:
+            pad.thumbnail_s3_key = new_thumb_key
+
+    for field, value in data.model_dump(exclude_none=True).items():
         setattr(drone, field, value)
-    if pad_key is not None and len(drone.pads) == 1:
-        drone.pads[0].key = pad_key
+
     await db.commit()
     return await get_drone(db, drone_id)
 

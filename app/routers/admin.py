@@ -396,17 +396,29 @@ async def drone_upload_status(
 @router.put("/drones/{drone_id}")
 async def update_drone(
     drone_id: uuid.UUID,
-    body: DronePadUpdate,
+    thumbnail: UploadFile | None = File(None),
+    title: str | None = Form(None),
+    description: str | None = Form(None),
+    price: Decimal | None = Form(None),
+    is_free: bool | None = Form(None),
+    category_id: uuid.UUID | None = Form(None),
     db: AsyncSession = Depends(get_db),
     admin=Depends(require_admin),
 ):
-    drone = await drone_service.update_drone(db, drone_id, body)
+    data = DronePadUpdate(
+        title=title,
+        description=description,
+        price=price,
+        is_free=is_free,
+        category_id=category_id,
+    )
+    drone = await drone_service.update_drone(db, drone_id, data, thumbnail=thumbnail)
     import structlog as _structlog
     try:
         await cache_service.delete_pattern("drone:list:*")
     except Exception as e:
         _structlog.get_logger().warning("cache_invalidation_failed", endpoint="update_drone", error=str(e))
-    return success(DroneResponse.model_validate(drone).model_dump(), "Drone pad updated")
+    return success(DroneResponse.model_validate(drone).model_dump(), "Drone updated")
 
 
 @router.delete("/drones/{drone_id}")
