@@ -121,11 +121,11 @@ def _brand_footer(unsubscribe_email: str = "support@litcode.com.ng") -> str:
           </tr>
           <tr>
             <td colspan="2" style="padding-top:16px;border-top:1px solid #1f1f1f;margin-top:16px;">
-              <p style="margin:12px 0 0 0;font-size:11px;color:#555;line-height:1.8;">
+              <p style="margin:12px 0 0 0;font-size:11px;color:#aaa;line-height:1.8;">
                 Lagos, Nigeria &middot; <a href="https://kida.litcode.com.ng" style="color:#555;text-decoration:none;">kida.litcode.com.ng</a><br>
                 &copy; {year} Litcode. All rights reserved.<br>
                 <a href="mailto:{unsubscribe_email}?subject=Unsubscribe"
-                   style="color:#555;text-decoration:underline;font-size:11px;">Unsubscribe</a>
+                   style="color:#aaa;text-decoration:underline;font-size:11px;">Unsubscribe</a>
               </p>
             </td>
           </tr>
