@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -161,7 +161,7 @@ async def send_to_segment(
 )
 async def send_to_users(
     body: BroadcastRequest,
-    user_ids: list[str],
+    user_ids: list[str] = Query(..., description="List of target user UUIDs"),
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_admin),
 ):
