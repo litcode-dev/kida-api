@@ -218,3 +218,67 @@ async def test_analytics_other_producers_content_excluded(db_session):
     result = await get_producer_analytics(db_session, producer.id, params)
     assert result["loops"]["total"] == 0
     assert result["summary"]["total_earnings"] == Decimal("0")
+
+
+from app.services.auth_service import create_access_token
+
+
+@pytest.mark.asyncio
+async def test_analytics_endpoint_requires_producer(client):
+    resp = await client.get("/api/v1/producer/analytics")
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_analytics_endpoint_returns_envelope(client, db_session):
+    producer = await _make_producer(db_session)
+    token = create_access_token({"sub": str(producer.id)})
+    resp = await client.get(
+        "/api/v1/producer/analytics",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "success"
+    data = body["data"]
+    assert "summary" in data
+    assert "loops" in data
+    assert "drones" in data
+    assert "drum_kits" in data
+    assert "period" in data
+
+
+@pytest.mark.asyncio
+async def test_analytics_endpoint_period_param(client, db_session):
+    producer = await _make_producer(db_session)
+    token = create_access_token({"sub": str(producer.id)})
+    resp = await client.get(
+        "/api/v1/producer/analytics?period=30d",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert data["period"]["from"] is not None
+    assert data["period"]["to"] is not None
+
+
+@pytest.mark.asyncio
+async def test_analytics_endpoint_invalid_period(client, db_session):
+    producer = await _make_producer(db_session)
+    token = create_access_token({"sub": str(producer.id)})
+    resp = await client.get(
+        "/api/v1/producer/analytics?period=999d",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_analytics_endpoint_from_without_to(client, db_session):
+    producer = await _make_producer(db_session)
+    token = create_access_token({"sub": str(producer.id)})
+    resp = await client.get(
+        "/api/v1/producer/analytics?from_date=2026-01-01",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 422
