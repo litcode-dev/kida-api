@@ -122,10 +122,10 @@ def _brand_footer(unsubscribe_email: str = "support@litcode.com.ng") -> str:
           <tr>
             <td colspan="2" style="padding-top:16px;border-top:1px solid #1f1f1f;margin-top:16px;">
               <p style="margin:12px 0 0 0;font-size:11px;color:#aaa;line-height:1.8;">
-                Lagos, Nigeria &middot; <a href="https://kida.litcode.com.ng" style="color:#555;text-decoration:none;">kida.litcode.com.ng</a><br>
+                Lagos, Nigeria &middot; <a href="https://kida.litcode.com.ng" style="color:#1FBF62;text-decoration:none;">kida.litcode.com.ng</a><br>
                 &copy; {year} Litcode. All rights reserved.<br>
                 <a href="mailto:{unsubscribe_email}?subject=Unsubscribe"
-                   style="color:#aaa;text-decoration:underline;font-size:11px;">Unsubscribe</a>
+                   style="color:#1FBF62;text-decoration:underline;font-size:11px;">Unsubscribe</a>
               </p>
             </td>
           </tr>
@@ -501,5 +501,79 @@ def newsletter_unsubscribe_text(email: str) -> str:
         f"{email} has been removed from Kida's mailing list.\n"
         f"You won't receive any more marketing emails from us.\n\n"
         f"Changed your mind? Resubscribe at: https://kida.litcode.com.ng"
+        + _text_footer()
+    )
+
+
+_CONTENT_TYPE_LABELS = {
+    "loop": ("Loop", "LOOPS"),
+    "drum_kit": ("Drum Kit", "DRUM KITS"),
+    "drone_pad": ("Drone Pad", "DRONE PADS"),
+}
+
+
+def new_content_html(title: str, content_type: str) -> str:
+    year = datetime.now(timezone.utc).year
+    label, tag = _CONTENT_TYPE_LABELS.get(content_type, ("Content", "NEW"))
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#e8e3d9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#e8e3d9;">
+  <tr><td align="center" style="padding:32px 16px;">
+    <table width="520" cellpadding="0" cellspacing="0" style="max-width:520px;width:100%;">
+
+      <!-- HEADER -->
+      <tr><td style="background:#0a0a0a;padding:24px 32px 0 32px;border-radius:8px 8px 0 0;">
+        <table width="100%" cellpadding="0" cellspacing="0">
+          <tr>
+            <td style="color:#fff;font-size:11px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;">KIDA</td>
+            <td align="right" style="color:#fff;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;">NEW DROP</td>
+          </tr>
+        </table>
+      </td></tr>
+
+      <!-- HERO -->
+      <tr><td style="background:#0a0a0a;padding:32px 32px 8px 32px;">
+        <p style="margin:0 0 16px 0;color:#1FBF62;font-size:12px;font-weight:800;letter-spacing:0.15em;text-transform:uppercase;">JUST DROPPED.</p>
+        <p style="margin:0;font-size:52px;font-weight:800;line-height:1.05;color:#fff;letter-spacing:-0.02em;">New</p>
+        <p style="margin:0;font-size:52px;font-weight:800;line-height:1.05;color:#1FBF62;letter-spacing:-0.02em;">{label}.</p>
+      </td></tr>
+
+      <!-- META STRIP -->
+      <tr><td style="background:#0a0a0a;padding:24px 32px 28px 32px;border-bottom:1px solid #1f1f1f;">
+        <p style="margin:0;color:#fff;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;">{year} &nbsp;&middot;&nbsp; PREMIUM {tag} &nbsp;&middot;&nbsp; KIDA</p>
+      </td></tr>
+
+      <!-- BODY -->
+      <tr><td style="background:#f2ede4;padding:36px 32px 28px 32px;">
+        <p style="margin:0 0 8px 0;font-size:17px;font-weight:700;color:#0a0a0a;">Fresh drop available now.</p>
+        <p style="margin:0 0 28px 0;font-size:15px;line-height:1.6;color:#333;">
+          <strong>{title}</strong> — a new {label.lower()} has just been added to Kida.
+          Get it before everyone else does.
+        </p>
+        <a href="https://kida.litcode.com.ng"
+           style="display:inline-block;padding:14px 28px;background:#0a0a0a;color:#fff;
+                  font-size:14px;font-weight:700;text-decoration:none;border-radius:4px;
+                  letter-spacing:0.02em;">
+          Listen Now &rarr;
+        </a>
+      </td></tr>
+
+      {_brand_footer()}
+
+    </table>
+  </td></tr>
+</table>
+</body>
+</html>"""
+
+
+def new_content_text(title: str, content_type: str) -> str:
+    label, _ = _CONTENT_TYPE_LABELS.get(content_type, ("Content", "NEW"))
+    return (
+        f"Fresh drop on Kida!\n\n"
+        f"{title} — a new {label.lower()} has just been added.\n"
+        f"Get it before everyone else: https://kida.litcode.com.ng"
         + _text_footer()
     )

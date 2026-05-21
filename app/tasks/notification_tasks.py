@@ -89,6 +89,33 @@ def send_purchase_confirmation(user_id: str, purchase_id: str):
 
 
 @celery_app.task
+def send_new_content_emails(title: str, content_type: str):
+    """Email all users + active newsletter subscribers about a new content drop."""
+    async def _run():
+        from app.database import AsyncSessionLocal
+        from app.models.user import User
+        from app.models.newsletter import NewsletterSubscriber
+        from app.services.email_service import send_email, new_content_html, new_content_text
+        from sqlalchemy import select
+
+        subject = f"New {content_type.replace('_', ' ').title()} on Kida — {title}"
+        html = new_content_html(title, content_type)
+        text = new_content_text(title, content_type)
+
+        async with AsyncSessionLocal() as db:
+            user_emails = set(await db.scalars(select(User.email)))
+            subscriber_emails = set(await db.scalars(
+                select(NewsletterSubscriber.email).where(NewsletterSubscriber.is_active == True)
+            ))
+
+        all_emails = user_emails | subscriber_emails
+        for email in all_emails:
+            await send_email(to=email, subject=subject, html=html, text=text)
+
+    asyncio.run(_run())
+
+
+@celery_app.task
 def send_new_loop_notification(loop_id: str):
     async def _run():
         from app.database import AsyncSessionLocal
