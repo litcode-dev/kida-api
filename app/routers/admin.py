@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, UploadFile, File, Form
+from fastapi import APIRouter, Depends, UploadFile, File, Form, Query
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
@@ -651,3 +651,56 @@ async def replace_drum_sample_audio(
     sample = await drum_kit_service.replace_sample_audio(db, kit_id, sample_id, file)
     process_drum_sample_upload.delay(str(sample_id))
     return success({"sample_id": str(sample.id), "status": sample.status}, "Sample audio replacement queued")
+
+
+# --- Newsletter endpoints ---
+
+@router.get(
+    "/newsletter/subscribers",
+    summary="List newsletter subscribers",
+    description="Returns paginated newsletter subscribers. Filter by `active=true` for active only or `active=false` for unsubscribed.",
+    responses={
+        401: {"description": "Missing or invalid token"},
+        403: {"description": "Admin role required"},
+    },
+)
+async def list_newsletter_subscribers(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    active: bool | None = Query(None, description="Filter by subscription status"),
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_admin),
+):
+    from app.models.newsletter import NewsletterSubscriber
+
+    query = select(NewsletterSubscriber)
+    count_query = select(func.count()).select_from(NewsletterSubscriber)
+
+    if active is not None:
+        query = query.where(NewsletterSubscriber.is_active == active)
+        count_query = count_query.where(NewsletterSubscriber.is_active == active)
+
+    total = await db.scalar(count_query)
+    subscribers = await db.scalars(
+        query.order_by(NewsletterSubscriber.subscribed_at.desc())
+             .offset((page - 1) * page_size)
+             .limit(page_size)
+    )
+
+    data = [
+        {
+            "email": s.email,
+            "is_active": s.is_active,
+            "subscribed_at": s.subscribed_at.isoformat(),
+            "unsubscribed_at": s.unsubscribed_at.isoformat() if s.unsubscribed_at else None,
+        }
+        for s in subscribers.all()
+    ]
+
+    return success({
+        "subscribers": data,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "pages": -(-total // page_size),
+    })
