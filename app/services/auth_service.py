@@ -216,7 +216,7 @@ async def delete_user(db: AsyncSession, user: User, redis: Redis, refresh_token:
             await db.execute(delete(Drone).where(Drone.id.in_(drone_ids)))
         await db.execute(delete(DronePadCategory).where(DronePadCategory.id.in_(drone_cat_ids)))
 
-    await db.delete(user)
+    await db.execute(delete(User).where(User.id == uid))
     await db.commit()
 
 
