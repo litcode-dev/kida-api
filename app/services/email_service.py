@@ -151,10 +151,7 @@ def registration_html(full_name: str) -> str:
               <p style="margin:0;font-size:28px;font-weight:800;color:#0a0a0a;">10</p>
               <p style="margin:4px 0 0 0;font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:#888;">Genres</p>
             </td>
-            <td style="text-align:right;">
-              <p style="margin:0;font-size:28px;font-weight:800;color:#0a0a0a;">0</p>
-              <p style="margin:4px 0 0 0;font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:#888;">Subscriptions</p>
-            </td>
+            
           </tr>
         </table>
       </td></tr>
