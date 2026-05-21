@@ -328,7 +328,6 @@ async def upload_drone(
         await cache_service.delete_pattern("drone:list:*")
     except Exception as e:
         _structlog.get_logger().warning("cache_invalidation_failed", endpoint="upload_drone", error=str(e))
-    from app.tasks.upload_tasks import process_drone_upload
     for pad in drone.pads:
         process_drone_upload.delay(str(pad.id))
     return success(DroneResponse.model_validate(drone).model_dump(), "Drone pad upload queued")
@@ -373,7 +372,6 @@ async def bulk_upload_drones(
         await cache_service.delete_pattern("drone:list:*")
     except Exception as e:
         _structlog.get_logger().warning("cache_invalidation_failed", endpoint="bulk_upload_drones", error=str(e))
-    from app.tasks.upload_tasks import process_drone_upload
     for pad in pads:
         process_drone_upload.delay(str(pad.id))
 
@@ -520,7 +518,6 @@ async def create_drum_kit(
     kit, sample_ids = await drum_kit_service.create_drum_kit(
         db, data, producer.id, sample_files, labels, thumbnail=thumbnail
     )
-    from app.tasks.upload_tasks import process_drum_sample_upload
     for sid in sample_ids:
         process_drum_sample_upload.delay(sid)
     try:
