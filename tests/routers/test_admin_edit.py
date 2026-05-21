@@ -262,3 +262,46 @@ async def test_update_drum_kit_with_thumbnail_uploads_to_s3(client, db_session):
 
     assert resp.status_code == 200
     mock_upload.assert_awaited_once()
+
+
+# --- Drum kit PATCH /samples/{sample_id} tests ---
+
+@pytest.mark.asyncio
+async def test_replace_drum_sample_audio_sets_processing_and_queues_celery(client, db_session):
+    user = await _create_user(db_session, role=UserRole.producer)
+    kit, sample = await _create_drum_kit(db_session, user.id)
+    token = create_access_token({"sub": str(user.id), "role": user.role.value})
+
+    mock_task = MagicMock()
+    with patch("app.services.drum_kit_service.validate_wav_upload", new=AsyncMock(return_value=b"fakewav")), \
+         patch("app.services.drum_kit_service.s3_service.upload_bytes", new=AsyncMock()), \
+         patch("app.services.drum_kit_service.s3_service.delete_object", new=AsyncMock()), \
+         patch("app.routers.admin.process_drum_sample_upload", mock_task):
+        resp = await client.patch(
+            f"/api/v1/admin/drum-kits/{kit.id}/samples/{sample.id}",
+            files={"file": ("test.wav", b"RIFF....", "audio/wav")},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert resp.status_code == 200
+    assert resp.json()["data"]["status"] == "processing"
+    mock_task.delay.assert_called_once_with(str(sample.id))
+
+
+@pytest.mark.asyncio
+async def test_replace_drum_sample_audio_returns_404_if_sample_not_in_kit(client, db_session):
+    user = await _create_user(db_session, role=UserRole.producer)
+    kit, sample = await _create_drum_kit(db_session, user.id)
+    token = create_access_token({"sub": str(user.id), "role": user.role.value})
+    wrong_kit_id = uuid.uuid4()
+
+    with patch("app.services.drum_kit_service.validate_wav_upload", new=AsyncMock(return_value=b"fakewav")), \
+         patch("app.services.drum_kit_service.s3_service.upload_bytes", new=AsyncMock()), \
+         patch("app.services.drum_kit_service.s3_service.delete_object", new=AsyncMock()):
+        resp = await client.patch(
+            f"/api/v1/admin/drum-kits/{wrong_kit_id}/samples/{sample.id}",
+            files={"file": ("test.wav", b"RIFF....", "audio/wav")},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert resp.status_code == 404

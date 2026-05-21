@@ -23,7 +23,7 @@ from app.models.drum_kit import DrumKit
 from app.models.user import User, UserRole
 from app.exceptions import NotFoundError
 import uuid
-from app.tasks.upload_tasks import process_drone_upload, process_loop_upload
+from app.tasks.upload_tasks import process_drone_upload, process_loop_upload, process_drum_sample_upload
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -609,3 +609,16 @@ async def update_drum_kit(
     data = DrumKitUpdate(title=title, description=description, price=price, is_free=is_free)
     kit = await drum_kit_service.update_drum_kit(db, kit_id, data, thumbnail=thumbnail)
     return success(DrumKitResponse.model_validate(kit).model_dump(), "Drum kit updated")
+
+
+@router.patch("/drum-kits/{kit_id}/samples/{sample_id}")
+async def replace_drum_sample_audio(
+    kit_id: uuid.UUID,
+    sample_id: uuid.UUID,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    producer=Depends(require_producer),
+):
+    sample = await drum_kit_service.replace_sample_audio(db, kit_id, sample_id, file)
+    process_drum_sample_upload.delay(str(sample_id))
+    return success({"sample_id": str(sample.id), "status": sample.status}, "Sample audio replacement queued")

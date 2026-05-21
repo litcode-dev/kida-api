@@ -139,6 +139,31 @@ async def list_drum_kits(db: AsyncSession, filters: DrumKitFilter) -> tuple[list
     return list(result.scalars().all()), total or 0
 
 
+async def replace_sample_audio(
+    db: AsyncSession,
+    kit_id: uuid.UUID,
+    sample_id: uuid.UUID,
+    file: UploadFile,
+) -> DrumSample:
+    sample = await db.get(DrumSample, sample_id)
+    if not sample or sample.drum_kit_id != kit_id:
+        raise NotFoundError(f"Sample {sample_id} not found in kit {kit_id}")
+
+    wav_bytes = await validate_wav_upload(file)
+
+    if sample.file_s3_key:
+        await s3_service.delete_object(sample.file_s3_key)
+
+    raw_key = s3_service.s3_key_for_raw_drum_sample(str(sample_id))
+    await s3_service.upload_bytes(raw_key, wav_bytes, "audio/wav")
+
+    sample.file_s3_key = None
+    sample.status = "processing"
+    await db.commit()
+    await db.refresh(sample)
+    return sample
+
+
 async def delete_drum_kit(db: AsyncSession, kit_id: uuid.UUID) -> None:
     result = await db.execute(
         select(DrumKit)
