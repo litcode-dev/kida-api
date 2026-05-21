@@ -50,11 +50,12 @@ class EmailTestRequest(BaseModel):
     },
 )
 async def test_email(body: EmailTestRequest, _: User = Depends(require_admin)):
-    from app.services.email_service import send_email, registration_html
+    from app.services.email_service import send_email, registration_html, registration_text
     await send_email(
         to=body.email,
         subject="Kida — Email test",
         html=registration_html("there"),
+        text=registration_text("there"),
     )
     return success(message="Test email dispatched", data={"to": body.email})
 

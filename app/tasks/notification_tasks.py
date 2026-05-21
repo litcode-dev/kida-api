@@ -12,7 +12,7 @@ def send_registration_email(user_id: str):
     async def _run():
         from app.database import AsyncSessionLocal
         from app.models.user import User
-        from app.services.email_service import send_email, registration_html
+        from app.services.email_service import send_email, registration_html, registration_text
         import uuid
 
         async with AsyncSessionLocal() as db:
@@ -23,8 +23,9 @@ def send_registration_email(user_id: str):
             log.info("registration_email.sending", user_id=user_id, email=user.email)
             await send_email(
                 to=user.email,
-                subject="Welcome to LitMusic!",
+                subject="Welcome to Kida",
                 html=registration_html(user.full_name),
+                text=registration_text(user.full_name),
             )
             log.info("registration_email.done", user_id=user_id, email=user.email)
 
@@ -40,7 +41,7 @@ def send_purchase_confirmation(user_id: str, purchase_id: str):
         from app.models.loop import Loop
         from app.models.stem_pack import StemPack
         from app.services.onesignal_service import send_purchase_confirmation_notification
-        from app.services.email_service import send_email, purchase_html
+        from app.services.email_service import send_email, purchase_html, purchase_text
         import uuid
 
         async with AsyncSessionLocal() as db:
@@ -66,6 +67,7 @@ def send_purchase_confirmation(user_id: str, purchase_id: str):
                 )
 
             # Email
+            _amount = f"{purchase.amount_paid:.2f}"
             await send_email(
                 to=user.email,
                 subject=f"Purchase confirmed — {product.title}",
@@ -73,7 +75,13 @@ def send_purchase_confirmation(user_id: str, purchase_id: str):
                     full_name=user.full_name,
                     product_title=product.title,
                     product_type=product_type,
-                    amount=f"{purchase.amount_paid:.2f}",
+                    amount=_amount,
+                ),
+                text=purchase_text(
+                    full_name=user.full_name,
+                    product_title=product.title,
+                    product_type=product_type,
+                    amount=_amount,
                 ),
             )
 

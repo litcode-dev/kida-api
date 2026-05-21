@@ -221,11 +221,12 @@ async def delete_user(db: AsyncSession, user: User, redis: Redis, refresh_token:
     await db.execute(delete(User).where(User.id == uid))
     await db.commit()
 
-    from app.services.email_service import send_email, account_deleted_html
+    from app.services.email_service import send_email, account_deleted_html, account_deleted_text
     await send_email(
         to=user_email,
         subject="Your Kida account has been deleted",
         html=account_deleted_html(user_full_name),
+        text=account_deleted_text(user_full_name),
     )
 
 

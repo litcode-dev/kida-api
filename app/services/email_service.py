@@ -14,20 +14,27 @@ log = structlog.get_logger()
 _RESEND_URL = "https://api.resend.com/emails"
 
 
-async def _send_via_resend(settings, to: str, subject: str, html: str) -> None:
-    payload = {"from": settings.resend_from, "to": [to], "subject": subject, "html": html}
+async def _send_via_resend(settings, to: str, subject: str, html: str, text: str) -> None:
+    payload = {
+        "from": settings.resend_from,
+        "to": [to],
+        "subject": subject,
+        "html": html,
+        "text": text,
+    }
     headers = {"Authorization": f"Bearer {settings.resend_api_key}", "Content-Type": "application/json"}
     async with httpx.AsyncClient(timeout=10) as client:
         resp = await client.post(_RESEND_URL, json=payload, headers=headers)
         resp.raise_for_status()
 
 
-async def _send_via_smtp(settings, to: str, subject: str, html: str) -> None:
+async def _send_via_smtp(settings, to: str, subject: str, html: str, text: str) -> None:
     def _send():
         msg = MIMEMultipart("alternative")
         msg["Subject"] = subject
         msg["From"] = settings.smtp_from
         msg["To"] = to
+        msg.attach(MIMEText(text, "plain"))
         msg.attach(MIMEText(html, "html"))
         with smtplib.SMTP(settings.smtp_host, settings.smtp_port) as smtp:
             smtp.ehlo()
@@ -38,24 +45,24 @@ async def _send_via_smtp(settings, to: str, subject: str, html: str) -> None:
     await asyncio.to_thread(_send)
 
 
-async def send_email(to: str, subject: str, html: str) -> None:
+async def send_email(to: str, subject: str, html: str, text: str) -> None:
     settings = get_settings()
     backend = settings.email_backend
 
     if backend == "fallback":
-        await _send_with_fallback(settings, to, subject, html)
+        await _send_with_fallback(settings, to, subject, html, text)
         return
 
     if backend == "resend":
         if not settings.resend_api_key:
             log.warning("email.skipped", reason="RESEND_API_KEY not configured", to=to)
             return
-        send_fn = _send_via_resend(settings, to, subject, html)
+        send_fn = _send_via_resend(settings, to, subject, html, text)
     else:
         if not settings.smtp_user or not settings.smtp_password:
             log.warning("email.skipped", reason="SMTP credentials not configured", to=to)
             return
-        send_fn = _send_via_smtp(settings, to, subject, html)
+        send_fn = _send_via_smtp(settings, to, subject, html, text)
 
     try:
         await send_fn
@@ -67,12 +74,12 @@ async def send_email(to: str, subject: str, html: str) -> None:
         log.error("email.failed", to=to, subject=subject, backend=backend, error=str(exc))
 
 
-async def _send_with_fallback(settings, to: str, subject: str, html: str) -> None:
+async def _send_with_fallback(settings, to: str, subject: str, html: str, text: str) -> None:
     if not settings.resend_api_key:
         log.warning("email.fallback.resend_skipped", reason="RESEND_API_KEY not configured", to=to)
     else:
         try:
-            await _send_via_resend(settings, to, subject, html)
+            await _send_via_resend(settings, to, subject, html, text)
             log.info("email.sent", to=to, subject=subject, backend="resend")
             return
         except httpx.HTTPStatusError as exc:
@@ -87,15 +94,44 @@ async def _send_with_fallback(settings, to: str, subject: str, html: str) -> Non
         return
 
     try:
-        await _send_via_smtp(settings, to, subject, html)
+        await _send_via_smtp(settings, to, subject, html, text)
         log.info("email.sent", to=to, subject=subject, backend="smtp")
     except Exception as exc:
         log.error("email.failed", to=to, subject=subject, backend="smtp", error=str(exc))
 
 
+# ── Shared footer snippets ─────────────────────────────────────────────────────
+
+def _html_footer(unsubscribe_email: str = "support@litcode.com.ng") -> str:
+    year = datetime.now(timezone.utc).year
+    return f"""
+      <!-- COMPLIANCE FOOTER -->
+      <tr><td style="background:#f2ede4;padding:20px 32px;border-top:1px solid #ddd8ce;text-align:center;">
+        <p style="margin:0;font-size:11px;color:#999;line-height:1.6;">
+          Kida &mdash; Professional Music Production Samples<br>
+          Lagos, Nigeria &middot; <a href="https://kida.litcode.com.ng" style="color:#999;text-decoration:none;">kida.litcode.com.ng</a><br>
+          &copy; {year} Litcode. All rights reserved.<br>
+          <a href="mailto:{unsubscribe_email}?subject=Unsubscribe"
+             style="color:#999;text-decoration:underline;font-size:11px;">Unsubscribe</a>
+        </p>
+      </td></tr>"""
+
+
+def _text_footer() -> str:
+    year = datetime.now(timezone.utc).year
+    return (
+        f"\n\n---\n"
+        f"Kida | Professional Music Production Samples\n"
+        f"Lagos, Nigeria | kida.litcode.com.ng\n"
+        f"© {year} Litcode. All rights reserved.\n"
+        f"To unsubscribe, email support@litcode.com.ng with subject: Unsubscribe"
+    )
+
+
 # ── Templates ─────────────────────────────────────────────────────────────────
 
 def registration_html(full_name: str) -> str:
+    year = datetime.now(timezone.utc).year
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
@@ -123,14 +159,14 @@ def registration_html(full_name: str) -> str:
 
       <!-- META STRIP -->
       <tr><td style="background:#0a0a0a;padding:24px 32px 28px 32px;border-bottom:1px solid #1f1f1f;">
-        <p style="margin:0;color:#fff;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;">{datetime.now(timezone.utc).year} &nbsp;&middot;&nbsp; PREMIUM LOOPS &nbsp;&middot;&nbsp; STEM PACKS</p>
+        <p style="margin:0;color:#fff;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;">{year} &nbsp;&middot;&nbsp; PREMIUM LOOPS &nbsp;&middot;&nbsp; STEM PACKS</p>
       </td></tr>
 
       <!-- BODY -->
       <tr><td style="background:#f2ede4;padding:36px 32px 28px 32px;">
         <p style="margin:0 0 8px 0;font-size:17px;font-weight:700;color:#0a0a0a;">Hi {full_name},</p>
         <p style="margin:0 0 28px 0;font-size:15px;line-height:1.6;color:#333;">
-          Your kida account is ready. Browse premium loops and stem packs built for serious producers — no subscriptions, just the sounds you need.
+          Your Kida account is ready. Browse premium loops and stem packs built for serious producers — no subscriptions, just the sounds you need.
         </p>
         <a href="https://kida.litcode.com.ng"
            style="display:inline-block;padding:14px 28px;background:#0a0a0a;color:#fff;
@@ -152,13 +188,16 @@ def registration_html(full_name: str) -> str:
               <p style="margin:0;font-size:28px;font-weight:800;color:#0a0a0a;">10</p>
               <p style="margin:4px 0 0 0;font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:#888;">Genres</p>
             </td>
-            
+            <td style="text-align:right;">
+              <p style="margin:0;font-size:28px;font-weight:800;color:#0a0a0a;">0</p>
+              <p style="margin:4px 0 0 0;font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:#888;">Subscriptions</p>
+            </td>
           </tr>
         </table>
       </td></tr>
 
-      <!-- FOOTER -->
-      <tr><td style="background:#0a0a0a;padding:24px 32px;border-radius:0 0 8px 8px;">
+      <!-- BRAND FOOTER -->
+      <tr><td style="background:#0a0a0a;padding:24px 32px;">
         <table width="100%" cellpadding="0" cellspacing="0">
           <tr>
             <td style="width:36px;vertical-align:middle;">
@@ -174,6 +213,8 @@ def registration_html(full_name: str) -> str:
         </table>
       </td></tr>
 
+      {_html_footer()}
+
     </table>
   </td></tr>
 </table>
@@ -181,7 +222,19 @@ def registration_html(full_name: str) -> str:
 </html>"""
 
 
+def registration_text(full_name: str) -> str:
+    return (
+        f"Hi {full_name},\n\n"
+        f"Your Kida account is ready.\n\n"
+        f"Browse premium loops and stem packs built for serious musicians — "
+        f"you can start with no subscriptions, just the sounds you need.\n\n"
+        f"Get started: https://kida.litcode.com.ng"
+        + _text_footer()
+    )
+
+
 def account_deleted_html(full_name: str) -> str:
+    year = datetime.now(timezone.utc).year
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
@@ -209,7 +262,7 @@ def account_deleted_html(full_name: str) -> str:
 
       <!-- META STRIP -->
       <tr><td style="background:#0a0a0a;padding:24px 32px 28px 32px;border-bottom:1px solid #1f1f1f;">
-        <p style="margin:0;color:#fff;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;">{datetime.now(timezone.utc).year} &nbsp;&middot;&nbsp; PREMIUM LOOPS &nbsp;&middot;&nbsp; STEM PACKS</p>
+        <p style="margin:0;color:#fff;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;">{year} &nbsp;&middot;&nbsp; PREMIUM LOOPS &nbsp;&middot;&nbsp; STEM PACKS</p>
       </td></tr>
 
       <!-- BODY -->
@@ -227,8 +280,8 @@ def account_deleted_html(full_name: str) -> str:
         </a>
       </td></tr>
 
-      <!-- FOOTER -->
-      <tr><td style="background:#0a0a0a;padding:24px 32px;border-radius:0 0 8px 8px;">
+      <!-- BRAND FOOTER -->
+      <tr><td style="background:#0a0a0a;padding:24px 32px;">
         <table width="100%" cellpadding="0" cellspacing="0">
           <tr>
             <td style="width:36px;vertical-align:middle;">
@@ -244,6 +297,8 @@ def account_deleted_html(full_name: str) -> str:
         </table>
       </td></tr>
 
+      {_html_footer()}
+
     </table>
   </td></tr>
 </table>
@@ -251,34 +306,109 @@ def account_deleted_html(full_name: str) -> str:
 </html>"""
 
 
+def account_deleted_text(full_name: str) -> str:
+    return (
+        f"Hi {full_name},\n\n"
+        f"Your Kida account has been permanently deleted. "
+        f"All your data has been removed from our systems.\n\n"
+        f"We're sorry to see you go. If you ever want to come back: https://kida.litcode.com.ng"
+        + _text_footer()
+    )
+
+
 def purchase_html(full_name: str, product_title: str, product_type: str, amount: str) -> str:
     return f"""<!DOCTYPE html>
-<html>
-<body style="font-family:sans-serif;max-width:600px;margin:auto;padding:24px;color:#1a1a1a;">
-  <h1 style="color:#6c3bdb;">Purchase Confirmed ✓</h1>
-  <p>Hi {full_name}, thanks for your purchase on Kida!</p>
-  <table style="width:100%;border-collapse:collapse;margin:20px 0;border-radius:8px;overflow:hidden;">
-    <tr style="background:#f5f0ff;">
-      <td style="padding:12px 16px;font-weight:bold;width:40%;">Item</td>
-      <td style="padding:12px 16px;">{product_title}</td>
-    </tr>
-    <tr>
-      <td style="padding:12px 16px;font-weight:bold;">Type</td>
-      <td style="padding:12px 16px;">{product_type}</td>
-    </tr>
-    <tr style="background:#f5f0ff;">
-      <td style="padding:12px 16px;font-weight:bold;">Amount Paid</td>
-      <td style="padding:12px 16px;">${amount}</td>
-    </tr>
-  </table>
-  <p>Your purchase is available in your library immediately.</p>
-  <a href="https://kida.litcode.com.ng"
-     style="display:inline-block;margin-top:8px;padding:12px 28px;background:#6c3bdb;
-            color:#fff;border-radius:6px;text-decoration:none;font-weight:bold;">
-    Go to Library
-  </a>
-  <p style="margin-top:40px;color:#999;font-size:12px;">
-    Kida &mdash; Professional Music Production Samples
-  </p>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#e8e3d9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#e8e3d9;">
+  <tr><td align="center" style="padding:32px 16px;">
+    <table width="520" cellpadding="0" cellspacing="0" style="max-width:520px;width:100%;">
+
+      <!-- HEADER -->
+      <tr><td style="background:#0a0a0a;padding:24px 32px 0 32px;border-radius:8px 8px 0 0;">
+        <table width="100%" cellpadding="0" cellspacing="0">
+          <tr>
+            <td style="color:#fff;font-size:11px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;">KIDA</td>
+            <td align="right" style="color:#fff;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;">PURCHASE</td>
+          </tr>
+        </table>
+      </td></tr>
+
+      <!-- HERO -->
+      <tr><td style="background:#0a0a0a;padding:32px 32px 8px 32px;">
+        <p style="margin:0 0 16px 0;color:#1FBF62;font-size:12px;font-weight:800;letter-spacing:0.15em;text-transform:uppercase;">CONFIRMED.</p>
+        <p style="margin:0;font-size:52px;font-weight:800;line-height:1.05;color:#fff;letter-spacing:-0.02em;">Your sound</p>
+        <p style="margin:0;font-size:52px;font-weight:800;line-height:1.05;color:#1FBF62;letter-spacing:-0.02em;">is ready.</p>
+      </td></tr>
+
+      <!-- META STRIP -->
+      <tr><td style="background:#0a0a0a;padding:24px 32px 28px 32px;border-bottom:1px solid #1f1f1f;">
+        <p style="margin:0;color:#fff;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;">{datetime.now(timezone.utc).year} &nbsp;&middot;&nbsp; PREMIUM LOOPS &nbsp;&middot;&nbsp; STEM PACKS</p>
+      </td></tr>
+
+      <!-- BODY -->
+      <tr><td style="background:#f2ede4;padding:36px 32px 28px 32px;">
+        <p style="margin:0 0 20px 0;font-size:17px;font-weight:700;color:#0a0a0a;">Hi {full_name},</p>
+        <table width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 28px 0;">
+          <tr style="background:#e8e3d9;">
+            <td style="padding:12px 16px;font-size:12px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:0.08em;width:40%;">Item</td>
+            <td style="padding:12px 16px;font-size:14px;color:#0a0a0a;font-weight:600;">{product_title}</td>
+          </tr>
+          <tr>
+            <td style="padding:12px 16px;font-size:12px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:0.08em;">Type</td>
+            <td style="padding:12px 16px;font-size:14px;color:#0a0a0a;">{product_type}</td>
+          </tr>
+          <tr style="background:#e8e3d9;">
+            <td style="padding:12px 16px;font-size:12px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:0.08em;">Amount Paid</td>
+            <td style="padding:12px 16px;font-size:14px;color:#0a0a0a;font-weight:700;">&#8358;{amount}</td>
+          </tr>
+        </table>
+        <p style="margin:0 0 28px 0;font-size:15px;line-height:1.6;color:#333;">
+          Your purchase is available in your library immediately.
+        </p>
+        <a href="https://kida.litcode.com.ng"
+           style="display:inline-block;padding:14px 28px;background:#0a0a0a;color:#fff;
+                  font-size:14px;font-weight:700;text-decoration:none;border-radius:4px;
+                  letter-spacing:0.02em;">
+          Go to Library &rarr;
+        </a>
+      </td></tr>
+
+      <!-- BRAND FOOTER -->
+      <tr><td style="background:#0a0a0a;padding:24px 32px;">
+        <table width="100%" cellpadding="0" cellspacing="0">
+          <tr>
+            <td style="width:36px;vertical-align:middle;">
+              <div style="width:32px;height:32px;background:#1FBF62;border-radius:4px;
+                          text-align:center;line-height:32px;color:#fff;
+                          font-size:12px;font-weight:800;letter-spacing:0.05em;">LM</div>
+            </td>
+            <td style="padding-left:12px;vertical-align:middle;">
+              <p style="margin:0;font-size:11px;font-weight:700;color:#fff;letter-spacing:0.1em;text-transform:uppercase;">KIDA</p>
+              <p style="margin:2px 0 0 0;font-size:11px;color:#fff;">Professional Music Production Samples</p>
+            </td>
+          </tr>
+        </table>
+      </td></tr>
+
+      {_html_footer()}
+
+    </table>
+  </td></tr>
+</table>
 </body>
 </html>"""
+
+
+def purchase_text(full_name: str, product_title: str, product_type: str, amount: str) -> str:
+    return (
+        f"Hi {full_name},\n\n"
+        f"Purchase confirmed!\n\n"
+        f"Item: {product_title}\n"
+        f"Type: {product_type}\n"
+        f"Amount Paid: ₦{amount}\n\n"
+        f"Your purchase is available in your library immediately.\n"
+        f"Go to Library: https://kida.litcode.com.ng"
+        + _text_footer()
+    )
