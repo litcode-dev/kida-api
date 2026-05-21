@@ -23,6 +23,7 @@ from app.models.drum_kit import DrumKit
 from app.models.user import User, UserRole
 from app.exceptions import NotFoundError
 import uuid
+from app.tasks.upload_tasks import process_drone_upload
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -434,9 +435,6 @@ async def delete_drone(
     except Exception as e:
         _structlog.get_logger().warning("cache_invalidation_failed", endpoint="delete_drone", error=str(e))
     return success(message="Drone pad deleted")
-
-
-from app.tasks.upload_tasks import process_drone_upload
 
 
 @router.patch("/drones/{drone_id}/pads/{pad_id}")
