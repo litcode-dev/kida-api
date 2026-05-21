@@ -46,17 +46,29 @@ async def list_drones(
     page_size: int = 50,
     db: AsyncSession = Depends(get_db),
 ):
+    cache_key = (
+        f"drone:list:{key.value if key else 'none'}"
+        f":{is_free if is_free is not None else 'none'}"
+        f":{category_id or 'none'}"
+        f":{page}:{page_size}"
+    )
+    cached = await cache_service.get(cache_key)
+    if cached is not None:
+        return success(cached)
+
     filters = DronePadFilter(
         key=key, is_free=is_free, category_id=category_id,
         page=page, page_size=page_size,
     )
     drones, total = await drone_service.list_drones(db, filters)
-    return success({
+    data = {
         "items": [DroneResponse.model_validate(d).model_dump(mode="json") for d in drones],
         "total": total,
         "page": page,
         "page_size": page_size,
-    })
+    }
+    await cache_service.set(cache_key, data, cache_service.TTL_DRONE_LIST)
+    return success(data)
 
 
 @router.get("/{drone_id}")
