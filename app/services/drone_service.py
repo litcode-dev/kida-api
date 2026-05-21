@@ -325,6 +325,34 @@ async def update_drone(
     return await get_drone(db, drone_id)
 
 
+async def replace_pad_audio(
+    db: AsyncSession,
+    drone_id: uuid.UUID,
+    pad_id: uuid.UUID,
+    file: UploadFile,
+) -> DronePad:
+    pad = await get_drone_pad(db, pad_id)
+    if pad.drone_id != drone_id:
+        raise NotFoundError(f"Pad {pad_id} not found in drone {drone_id}")
+
+    wav_bytes = await validate_wav_upload(file)
+
+    if pad.file_s3_key:
+        await s3_service.delete_object(pad.file_s3_key)
+    if pad.preview_s3_key:
+        await s3_service.delete_object(pad.preview_s3_key)
+
+    raw_key = s3_service.s3_key_for_raw_drone(str(pad_id))
+    await s3_service.upload_bytes(raw_key, wav_bytes, "audio/wav")
+
+    pad.file_s3_key = None
+    pad.preview_s3_key = None
+    pad.status = "processing"
+    await db.commit()
+    await db.refresh(pad)
+    return pad
+
+
 async def delete_drone(db: AsyncSession, drone_id: uuid.UUID) -> None:
     drone = await get_drone(db, drone_id)
     for pad in drone.pads:

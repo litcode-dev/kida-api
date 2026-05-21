@@ -125,3 +125,47 @@ async def test_update_drone_with_thumbnail_uploads_to_s3(client, db_session):
 
     assert resp.status_code == 200
     mock_upload.assert_awaited_once()
+
+
+# --- Drone PATCH /pads/{pad_id} tests ---
+
+@pytest.mark.asyncio
+async def test_replace_drone_pad_audio_sets_processing_and_queues_celery(client, db_session):
+    user = await _create_user(db_session, role=UserRole.producer)
+    pad = await _create_drone(db_session, user.id)
+    token = create_access_token({"sub": str(user.id), "role": user.role.value})
+
+    mock_task = MagicMock()
+    with patch("app.services.drone_service.validate_wav_upload", new=AsyncMock(return_value=b"fakewav")), \
+         patch("app.services.drone_service.s3_service.upload_bytes", new=AsyncMock()), \
+         patch("app.services.drone_service.s3_service.delete_object", new=AsyncMock()), \
+         patch("app.routers.admin.cache_service.delete_pattern", new=AsyncMock()), \
+         patch("app.routers.admin.process_drone_upload", mock_task):
+        resp = await client.patch(
+            f"/api/v1/admin/drones/{pad.drone_id}/pads/{pad.id}",
+            files={"file": ("test.wav", b"RIFF....", "audio/wav")},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert resp.status_code == 200
+    assert resp.json()["data"]["status"] == "processing"
+    mock_task.delay.assert_called_once_with(str(pad.id))
+
+
+@pytest.mark.asyncio
+async def test_replace_drone_pad_audio_returns_404_if_pad_not_in_drone(client, db_session):
+    user = await _create_user(db_session, role=UserRole.producer)
+    pad = await _create_drone(db_session, user.id)
+    token = create_access_token({"sub": str(user.id), "role": user.role.value})
+    wrong_drone_id = uuid.uuid4()
+
+    with patch("app.services.drone_service.validate_wav_upload", new=AsyncMock(return_value=b"fakewav")), \
+         patch("app.services.drone_service.s3_service.upload_bytes", new=AsyncMock()), \
+         patch("app.services.drone_service.s3_service.delete_object", new=AsyncMock()):
+        resp = await client.patch(
+            f"/api/v1/admin/drones/{wrong_drone_id}/pads/{pad.id}",
+            files={"file": ("test.wav", b"RIFF....", "audio/wav")},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert resp.status_code == 404

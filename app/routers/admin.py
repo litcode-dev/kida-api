@@ -436,6 +436,27 @@ async def delete_drone(
     return success(message="Drone pad deleted")
 
 
+from app.tasks.upload_tasks import process_drone_upload
+
+
+@router.patch("/drones/{drone_id}/pads/{pad_id}")
+async def replace_drone_pad_audio(
+    drone_id: uuid.UUID,
+    pad_id: uuid.UUID,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    producer=Depends(require_producer),
+):
+    pad = await drone_service.replace_pad_audio(db, drone_id, pad_id, file)
+    import structlog as _structlog
+    try:
+        await cache_service.delete_pattern("drone:list:*")
+    except Exception as e:
+        _structlog.get_logger().warning("cache_invalidation_failed", endpoint="replace_drone_pad_audio", error=str(e))
+    process_drone_upload.delay(str(pad_id))
+    return success({"pad_id": str(pad.id), "status": pad.status}, "Pad audio replacement queued")
+
+
 # --- Drum kit endpoints ---
 
 @router.post(
