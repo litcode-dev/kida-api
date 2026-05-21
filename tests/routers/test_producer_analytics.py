@@ -1,6 +1,7 @@
 # tests/routers/test_producer_analytics.py
 import pytest
 from datetime import date
+from pydantic import ValidationError
 from app.schemas.producer_analytics import AnalyticsParams, AnalyticsPeriod
 
 
@@ -33,10 +34,10 @@ def test_period_all_returns_none():
 
 
 def test_from_without_to_raises():
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         AnalyticsParams(from_date=date(2026, 1, 1))
 
 
 def test_from_after_to_raises():
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         AnalyticsParams(from_date=date(2026, 6, 1), to_date=date(2026, 1, 1))

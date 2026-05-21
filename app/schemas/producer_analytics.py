@@ -1,6 +1,6 @@
 # app/schemas/producer_analytics.py
 import uuid
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from enum import Enum
 from pydantic import BaseModel, model_validator
@@ -40,7 +40,7 @@ class AnalyticsParams(BaseModel):
             )
         delta_map = {"7d": 7, "30d": 30, "90d": 90}
         if self.period.value in delta_map:
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             return (now - timedelta(days=delta_map[self.period.value]), now)
         return (None, None)
 
@@ -59,6 +59,8 @@ class AnalyticsSummary(BaseModel):
 
 
 class AnalyticsItem(BaseModel):
+    model_config = {"from_attributes": True}
+
     id: uuid.UUID
     title: str
     thumbnail_url: str | None
@@ -68,6 +70,8 @@ class AnalyticsItem(BaseModel):
 
 
 class AnalyticsSection(BaseModel):
+    model_config = {"from_attributes": True}
+
     items: list[AnalyticsItem]
     total: int
     page: int
