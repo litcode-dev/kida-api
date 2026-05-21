@@ -50,7 +50,6 @@ async def upload_loop(
         tags=[t.strip() for t in tags.split(",") if t.strip()],
     )
     loop = await loop_service.create_loop(db, file, data, producer.id, thumbnail=thumbnail)
-    from app.tasks.upload_tasks import process_loop_upload
     process_loop_upload.delay(str(loop.id))
     return success(LoopResponse.model_validate(loop).model_dump(), "Loop upload queued")
 

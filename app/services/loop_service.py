@@ -128,7 +128,7 @@ async def update_loop(
     data: LoopUpdate,
     thumbnail: UploadFile | None = None,
     file: UploadFile | None = None,
-) -> tuple:
+) -> tuple[Loop, bool]:
     loop = await get_loop(db, loop_id)
 
     if thumbnail:
