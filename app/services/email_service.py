@@ -51,8 +51,8 @@ def registration_html(full_name: str) -> str:
       <tr><td style="background:#0a0a0a;padding:24px 32px 0 32px;border-radius:8px 8px 0 0;">
         <table width="100%" cellpadding="0" cellspacing="0">
           <tr>
-            <td style="color:#fff;font-size:11px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;">LITMUSIC</td>
-            <td align="right" style="color:#555;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;">NO. 0001 / WELCOME</td>
+            <td style="color:#fff;font-size:11px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;">KIDA</td>
+            <td align="right" style="color:#555;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;">WELCOME</td>
           </tr>
         </table>
       </td></tr>
@@ -66,16 +66,16 @@ def registration_html(full_name: str) -> str:
 
       <!-- META STRIP -->
       <tr><td style="background:#0a0a0a;padding:24px 32px 28px 32px;border-bottom:1px solid #1f1f1f;">
-        <p style="margin:0;color:#444;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;">EST. 2024 &nbsp;&middot;&nbsp; PREMIUM LOOPS &nbsp;&middot;&nbsp; STEM PACKS</p>
+        <p style="margin:0;color:#444;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;">2026 &nbsp;&middot;&nbsp; PREMIUM LOOPS &nbsp;&middot;&nbsp; STEM PACKS</p>
       </td></tr>
 
       <!-- BODY -->
       <tr><td style="background:#f2ede4;padding:36px 32px 28px 32px;">
         <p style="margin:0 0 8px 0;font-size:17px;font-weight:700;color:#0a0a0a;">Hi {full_name},</p>
         <p style="margin:0 0 28px 0;font-size:15px;line-height:1.6;color:#333;">
-          Your LitMusic account is ready. Browse premium loops and stem packs built for serious producers — no subscriptions, just the sounds you need.
+          Your kida account is ready. Browse premium loops and stem packs built for serious producers — no subscriptions, just the sounds you need.
         </p>
-        <a href="https://litmusic.app"
+        <a href="https://kida.litcode.com.ng"
            style="display:inline-block;padding:14px 28px;background:#0a0a0a;color:#fff;
                   font-size:14px;font-weight:700;text-decoration:none;border-radius:4px;
                   letter-spacing:0.02em;">
@@ -113,7 +113,7 @@ def registration_html(full_name: str) -> str:
                           font-size:12px;font-weight:800;letter-spacing:0.05em;">LM</div>
             </td>
             <td style="padding-left:12px;vertical-align:middle;">
-              <p style="margin:0;font-size:11px;font-weight:700;color:#fff;letter-spacing:0.1em;text-transform:uppercase;">LITMUSIC</p>
+              <p style="margin:0;font-size:11px;font-weight:700;color:#fff;letter-spacing:0.1em;text-transform:uppercase;">KIDA</p>
               <p style="margin:2px 0 0 0;font-size:11px;color:#555;">Professional Music Production Samples</p>
             </td>
           </tr>
