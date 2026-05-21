@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, UploadFile, File, Form
+from pydantic import BaseModel, EmailStr
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from decimal import Decimal
@@ -26,6 +27,36 @@ import uuid
 from app.tasks.upload_tasks import process_drone_upload, process_loop_upload, process_drum_sample_upload
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+
+
+class EmailTestRequest(BaseModel):
+    email: EmailStr
+
+
+@router.post(
+    "/email/test",
+    summary="Send a test email",
+    description=(
+        "Sends a test welcome email to the specified address using the configured email backend. "
+        "With `EMAIL_BACKEND=fallback`, Resend is tried first and SMTP is used if Resend fails. "
+        "Check worker logs for `email.sent` or `email.failed` to confirm delivery."
+    ),
+    response_description="Confirmation that the email was dispatched",
+    responses={
+        200: {"description": "Email dispatched (check logs for actual delivery status)"},
+        401: {"description": "Missing or invalid token"},
+        403: {"description": "Admin role required"},
+        422: {"description": "Invalid email address"},
+    },
+)
+async def test_email(body: EmailTestRequest, _: User = Depends(require_admin)):
+    from app.services.email_service import send_email, registration_html
+    await send_email(
+        to=body.email,
+        subject="Kida — Email test",
+        html=registration_html("there"),
+    )
+    return success(message="Test email dispatched", data={"to": body.email})
 
 
 # --- Loop endpoints ---
