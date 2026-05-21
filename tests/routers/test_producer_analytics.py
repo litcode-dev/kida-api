@@ -1,8 +1,20 @@
 # tests/routers/test_producer_analytics.py
 import pytest
-from datetime import date
+import pytest_asyncio
+import uuid
+from datetime import date, datetime, timezone
+from decimal import Decimal
 from pydantic import ValidationError
+from sqlalchemy.ext.asyncio import AsyncSession
 from app.schemas.producer_analytics import AnalyticsParams, AnalyticsPeriod
+from app.models.loop import Loop, Genre, TempoFeel
+from app.models.drone_pad import Drone, DronePad, MusicalKey
+from app.models.drum_kit import DrumKit
+from app.models.purchase import Purchase, PurchaseType
+from app.models.download import Download
+from app.models.user import User, UserRole
+from app.services.auth_service import hash_password, create_access_token
+from app.services.producer_analytics_service import get_producer_analytics
 
 
 def test_default_params():
@@ -41,22 +53,6 @@ def test_from_without_to_raises():
 def test_from_after_to_raises():
     with pytest.raises(ValidationError):
         AnalyticsParams(from_date=date(2026, 6, 1), to_date=date(2026, 1, 1))
-
-
-import pytest_asyncio
-from decimal import Decimal
-from sqlalchemy.ext.asyncio import AsyncSession
-from app.models.loop import Loop, Genre, TempoFeel
-from app.models.drone_pad import Drone, DronePad, MusicalKey
-from app.models.drum_kit import DrumKit
-from app.models.purchase import Purchase, PurchaseType
-from app.models.download import Download
-from app.models.user import User, UserRole
-from app.services.auth_service import hash_password
-from app.services.producer_analytics_service import get_producer_analytics
-from app.schemas.producer_analytics import AnalyticsParams, AnalyticsPeriod
-import uuid
-from datetime import datetime, timezone
 
 
 async def _make_producer(db):
@@ -218,9 +214,6 @@ async def test_analytics_other_producers_content_excluded(db_session):
     result = await get_producer_analytics(db_session, producer.id, params)
     assert result["loops"]["total"] == 0
     assert result["summary"]["total_earnings"] == Decimal("0")
-
-
-from app.services.auth_service import create_access_token
 
 
 @pytest.mark.asyncio

@@ -36,7 +36,9 @@ async def producer_analytics(
             page_size=page_size,
         )
     except ValidationError as e:
-        raise AppError(e.errors()[0]["msg"], status_code=422)
+        err = e.errors()[0]
+        msg = str(err.get("ctx", {}).get("error", err["msg"]))
+        raise AppError(msg, status_code=422)
 
     data = await get_producer_analytics(db, producer.id, params)
     return success(data)
