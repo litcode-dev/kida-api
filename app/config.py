@@ -64,6 +64,9 @@ class Settings(BaseSettings):
     google_client_secret: str = ""
     google_redirect_uri: str = "http://localhost:3000/auth/google/callback"
 
+    # Apple OAuth (Sign In with Apple)
+    apple_client_id: str = ""  # Bundle ID (iOS) or Service ID (web) — used as JWT audience
+
     # AI Music Generation
     suno_api_key: str = ""
     suno_api_url: str = "https://api.suno.ai"
@@ -81,6 +84,9 @@ class Settings(BaseSettings):
     # IAP — Google
     android_package_name: str = "com.litcode.kida"
     google_service_account_json: str = "{}"  # Full service account JSON as a string
+
+    # Sentry
+    sentry_dsn: str = ""
 
 
 @lru_cache

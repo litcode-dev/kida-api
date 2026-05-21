@@ -7,9 +7,10 @@ from app.middleware.auth_middleware import get_current_user, get_redis
 from app.middleware.rate_limit import limiter
 from app.services import auth_service
 from app.services import oauth_service
+from app.exceptions import AppError
 from app.schemas.user import (
     UserRegister, UserLogin, UserResponse, TokenResponse,
-    RefreshRequest, OAuthCallbackRequest, GoogleTokenRequest, DeleteAccountRequest,
+    RefreshRequest, OAuthCallbackRequest, GoogleTokenRequest, AppleTokenRequest, DeleteAccountRequest,
 )
 from app.schemas.common import success
 
@@ -131,6 +132,41 @@ async def google_oauth_mobile(
         provider="google",
         provider_id=user_info["sub"],
         avatar_url=user_info.get("picture"),
+    )
+    access_token = auth_service.create_access_token(str(user.id), user.role.value)
+    refresh_token = auth_service.create_refresh_token()
+    await auth_service.store_refresh_token(redis, refresh_token, str(user.id))
+    return success(
+        TokenResponse(
+            access_token=access_token,
+            refresh_token=refresh_token,
+            full_name=user.full_name,
+            role=user.role,
+            avatar_url=user.avatar_url,
+        ).model_dump(),
+        "OAuth login successful",
+    )
+
+
+@router.post("/oauth/apple/token")
+async def apple_oauth_mobile(
+    body: AppleTokenRequest,
+    db: AsyncSession = Depends(get_db),
+    redis: Redis = Depends(get_redis),
+):
+    """Exchange an Apple identity_token (from iOS Sign In with Apple) for LitMusic JWT tokens."""
+    claims = await oauth_service.verify_apple_identity_token(body.identity_token)
+    provider_id = claims["sub"]
+    email = claims.get("email") or body.email
+    if not email:
+        raise AppError("Email not provided by Apple and not included in request", status_code=422)
+    full_name = body.full_name or email.split("@")[0]
+    user = await auth_service.find_or_create_oauth_user(
+        db,
+        email=email,
+        full_name=full_name,
+        provider="apple",
+        provider_id=provider_id,
     )
     access_token = auth_service.create_access_token(str(user.id), user.role.value)
     refresh_token = auth_service.create_refresh_token()

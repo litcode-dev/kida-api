@@ -55,5 +55,11 @@ class GoogleTokenRequest(BaseModel):
     access_token: str
 
 
+class AppleTokenRequest(BaseModel):
+    identity_token: str
+    full_name: str | None = None
+    email: str | None = None
+
+
 class DeleteAccountRequest(BaseModel):
     refresh_token: str | None = None
