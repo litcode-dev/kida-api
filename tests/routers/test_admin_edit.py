@@ -226,3 +226,39 @@ async def test_update_loop_with_thumbnail_uploads_to_s3(client, db_session):
 
     assert resp.status_code == 200
     mock_upload.assert_awaited_once()
+
+
+# --- Drum kit PUT tests ---
+
+@pytest.mark.asyncio
+async def test_update_drum_kit_metadata(client, db_session):
+    user = await _create_user(db_session, role=UserRole.admin)
+    kit, _ = await _create_drum_kit(db_session, user.id)
+    token = create_access_token({"sub": str(user.id), "role": user.role.value})
+
+    resp = await client.put(
+        f"/api/v1/admin/drum-kits/{kit.id}",
+        data={"title": "Updated Kit"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["data"]["title"] == "Updated Kit"
+
+
+@pytest.mark.asyncio
+async def test_update_drum_kit_with_thumbnail_uploads_to_s3(client, db_session):
+    user = await _create_user(db_session, role=UserRole.admin)
+    kit, _ = await _create_drum_kit(db_session, user.id)
+    token = create_access_token({"sub": str(user.id), "role": user.role.value})
+
+    with patch("app.services.drum_kit_service.s3_service.upload_bytes", new=AsyncMock()) as mock_upload, \
+         patch("app.services.drum_kit_service.s3_service.delete_object", new=AsyncMock()):
+        resp = await client.put(
+            f"/api/v1/admin/drum-kits/{kit.id}",
+            files={"thumbnail": ("thumb.jpg", b"fake-image-bytes", "image/jpeg")},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert resp.status_code == 200
+    mock_upload.assert_awaited_once()

@@ -14,7 +14,7 @@ from app.schemas.drone_pad import (
     DronePadUpdate,
     DroneResponse,
 )
-from app.schemas.drum_kit import DrumKitCreate, DrumKitResponse
+from app.schemas.drum_kit import DrumKitCreate, DrumKitResponse, DrumKitUpdate
 from app.schemas.user import UserResponse
 from app.schemas.common import success
 from app.models.loop import Genre, TempoFeel
@@ -593,3 +593,19 @@ async def delete_drum_kit(
     except Exception as e:
         _structlog.get_logger().warning("cache_invalidation_failed", endpoint="delete_drum_kit", error=str(e))
     return success(message="Drum kit deleted")
+
+
+@router.put("/drum-kits/{kit_id}")
+async def update_drum_kit(
+    kit_id: uuid.UUID,
+    thumbnail: UploadFile | None = File(None),
+    title: str | None = Form(None),
+    description: str | None = Form(None),
+    price: Decimal | None = Form(None),
+    is_free: bool | None = Form(None),
+    db: AsyncSession = Depends(get_db),
+    admin=Depends(require_admin),
+):
+    data = DrumKitUpdate(title=title, description=description, price=price, is_free=is_free)
+    kit = await drum_kit_service.update_drum_kit(db, kit_id, data, thumbnail=thumbnail)
+    return success(DrumKitResponse.model_validate(kit).model_dump(), "Drum kit updated")

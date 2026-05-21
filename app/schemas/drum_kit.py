@@ -22,6 +22,21 @@ class DrumKitCreate(BaseModel):
         return self
 
 
+class DrumKitUpdate(BaseModel):
+    title: str | None = None
+    description: str | None = None
+    price: Decimal | None = None
+    is_free: bool | None = None
+
+    @model_validator(mode="after")
+    def price_required_for_paid(self) -> "DrumKitUpdate":
+        if self.is_free is False and self.price is None:
+            raise ValueError("price is required for paid drum kits")
+        if self.is_free is True:
+            self.price = None
+        return self
+
+
 class DrumSampleResponse(BaseModel):
     id: uuid.UUID
     label: str
