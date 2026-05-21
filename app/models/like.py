@@ -16,7 +16,7 @@ class Like(Base):
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True
     )
     loop_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("loops.id"), nullable=True
+        UUID(as_uuid=True), ForeignKey("loops.id", ondelete="CASCADE"), nullable=True
     )
     stem_pack_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("stem_packs.id"), nullable=True

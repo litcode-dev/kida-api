@@ -6,6 +6,11 @@ from unittest.mock import AsyncMock, patch
 from app.models.drone_pad import Drone, DronePad, MusicalKey
 from app.models.user import User, UserRole
 from app.services.auth_service import create_access_token, hash_password
+from app.services import cache_service
+
+
+def test_ttl_drone_list_is_defined():
+    assert cache_service.TTL_DRONE_LIST == 300
 
 
 async def _create_user(db, role=UserRole.user):

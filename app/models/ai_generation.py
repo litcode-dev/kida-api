@@ -29,7 +29,7 @@ class AIGeneration(Base):
     prompt: Mapped[str] = mapped_column(Text, nullable=False)
     style_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[AIGenerationStatus] = mapped_column(SAEnum(AIGenerationStatus), default=AIGenerationStatus.pending, nullable=False)
-    result_loop_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("loops.id"), nullable=True)
+    result_loop_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("loops.id", ondelete="SET NULL"), nullable=True)
     is_extra: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
