@@ -122,13 +122,45 @@ async def check_download_entitlement(
         raise EntitlementError()
 
 
-async def update_loop(db: AsyncSession, loop_id: uuid.UUID, data: LoopUpdate) -> Loop:
+async def update_loop(
+    db: AsyncSession,
+    loop_id: uuid.UUID,
+    data: LoopUpdate,
+    thumbnail: UploadFile | None = None,
+    file: UploadFile | None = None,
+) -> tuple:
     loop = await get_loop(db, loop_id)
+
+    if thumbnail:
+        if loop.thumbnail_s3_key:
+            await s3_service.delete_object(loop.thumbnail_s3_key)
+        thumb_bytes = await thumbnail.read()
+        content_type = thumbnail.content_type or "image/jpeg"
+        ext = content_type.split("/")[-1] if "/" in content_type else "jpg"
+        new_thumb_key = s3_service.s3_key_for_loop_thumbnail(str(loop_id), ext)
+        await s3_service.upload_bytes(new_thumb_key, thumb_bytes, content_type)
+        loop.thumbnail_s3_key = new_thumb_key
+
+    should_reprocess = False
+    if file:
+        wav_bytes = await validate_wav_upload(file)
+        if loop.file_s3_key:
+            await s3_service.delete_object(loop.file_s3_key)
+        if loop.preview_s3_key:
+            await s3_service.delete_object(loop.preview_s3_key)
+        raw_key = s3_service.s3_key_for_raw_loop(str(loop_id))
+        await s3_service.upload_bytes(raw_key, wav_bytes, "audio/wav")
+        loop.file_s3_key = None
+        loop.preview_s3_key = None
+        loop.status = "processing"
+        should_reprocess = True
+
     for field, value in data.model_dump(exclude_none=True).items():
         setattr(loop, field, value)
+
     await db.commit()
     await db.refresh(loop)
-    return loop
+    return loop, should_reprocess
 
 
 async def delete_loop(db: AsyncSession, loop_id: uuid.UUID) -> None:

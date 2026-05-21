@@ -23,7 +23,7 @@ from app.models.drum_kit import DrumKit
 from app.models.user import User, UserRole
 from app.exceptions import NotFoundError
 import uuid
-from app.tasks.upload_tasks import process_drone_upload
+from app.tasks.upload_tasks import process_drone_upload, process_loop_upload
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -68,11 +68,35 @@ async def loop_upload_status(
 @router.put("/loops/{loop_id}")
 async def update_loop(
     loop_id: uuid.UUID,
-    body: LoopUpdate,
+    thumbnail: UploadFile | None = File(None),
+    file: UploadFile | None = File(None),
+    title: str | None = Form(None),
+    description: str | None = Form(None),
+    genre: Genre | None = Form(None),
+    bpm: int | None = Form(None),
+    tempo_feel: TempoFeel | None = Form(None),
+    tags: str | None = Form(None),
+    price: Decimal | None = Form(None),
+    is_free: bool | None = Form(None),
     db: AsyncSession = Depends(get_db),
     admin=Depends(require_admin),
 ):
-    loop = await loop_service.update_loop(db, loop_id, body)
+    tags_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else None
+    data = LoopUpdate(
+        title=title,
+        description=description,
+        genre=genre,
+        bpm=bpm,
+        tempo_feel=tempo_feel,
+        tags=tags_list,
+        price=price,
+        is_free=is_free,
+    )
+    loop, should_reprocess = await loop_service.update_loop(
+        db, loop_id, data, thumbnail=thumbnail, file=file
+    )
+    if should_reprocess:
+        process_loop_upload.delay(str(loop_id))
     return success(LoopResponse.model_validate(loop).model_dump(), "Loop updated")
 
 

@@ -169,3 +169,60 @@ async def test_replace_drone_pad_audio_returns_404_if_pad_not_in_drone(client, d
         )
 
     assert resp.status_code == 404
+
+
+# --- Loop PUT tests ---
+
+@pytest.mark.asyncio
+async def test_update_loop_metadata_via_multipart(client, db_session):
+    user = await _create_user(db_session, role=UserRole.admin)
+    loop = await _create_loop(db_session, user.id)
+    token = create_access_token({"sub": str(user.id), "role": user.role.value})
+
+    resp = await client.put(
+        f"/api/v1/admin/loops/{loop.id}",
+        data={"title": "Updated Loop Title"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["data"]["title"] == "Updated Loop Title"
+
+
+@pytest.mark.asyncio
+async def test_update_loop_with_file_sets_processing_and_queues_celery(client, db_session):
+    user = await _create_user(db_session, role=UserRole.admin)
+    loop = await _create_loop(db_session, user.id)
+    token = create_access_token({"sub": str(user.id), "role": user.role.value})
+
+    mock_task = MagicMock()
+    with patch("app.services.loop_service.validate_wav_upload", new=AsyncMock(return_value=b"fakewav")), \
+         patch("app.services.loop_service.s3_service.upload_bytes", new=AsyncMock()), \
+         patch("app.services.loop_service.s3_service.delete_object", new=AsyncMock()), \
+         patch("app.routers.admin.process_loop_upload", mock_task):
+        resp = await client.put(
+            f"/api/v1/admin/loops/{loop.id}",
+            files={"file": ("test.wav", b"RIFF....", "audio/wav")},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert resp.status_code == 200
+    mock_task.delay.assert_called_once_with(str(loop.id))
+
+
+@pytest.mark.asyncio
+async def test_update_loop_with_thumbnail_uploads_to_s3(client, db_session):
+    user = await _create_user(db_session, role=UserRole.admin)
+    loop = await _create_loop(db_session, user.id)
+    token = create_access_token({"sub": str(user.id), "role": user.role.value})
+
+    with patch("app.services.loop_service.s3_service.upload_bytes", new=AsyncMock()) as mock_upload, \
+         patch("app.services.loop_service.s3_service.delete_object", new=AsyncMock()):
+        resp = await client.put(
+            f"/api/v1/admin/loops/{loop.id}",
+            files={"thumbnail": ("thumb.jpg", b"fake-image-bytes", "image/jpeg")},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert resp.status_code == 200
+    mock_upload.assert_awaited_once()
