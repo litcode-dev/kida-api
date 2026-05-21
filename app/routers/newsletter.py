@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -6,6 +8,13 @@ from sqlalchemy import select
 from app.database import get_db
 from app.models.newsletter import NewsletterSubscriber
 from app.schemas.common import success
+from app.services.email_service import (
+    send_email,
+    newsletter_subscribe_html,
+    newsletter_subscribe_text,
+    newsletter_unsubscribe_html,
+    newsletter_unsubscribe_text,
+)
 
 router = APIRouter(prefix="/newsletter", tags=["newsletter"])
 
@@ -34,11 +43,23 @@ async def subscribe(body: SubscribeRequest, db: AsyncSession = Depends(get_db)):
         existing.is_active = True
         existing.unsubscribed_at = None
         await db.commit()
+        await send_email(
+            to=body.email,
+            subject="You're back — Kida newsletter",
+            html=newsletter_subscribe_html(body.email),
+            text=newsletter_subscribe_text(body.email),
+        )
         return success(message="Subscription reactivated", data={"email": body.email})
 
     subscriber = NewsletterSubscriber(email=body.email)
     db.add(subscriber)
     await db.commit()
+    await send_email(
+        to=body.email,
+        subject="You're subscribed to Kida",
+        html=newsletter_subscribe_html(body.email),
+        text=newsletter_subscribe_text(body.email),
+    )
     return success(message="Subscribed successfully", data={"email": body.email})
 
 
@@ -52,8 +73,6 @@ async def subscribe(body: SubscribeRequest, db: AsyncSession = Depends(get_db)):
     },
 )
 async def unsubscribe(body: SubscribeRequest, db: AsyncSession = Depends(get_db)):
-    from datetime import datetime, timezone
-
     existing = await db.scalar(
         select(NewsletterSubscriber).where(NewsletterSubscriber.email == body.email)
     )
@@ -64,4 +83,10 @@ async def unsubscribe(body: SubscribeRequest, db: AsyncSession = Depends(get_db)
     existing.is_active = False
     existing.unsubscribed_at = datetime.now(timezone.utc)
     await db.commit()
+    await send_email(
+        to=body.email,
+        subject="You've been unsubscribed from Kida",
+        html=newsletter_unsubscribe_html(body.email),
+        text=newsletter_unsubscribe_text(body.email),
+    )
     return success(message="Unsubscribed successfully", data={"email": body.email})

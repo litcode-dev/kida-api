@@ -373,3 +373,133 @@ def purchase_text(full_name: str, product_title: str, product_type: str, amount:
         f"Go to Library: https://kida.litcode.com.ng"
         + _text_footer()
     )
+
+
+def newsletter_subscribe_html(email: str) -> str:
+    year = datetime.now(timezone.utc).year
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#e8e3d9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#e8e3d9;">
+  <tr><td align="center" style="padding:32px 16px;">
+    <table width="520" cellpadding="0" cellspacing="0" style="max-width:520px;width:100%;">
+
+      <!-- HEADER -->
+      <tr><td style="background:#0a0a0a;padding:24px 32px 0 32px;border-radius:8px 8px 0 0;">
+        <table width="100%" cellpadding="0" cellspacing="0">
+          <tr>
+            <td style="color:#fff;font-size:11px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;">KIDA</td>
+            <td align="right" style="color:#fff;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;">NEWSLETTER</td>
+          </tr>
+        </table>
+      </td></tr>
+
+      <!-- HERO -->
+      <tr><td style="background:#0a0a0a;padding:32px 32px 8px 32px;">
+        <p style="margin:0 0 16px 0;color:#1FBF62;font-size:12px;font-weight:800;letter-spacing:0.15em;text-transform:uppercase;">YOU'RE SUBSCRIBED.</p>
+        <p style="margin:0;font-size:52px;font-weight:800;line-height:1.05;color:#fff;letter-spacing:-0.02em;">Stay in</p>
+        <p style="margin:0;font-size:52px;font-weight:800;line-height:1.05;color:#1FBF62;letter-spacing:-0.02em;">the loop.</p>
+      </td></tr>
+
+      <!-- META STRIP -->
+      <tr><td style="background:#0a0a0a;padding:24px 32px 28px 32px;border-bottom:1px solid #1f1f1f;">
+        <p style="margin:0;color:#fff;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;">{year} &nbsp;&middot;&nbsp; NEWS &nbsp;&middot;&nbsp; DROPS &nbsp;&middot;&nbsp; UPDATES</p>
+      </td></tr>
+
+      <!-- BODY -->
+      <tr><td style="background:#f2ede4;padding:36px 32px 28px 32px;">
+        <p style="margin:0 0 28px 0;font-size:15px;line-height:1.6;color:#333;">
+          <strong>{email}</strong> is now subscribed to Kida news and marketing emails.
+          You'll be the first to hear about new loops, stem packs, and exclusive drops.
+        </p>
+        <a href="https://kida.litcode.com.ng"
+           style="display:inline-block;padding:14px 28px;background:#0a0a0a;color:#fff;
+                  font-size:14px;font-weight:700;text-decoration:none;border-radius:4px;
+                  letter-spacing:0.02em;">
+          Browse Loops &rarr;
+        </a>
+      </td></tr>
+
+      {_brand_footer()}
+
+    </table>
+  </td></tr>
+</table>
+</body>
+</html>"""
+
+
+def newsletter_subscribe_text(email: str) -> str:
+    return (
+        f"You're subscribed!\n\n"
+        f"{email} is now subscribed to Kida news and marketing emails.\n"
+        f"You'll be the first to hear about new loops, stem packs, and exclusive drops.\n\n"
+        f"Browse: https://kida.litcode.com.ng"
+        + _text_footer()
+    )
+
+
+def newsletter_unsubscribe_html(email: str) -> str:
+    year = datetime.now(timezone.utc).year
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#e8e3d9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#e8e3d9;">
+  <tr><td align="center" style="padding:32px 16px;">
+    <table width="520" cellpadding="0" cellspacing="0" style="max-width:520px;width:100%;">
+
+      <!-- HEADER -->
+      <tr><td style="background:#0a0a0a;padding:24px 32px 0 32px;border-radius:8px 8px 0 0;">
+        <table width="100%" cellpadding="0" cellspacing="0">
+          <tr>
+            <td style="color:#fff;font-size:11px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;">KIDA</td>
+            <td align="right" style="color:#fff;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;">NEWSLETTER</td>
+          </tr>
+        </table>
+      </td></tr>
+
+      <!-- HERO -->
+      <tr><td style="background:#0a0a0a;padding:32px 32px 8px 32px;">
+        <p style="margin:0 0 16px 0;color:#1FBF62;font-size:12px;font-weight:800;letter-spacing:0.15em;text-transform:uppercase;">UNSUBSCRIBED.</p>
+        <p style="margin:0;font-size:52px;font-weight:800;line-height:1.05;color:#fff;letter-spacing:-0.02em;">We'll miss</p>
+        <p style="margin:0;font-size:52px;font-weight:800;line-height:1.05;color:#1FBF62;letter-spacing:-0.02em;">you.</p>
+      </td></tr>
+
+      <!-- META STRIP -->
+      <tr><td style="background:#0a0a0a;padding:24px 32px 28px 32px;border-bottom:1px solid #1f1f1f;">
+        <p style="margin:0;color:#fff;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;">{year} &nbsp;&middot;&nbsp; NEWS &nbsp;&middot;&nbsp; DROPS &nbsp;&middot;&nbsp; UPDATES</p>
+      </td></tr>
+
+      <!-- BODY -->
+      <tr><td style="background:#f2ede4;padding:36px 32px 28px 32px;">
+        <p style="margin:0 0 28px 0;font-size:15px;line-height:1.6;color:#333;">
+          <strong>{email}</strong> has been removed from Kida's mailing list.
+          You won't receive any more marketing emails from us. Changed your mind?
+        </p>
+        <a href="https://kida.litcode.com.ng"
+           style="display:inline-block;padding:14px 28px;background:#0a0a0a;color:#fff;
+                  font-size:14px;font-weight:700;text-decoration:none;border-radius:4px;
+                  letter-spacing:0.02em;">
+          Resubscribe &rarr;
+        </a>
+      </td></tr>
+
+      {_brand_footer()}
+
+    </table>
+  </td></tr>
+</table>
+</body>
+</html>"""
+
+
+def newsletter_unsubscribe_text(email: str) -> str:
+    return (
+        f"You've been unsubscribed.\n\n"
+        f"{email} has been removed from Kida's mailing list.\n"
+        f"You won't receive any more marketing emails from us.\n\n"
+        f"Changed your mind? Resubscribe at: https://kida.litcode.com.ng"
+        + _text_footer()
+    )
