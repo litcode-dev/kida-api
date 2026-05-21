@@ -1,4 +1,7 @@
 import json
+import sentry_sdk
+from sentry_sdk.integrations.fastapi import FastApiIntegration
+from sentry_sdk.integrations.starlette import StarletteIntegration
 import structlog
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
@@ -23,8 +26,15 @@ structlog.configure(
 
 settings = get_settings()
 
+if settings.sentry_dsn:
+    sentry_sdk.init(
+        dsn=settings.sentry_dsn,
+        send_default_pii=True,
+        integrations=[StarletteIntegration(), FastApiIntegration()],
+    )
+
 _tags_metadata = [
-    {"name": "auth", "description": "Registration, login, token refresh, and OAuth (Google)."},
+    {"name": "auth", "description": "Registration, login, token refresh, and OAuth (Google, Apple)."},
     {"name": "loops", "description": "Browse and download individual audio loops."},
     {"name": "stem-packs", "description": "Browse and download multi-stem packs."},
     {"name": "drum-kits", "description": "Browse and download drum kits with individual sample files."},
