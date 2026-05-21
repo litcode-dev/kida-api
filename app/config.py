@@ -40,12 +40,15 @@ class Settings(BaseSettings):
     # Frontend
     frontend_url: str = "https://litmusic.app"
 
-    # Email (SMTP)
+    # Email
+    email_backend: str = "resend"  # "resend" | "smtp"
+    resend_api_key: str = ""
+    resend_from: str = "Kida <noreply@kida.litcode.com.ng>"
     smtp_host: str = "smtp.gmail.com"
     smtp_port: int = 587
     smtp_user: str = ""
     smtp_password: str = ""
-    smtp_from: str = "noreply@litmusic.app"
+    smtp_from: str = "noreply@kida.litcode.com.ng"
 
     # OneSignal
     onesignal_app_id: str

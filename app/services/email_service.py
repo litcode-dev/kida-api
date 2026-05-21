@@ -3,20 +3,25 @@ import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
+import httpx
 import structlog
 
 from app.config import get_settings
 
 log = structlog.get_logger()
 
+_RESEND_URL = "https://api.resend.com/emails"
 
-async def send_email(to: str, subject: str, html: str) -> None:
-    """Send a transactional email via SMTP. Silently skips when SMTP is not configured."""
-    settings = get_settings()
-    if not settings.smtp_user or not settings.smtp_password:
-        log.warning("email.skipped", reason="SMTP not configured", to=to, subject=subject)
-        return
 
+async def _send_via_resend(settings, to: str, subject: str, html: str) -> None:
+    payload = {"from": settings.resend_from, "to": [to], "subject": subject, "html": html}
+    headers = {"Authorization": f"Bearer {settings.resend_api_key}", "Content-Type": "application/json"}
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.post(_RESEND_URL, json=payload, headers=headers)
+        resp.raise_for_status()
+
+
+async def _send_via_smtp(settings, to: str, subject: str, html: str) -> None:
     def _send():
         msg = MIMEMultipart("alternative")
         msg["Subject"] = subject
@@ -29,11 +34,32 @@ async def send_email(to: str, subject: str, html: str) -> None:
             smtp.login(settings.smtp_user, settings.smtp_password)
             smtp.sendmail(settings.smtp_from, to, msg.as_string())
 
+    await asyncio.to_thread(_send)
+
+
+async def send_email(to: str, subject: str, html: str) -> None:
+    settings = get_settings()
+    backend = settings.email_backend
+
+    if backend == "resend":
+        if not settings.resend_api_key:
+            log.warning("email.skipped", reason="RESEND_API_KEY not configured", to=to)
+            return
+        send_fn = _send_via_resend(settings, to, subject, html)
+    else:
+        if not settings.smtp_user or not settings.smtp_password:
+            log.warning("email.skipped", reason="SMTP credentials not configured", to=to)
+            return
+        send_fn = _send_via_smtp(settings, to, subject, html)
+
     try:
-        await asyncio.to_thread(_send)
-        log.info("email.sent", to=to, subject=subject)
+        await send_fn
+        log.info("email.sent", to=to, subject=subject, backend=backend)
+    except httpx.HTTPStatusError as exc:
+        log.error("email.failed", to=to, subject=subject, backend=backend,
+                  status=exc.response.status_code, body=exc.response.text)
     except Exception as exc:
-        log.error("email.failed", to=to, subject=subject, error=str(exc))
+        log.error("email.failed", to=to, subject=subject, backend=backend, error=str(exc))
 
 
 # ── Templates ─────────────────────────────────────────────────────────────────
