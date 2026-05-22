@@ -38,6 +38,7 @@ async def client(db_session):
     mock_redis.setex = AsyncMock()
     mock_redis.get = AsyncMock(return_value=None)
     mock_redis.delete = AsyncMock()
+    mock_redis.exists = AsyncMock(return_value=False)
     mock_redis.ping = AsyncMock()
     mock_redis.aclose = AsyncMock()
 
