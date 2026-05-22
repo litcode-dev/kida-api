@@ -112,6 +112,8 @@ async def find_or_create_oauth_user(
         )
     )
     if user:
+        if user.is_suspended:
+            raise UnauthorizedError("Account suspended")
         if avatar_url and user.avatar_url != avatar_url:
             user.avatar_url = avatar_url
             await db.commit()
@@ -121,6 +123,8 @@ async def find_or_create_oauth_user(
     # Second: find by email and link the OAuth account
     user = await db.scalar(select(User).where(User.email == email))
     if user:
+        if user.is_suspended:
+            raise UnauthorizedError("Account suspended")
         user.oauth_provider = provider
         user.oauth_provider_id = provider_id
         if avatar_url:

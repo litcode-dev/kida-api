@@ -56,6 +56,9 @@ async def refresh(
 ):
     user_id = await auth_service.validate_refresh_token(redis, body.refresh_token)
     user = await auth_service.get_user_by_id(db, user_id)
+    if user.is_suspended:
+        from app.exceptions import UnauthorizedError
+        raise UnauthorizedError("Account suspended")
     await auth_service.revoke_refresh_token(redis, body.refresh_token)
     new_refresh = auth_service.create_refresh_token()
     await auth_service.store_refresh_token(redis, new_refresh, user_id)
