@@ -1,31 +1,15 @@
-from fastapi import APIRouter, Depends, UploadFile, File, Form, Query
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, EmailStr, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
-from decimal import Decimal
 from app.database import get_db
-from app.middleware.auth_middleware import require_admin, require_producer
-from app.services import loop_service, stem_pack_service, drone_service, drum_kit_service, cache_service
-from app.schemas.loop import LoopCreate, LoopUpdate, LoopResponse
-from app.schemas.stem_pack import StemPackCreate, StemCreate, StemPackResponse, StemResponse
-from app.schemas.drone_pad import (
-    DronePadCategoryCreate,
-    DronePadCategoryResponse,
-    DronePadCreate,
-    DronePadUpdate,
-    DroneResponse,
-)
-from app.schemas.drum_kit import DrumKitCreate, DrumKitResponse, DrumKitUpdate
+from app.middleware.auth_middleware import require_admin
+from app.services import loop_service, drone_service, drum_kit_service, cache_service
 from app.schemas.user import UserResponse
 from app.schemas.common import success
-from app.models.loop import Genre, TempoFeel
-from app.models.drone_pad import MusicalKey
-from app.models.drum_kit import DrumKit
 from app.models.user import User, UserRole
 from app.exceptions import NotFoundError, AppError
 import uuid
-from app.tasks.upload_tasks import process_drone_upload, process_loop_upload, process_drum_sample_upload
-from app.tasks.notification_tasks import send_new_content_emails
 from datetime import date
 from app.schemas.producer_analytics import AnalyticsPeriod, AnalyticsParams
 from app.services.admin_analytics_service import get_platform_analytics
