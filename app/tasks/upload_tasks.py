@@ -74,6 +74,9 @@ def process_loop_upload(self, loop_id: str):
                     loop.status = "ready"
                     await db.commit()
 
+                    from app.tasks.notification_tasks import send_new_content_push
+                    send_new_content_push.delay(loop.title, "loop", loop_id)
+
                     s3.delete_object(Bucket=settings.s3_bucket_name, Key=raw_key)
 
                 except Exception as exc:
@@ -152,6 +155,16 @@ def process_drum_sample_upload(self, sample_id: str):
                     await _cache.delete(f"drum_kit:detail:{kit_id}")
                     await _cache.delete_pattern("drum_kit:list:*")
 
+                    from app.models.drum_kit import DrumKit, DrumSample as _DS
+                    from sqlalchemy import select as _select
+                    kit = await db.get(DrumKit, kit_id)
+                    all_samples = (await db.scalars(
+                        _select(_DS).where(_DS.drum_kit_id == kit_id)
+                    )).all()
+                    if kit and all(s.status == "ready" for s in all_samples):
+                        from app.tasks.notification_tasks import send_new_content_push
+                        send_new_content_push.delay(kit.title, "drum_kit", str(kit_id))
+
                 except Exception as exc:
                     try:
                         raise self.retry(exc=exc)
@@ -223,9 +236,20 @@ def process_drone_upload(self, drone_id: str):
                     pad.aes_iv = aes_iv
                     pad.duration = duration
                     pad.status = "ready"
+                    drone_id_val = pad.drone_id
                     await db.commit()
 
                     s3.delete_object(Bucket=settings.s3_bucket_name, Key=raw_key)
+
+                    from app.models.drone_pad import Drone as _Drone, DronePad as _DP
+                    from sqlalchemy import select as _select
+                    drone = await db.get(_Drone, drone_id_val)
+                    all_pads = (await db.scalars(
+                        _select(_DP).where(_DP.drone_id == drone_id_val)
+                    )).all()
+                    if drone and all(p.status == "ready" for p in all_pads):
+                        from app.tasks.notification_tasks import send_new_content_push
+                        send_new_content_push.delay(drone.title, "drone_pad", str(drone_id_val))
 
                 except Exception as exc:
                     try:

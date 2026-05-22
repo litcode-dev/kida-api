@@ -116,6 +116,27 @@ def send_new_content_emails(title: str, content_type: str):
 
 
 @celery_app.task
+def send_new_content_push(title: str, content_type: str, item_id: str):
+    """Broadcast a push notification to all devices when new content goes live."""
+    async def _run():
+        from app.services.onesignal_service import send_to_all
+
+        type_labels = {
+            "loop": "New Loop",
+            "drum_kit": "New Drum Kit",
+            "drone_pad": "New Drone Pad",
+        }
+        push_title = type_labels.get(content_type, "New Content on Kida")
+        await send_to_all(
+            title=push_title,
+            message=f'"{title}" just dropped on Kida.',
+            data={"type": f"new_{content_type}", f"{content_type}_id": item_id},
+        )
+
+    asyncio.run(_run())
+
+
+@celery_app.task
 def send_new_loop_notification(loop_id: str):
     async def _run():
         from app.database import AsyncSessionLocal
