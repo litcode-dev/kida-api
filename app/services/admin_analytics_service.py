@@ -47,8 +47,12 @@ async def _revenue_by_type(
         row = (await db.execute(pq)).one()
         earnings_sales[name] = (row.earnings, row.sales)
 
-        # Download counts are total platform downloads (not scoped to purchases within the time window).
+        # counts all download types (free, paid, re-downloads) within the time window
         dq = select(func.count(Download.id).label("cnt")).where(d_fk.isnot(None))
+        if from_dt:
+            dq = dq.where(Download.downloaded_at >= from_dt)
+        if to_dt:
+            dq = dq.where(Download.downloaded_at <= to_dt)
         dl_row = (await db.execute(dq)).one()
         downloads[name] = dl_row.cnt
 
