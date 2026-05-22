@@ -127,7 +127,7 @@ async def _top_content(
             func.coalesce(func.sum(Purchase.amount_paid), _ZERO).label("earnings"),
             func.count(Purchase.id).label("sales"),
         )
-        .outerjoin(Purchase, and_(*loop_join))
+        .join(Purchase, and_(*loop_join))
         .group_by(Loop.id, Loop.title, Loop.thumbnail_s3_key)
         .order_by(func.coalesce(func.sum(Purchase.amount_paid), _ZERO).desc())
         .limit(limit)
@@ -156,8 +156,8 @@ async def _top_content(
             func.coalesce(func.sum(Purchase.amount_paid), _ZERO).label("earnings"),
             func.count(Purchase.id).label("sales"),
         )
-        .outerjoin(DronePad, DronePad.drone_id == Drone.id)
-        .outerjoin(Purchase, and_(*drone_join))
+        .join(DronePad, DronePad.drone_id == Drone.id)
+        .join(Purchase, and_(*drone_join))
         .group_by(Drone.id, Drone.title, Drone.thumbnail_url)
         .order_by(func.coalesce(func.sum(Purchase.amount_paid), _ZERO).desc())
         .limit(limit)
@@ -186,7 +186,7 @@ async def _top_content(
             func.coalesce(func.sum(Purchase.amount_paid), _ZERO).label("earnings"),
             func.count(Purchase.id).label("sales"),
         )
-        .outerjoin(Purchase, and_(*kit_join))
+        .join(Purchase, and_(*kit_join))
         .group_by(DrumKit.id, DrumKit.title, DrumKit.thumbnail_s3_key)
         .order_by(func.coalesce(func.sum(Purchase.amount_paid), _ZERO).desc())
         .limit(limit)
@@ -227,6 +227,7 @@ async def _top_producers(
         lq = lq.where(Purchase.created_at >= from_dt)
     if to_dt:
         lq = lq.where(Purchase.created_at <= to_dt)
+    lq = lq.order_by(func.coalesce(func.sum(Purchase.amount_paid), _ZERO).desc()).limit(limit * 3)
     for r in (await db.execute(lq)).all():
         e, s = totals.get(r.created_by, (_ZERO, 0))
         totals[r.created_by] = (e + r.earnings, s + r.sales)
@@ -246,6 +247,7 @@ async def _top_producers(
         dq = dq.where(Purchase.created_at >= from_dt)
     if to_dt:
         dq = dq.where(Purchase.created_at <= to_dt)
+    dq = dq.order_by(func.coalesce(func.sum(Purchase.amount_paid), _ZERO).desc()).limit(limit * 3)
     for r in (await db.execute(dq)).all():
         e, s = totals.get(r.created_by, (_ZERO, 0))
         totals[r.created_by] = (e + r.earnings, s + r.sales)
@@ -264,6 +266,7 @@ async def _top_producers(
         kq = kq.where(Purchase.created_at >= from_dt)
     if to_dt:
         kq = kq.where(Purchase.created_at <= to_dt)
+    kq = kq.order_by(func.coalesce(func.sum(Purchase.amount_paid), _ZERO).desc()).limit(limit * 3)
     for r in (await db.execute(kq)).all():
         e, s = totals.get(r.created_by, (_ZERO, 0))
         totals[r.created_by] = (e + r.earnings, s + r.sales)

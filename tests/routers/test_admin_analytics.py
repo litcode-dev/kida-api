@@ -395,6 +395,22 @@ async def test_service_drone_earnings_aggregate_across_pads(db_session):
     assert drone_items[0]["sales"] == 1
 
 
+@pytest.mark.asyncio
+async def test_service_top_content_excludes_zero_sale_items(db_session):
+    producer = await _make_user(db_session, UserRole.producer)
+    buyer = await _make_user(db_session)
+    sold_loop = await _make_loop(db_session, producer.id)
+    unsold_loop = await _make_loop(db_session, producer.id)
+    await _make_purchase(db_session, buyer.id, loop_id=sold_loop.id, amount="5.00")
+    # unsold_loop has no purchases
+
+    result = await get_platform_analytics(db_session, AnalyticsParams())
+
+    top_ids = [str(i["id"]) for i in result["top_content"]]
+    assert str(sold_loop.id) in top_ids
+    assert str(unsold_loop.id) not in top_ids
+
+
 # ── endpoint tests ────────────────────────────────────────────────────────────
 
 from app.services.auth_service import create_access_token
