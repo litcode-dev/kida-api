@@ -182,3 +182,31 @@ async def test_admin_drone_update_removed(client):
     fake_id = uuid.uuid4()
     resp = await client.put(f"/api/v1/admin/drones/{fake_id}")
     assert resp.status_code in {404, 405}
+
+
+@pytest.mark.asyncio
+async def test_producer_drone_bulk_status_exists(client):
+    resp = await client.get("/api/v1/producer/drones/bulk/status", params={"ids": str(uuid.uuid4())})
+    assert resp.status_code != 404
+
+
+@pytest.mark.asyncio
+async def test_admin_drone_bulk_status_removed(client):
+    resp = await client.get("/api/v1/admin/drones/bulk/status", params={"ids": str(uuid.uuid4())})
+    assert resp.status_code in {404, 405}
+
+
+@pytest.mark.asyncio
+async def test_producer_drone_pad_patch_exists(client):
+    fake_drone = uuid.uuid4()
+    fake_pad = uuid.uuid4()
+    resp = await client.patch(f"/api/v1/producer/drones/{fake_drone}/pads/{fake_pad}")
+    assert resp.status_code != 404
+
+
+@pytest.mark.asyncio
+async def test_admin_drone_pad_patch_removed(client):
+    fake_drone = uuid.uuid4()
+    fake_pad = uuid.uuid4()
+    resp = await client.patch(f"/api/v1/admin/drones/{fake_drone}/pads/{fake_pad}")
+    assert resp.status_code in {404, 405}
