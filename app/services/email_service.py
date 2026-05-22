@@ -549,7 +549,7 @@ def new_content_html(title: str, content_type: str) -> str:
       <tr><td style="background:#f2ede4;padding:36px 32px 28px 32px;">
         <p style="margin:0 0 8px 0;font-size:17px;font-weight:700;color:#0a0a0a;">Fresh drop available now.</p>
         <p style="margin:0 0 28px 0;font-size:15px;line-height:1.6;color:#333;">
-          <strong>{title}</strong> — a new {label.lower()} has just been added to Kida.
+          <strong>{title}</strong>, a new {label.lower()} has just been added to Kida.
           Get it before everyone else does.
         </p>
         <a href="https://kida.litcode.com.ng"
@@ -573,7 +573,7 @@ def new_content_text(title: str, content_type: str) -> str:
     label, _ = _CONTENT_TYPE_LABELS.get(content_type, ("Content", "NEW"))
     return (
         f"Fresh drop on Kida!\n\n"
-        f"{title} — a new {label.lower()} has just been added.\n"
+        f"{title}, a new {label.lower()} has just been added.\n"
         f"Get it before everyone else: https://kida.litcode.com.ng"
         + _text_footer()
     )
