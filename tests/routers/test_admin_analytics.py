@@ -393,3 +393,138 @@ async def test_service_drone_earnings_aggregate_across_pads(db_session):
     assert len(drone_items) == 1
     assert drone_items[0]["earnings"] == Decimal("5.00")
     assert drone_items[0]["sales"] == 1
+
+
+# ── endpoint tests ────────────────────────────────────────────────────────────
+
+from app.services.auth_service import create_access_token
+
+
+@pytest.mark.asyncio
+async def test_endpoint_requires_auth(client):
+    resp = await client.get("/api/v1/admin/analytics")
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_endpoint_requires_admin_role(client, db_session):
+    regular_user = await _make_user(db_session, UserRole.user)
+    token = create_access_token(str(regular_user.id), "user")
+    resp = await client.get(
+        "/api/v1/admin/analytics",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_endpoint_returns_envelope_shape(client, db_session):
+    admin = await _make_user(db_session, UserRole.admin)
+    token = create_access_token(str(admin.id), "admin")
+    resp = await client.get(
+        "/api/v1/admin/analytics",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "success"
+    data = body["data"]
+    assert "period" in data
+    assert "revenue" in data
+    assert "users" in data
+    assert "top_content" in data
+    assert "top_producers" in data
+
+
+@pytest.mark.asyncio
+async def test_endpoint_revenue_keys_present(client, db_session):
+    admin = await _make_user(db_session, UserRole.admin)
+    token = create_access_token(str(admin.id), "admin")
+    resp = await client.get(
+        "/api/v1/admin/analytics",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    revenue = resp.json()["data"]["revenue"]
+    assert "total_earnings" in revenue
+    assert "total_sales" in revenue
+    assert "by_type" in revenue
+    assert "by_provider" in revenue
+    for key in ("loops", "drones", "drum_kits"):
+        assert key in revenue["by_type"]
+
+
+@pytest.mark.asyncio
+async def test_endpoint_period_param(client, db_session):
+    admin = await _make_user(db_session, UserRole.admin)
+    token = create_access_token(str(admin.id), "admin")
+    resp = await client.get(
+        "/api/v1/admin/analytics?period=30d",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    period = resp.json()["data"]["period"]
+    assert period["from"] is not None
+    assert period["to"] is not None
+
+
+@pytest.mark.asyncio
+async def test_endpoint_invalid_period_returns_422(client, db_session):
+    admin = await _make_user(db_session, UserRole.admin)
+    token = create_access_token(str(admin.id), "admin")
+    resp = await client.get(
+        "/api/v1/admin/analytics?period=999d",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_endpoint_from_without_to_returns_422(client, db_session):
+    admin = await _make_user(db_session, UserRole.admin)
+    token = create_access_token(str(admin.id), "admin")
+    resp = await client.get(
+        "/api/v1/admin/analytics?from_date=2026-01-01",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_endpoint_top_content_has_required_fields(client, db_session):
+    admin = await _make_user(db_session, UserRole.admin)
+    producer = await _make_user(db_session, UserRole.producer)
+    buyer = await _make_user(db_session, UserRole.user)
+    loop = await _make_loop(db_session, producer.id)
+    await _make_purchase(db_session, buyer.id, loop_id=loop.id, amount="5.00")
+    token = create_access_token(str(admin.id), "admin")
+    resp = await client.get(
+        "/api/v1/admin/analytics",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    top = resp.json()["data"]["top_content"]
+    assert len(top) >= 1
+    item = next(i for i in top if str(i["id"]) == str(loop.id))
+    assert item["content_type"] == "loop"
+    assert item["sales"] == 1
+
+
+@pytest.mark.asyncio
+async def test_endpoint_top_producers_has_required_fields(client, db_session):
+    admin = await _make_user(db_session, UserRole.admin)
+    producer = await _make_user(db_session, UserRole.producer)
+    buyer = await _make_user(db_session, UserRole.user)
+    loop = await _make_loop(db_session, producer.id)
+    await _make_purchase(db_session, buyer.id, loop_id=loop.id, amount="5.00")
+    token = create_access_token(str(admin.id), "admin")
+    resp = await client.get(
+        "/api/v1/admin/analytics",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    producers = resp.json()["data"]["top_producers"]
+    assert len(producers) == 1
+    p = producers[0]
+    assert "id" in p
+    assert "full_name" in p
+    assert "email" in p
+    assert "total_earnings" in p
+    assert "total_sales" in p

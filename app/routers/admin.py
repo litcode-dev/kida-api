@@ -26,6 +26,9 @@ from app.exceptions import NotFoundError
 import uuid
 from app.tasks.upload_tasks import process_drone_upload, process_loop_upload, process_drum_sample_upload
 from app.tasks.notification_tasks import send_new_content_emails
+from datetime import date
+from app.schemas.producer_analytics import AnalyticsPeriod, AnalyticsParams
+from app.services.admin_analytics_service import get_platform_analytics
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -709,3 +712,37 @@ async def list_newsletter_subscribers(
         "page_size": page_size,
         "pages": -(-total // page_size),
     })
+
+
+# --- Platform analytics ---
+
+@router.get(
+    "/analytics",
+    summary="Platform analytics (admin)",
+    description=(
+        "Returns platform-wide revenue, user growth, top-selling content, and top producers "
+        "for the specified time window. Defaults to all-time if no period is given."
+    ),
+    responses={
+        401: {"description": "Missing or invalid token"},
+        403: {"description": "Admin role required"},
+        422: {"description": "Invalid period or mismatched date range"},
+    },
+)
+async def platform_analytics(
+    period: AnalyticsPeriod = Query(AnalyticsPeriod.all),
+    from_date: date | None = Query(None),
+    to_date: date | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_admin),
+):
+    from pydantic import ValidationError
+    from app.exceptions import AppError
+    try:
+        params = AnalyticsParams(period=period, from_date=from_date, to_date=to_date)
+    except ValidationError as e:
+        err = e.errors()[0]
+        msg = str(err.get("ctx", {}).get("error", err["msg"]))
+        raise AppError(msg, status_code=422)
+    data = await get_platform_analytics(db, params)
+    return success(data)

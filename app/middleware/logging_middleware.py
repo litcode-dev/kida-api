@@ -21,6 +21,8 @@ class LoggingMiddleware:
 
         request = Request(scope, receive)
         request_id = str(uuid.uuid4())
+        if "state" not in scope:
+            scope["state"] = {}
         scope["state"]["request_id"] = request_id
         start = time.perf_counter()
 
