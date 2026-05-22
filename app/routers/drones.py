@@ -15,7 +15,7 @@ router = APIRouter(prefix="/drones", tags=["drones"])
 
 
 @router.get("/categories")
-async def list_drone_categories(db: AsyncSession = Depends(get_db)):
+async def list_drone_categories(db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
     async def _fetch():
         categories = await drone_service.list_categories(db)
         return [DronePadCategoryResponse.model_validate(c).model_dump(mode="json") for c in categories]
@@ -25,7 +25,7 @@ async def list_drone_categories(db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/categories/{category_id}")
-async def get_drone_category(category_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def get_drone_category(category_id: uuid.UUID, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
     cache_key = f"drone:category:{category_id}"
 
     async def _fetch():
@@ -44,6 +44,7 @@ async def list_drones(
     page: int = 1,
     page_size: int = 50,
     db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
 ):
     cache_key = (
         f"drone:list:{key.value if key else 'none'}"
@@ -70,13 +71,13 @@ async def list_drones(
 
 
 @router.get("/{drone_id}")
-async def get_drone(drone_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def get_drone(drone_id: uuid.UUID, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
     drone = await drone_service.get_drone(db, drone_id)
     return success(DroneResponse.model_validate(drone).model_dump(mode="json"))
 
 
 @router.get("/{drone_id}/preview")
-async def stream_preview(drone_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def stream_preview(drone_id: uuid.UUID, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
     drone = await drone_service.get_drone(db, drone_id)
     pad = next((p for p in drone.pads if p.preview_s3_key), None)
     if pad is None:

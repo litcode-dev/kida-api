@@ -27,6 +27,7 @@ async def list_loops(
     page: int = 1,
     page_size: int = 20,
     db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
 ):
     filters = LoopFilter(
         search=search, genre=genre, bpm_min=bpm_min, bpm_max=bpm_max,
@@ -43,13 +44,13 @@ async def list_loops(
 
 
 @router.get("/{loop_id}")
-async def get_loop(loop_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def get_loop(loop_id: uuid.UUID, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
     loop = await loop_service.get_loop(db, loop_id)
     return success(LoopResponse.model_validate(loop).model_dump())
 
 
 @router.get("/{loop_id}/preview")
-async def stream_preview(loop_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def stream_preview(loop_id: uuid.UUID, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
     loop = await loop_service.get_loop(db, loop_id)
     url = await s3_service.generate_presigned_url(loop.preview_s3_key, expiry_seconds=300)
     async def _stream():

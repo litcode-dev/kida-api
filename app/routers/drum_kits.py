@@ -50,7 +50,7 @@ async def _kit_to_dict(kit) -> dict:
 @router.get(
     "",
     summary="List drum kits",
-    description="Returns a paginated list of drum kits. No authentication required.",
+    description="Returns a paginated list of drum kits.",
     response_description="Paginated drum kit list",
 )
 async def list_drum_kits(
@@ -60,6 +60,7 @@ async def list_drum_kits(
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(20, ge=1, le=100, description="Results per page (max 100)"),
     db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
 ):
     cache_key = _list_cache_key(search, is_free, tags, page, page_size)
 
@@ -86,11 +87,11 @@ async def list_drum_kits(
 @router.get(
     "/{kit_id}",
     summary="Get drum kit detail",
-    description="Returns a single drum kit with all its samples. No authentication required.",
+    description="Returns a single drum kit with all its samples.",
     response_description="Drum kit detail with samples",
     responses={404: _404},
 )
-async def get_drum_kit(kit_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def get_drum_kit(kit_id: uuid.UUID, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
     cache_key = f"drum_kit:detail:{kit_id}"
 
     async def _fetch():

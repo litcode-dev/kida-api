@@ -19,6 +19,7 @@ async def list_stem_packs(
     page: int = 1,
     page_size: int = 20,
     db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
 ):
     from sqlalchemy import func, select
     from app.models.stem_pack import StemPack
@@ -35,7 +36,7 @@ async def list_stem_packs(
 
 
 @router.get("/{pack_id}")
-async def get_stem_pack(pack_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def get_stem_pack(pack_id: uuid.UUID, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
     pack = await stem_pack_service.get_stem_pack_with_stems(db, pack_id)
     return success(StemPackResponse.model_validate(pack).model_dump())
 
