@@ -37,3 +37,4 @@ class User(Base):
     )
     ai_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     ai_extra_credits: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    is_suspended: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)

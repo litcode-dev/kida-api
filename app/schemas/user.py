@@ -29,6 +29,7 @@ class UserResponse(BaseModel):
     role: UserRole
     avatar_url: str | None = None
     created_at: datetime
+    is_suspended: bool = False
 
     model_config = {"from_attributes": True}
 
