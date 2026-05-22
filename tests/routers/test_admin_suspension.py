@@ -63,27 +63,22 @@ async def test_get_current_user_rejects_suspended_db_flag(client, db_session):
 async def test_get_current_user_rejects_suspended_redis_key(client, db_session):
     """Suspension via Redis key works even when DB flag is False."""
     from app.services.auth_service import create_access_token
-    from unittest.mock import AsyncMock, patch
+    from unittest.mock import AsyncMock
     user = await _make_user(db_session)
-    # DB flag is False — not suspended in DB
     assert user.is_suspended is False
     token = create_access_token(str(user.id), user.role.value)
-    # Patch Redis to simulate a suspended key being present
-    with patch("app.middleware.auth_middleware.get_redis") as mock_get_redis:
-        mock_redis = AsyncMock()
-        mock_redis.exists = AsyncMock(return_value=1)
-        mock_redis.aclose = AsyncMock()
-        mock_get_redis.return_value = mock_redis
-        # This test verifies the logic, not the full HTTP stack with fixture override
-        from app.middleware.auth_middleware import get_current_user
-        from fastapi.security import HTTPAuthorizationCredentials
-        from app.exceptions import UnauthorizedError
-        creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
-        try:
-            await get_current_user(credentials=creds, db=db_session, redis=mock_redis)
-            assert False, "Should have raised UnauthorizedError"
-        except UnauthorizedError as e:
-            assert "suspended" in str(e).lower()
+    mock_redis = AsyncMock()
+    mock_redis.get = AsyncMock(return_value="Violating community guidelines")
+    mock_redis.aclose = AsyncMock()
+    from app.middleware.auth_middleware import get_current_user
+    from fastapi.security import HTTPAuthorizationCredentials
+    from app.exceptions import UnauthorizedError
+    creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+    try:
+        await get_current_user(credentials=creds, db=db_session, redis=mock_redis)
+        assert False, "Should have raised UnauthorizedError"
+    except UnauthorizedError as e:
+        assert "suspended" in str(e).lower()
 
 
 @pytest.mark.asyncio
@@ -95,10 +90,13 @@ async def test_suspend_endpoint_sets_flag_and_returns_suspended_true(client, db_
 
     resp = await client.put(
         f"/api/v1/admin/users/{target.id}/suspend",
+        json={"reason": "Violating community guidelines"},
         headers={"Authorization": f"Bearer {token}"},
     )
     assert resp.status_code == 200
-    assert resp.json()["data"]["is_suspended"] is True
+    data = resp.json()["data"]
+    assert data["is_suspended"] is True
+    assert data["suspension_reason"] == "Violating community guidelines"
 
 
 @pytest.mark.asyncio
@@ -119,6 +117,26 @@ async def test_unsuspend_endpoint_clears_flag(client, db_session):
 
 
 @pytest.mark.asyncio
+async def test_unsuspend_clears_reason(client, db_session):
+    from app.services.auth_service import create_access_token
+    admin = await _make_user(db_session, UserRole.admin)
+    target = await _make_user(db_session, UserRole.user)
+    target.is_suspended = True
+    target.suspension_reason = "Spam"
+    await db_session.commit()
+    token = create_access_token(str(admin.id), admin.role.value)
+
+    resp = await client.put(
+        f"/api/v1/admin/users/{target.id}/unsuspend",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert data["is_suspended"] is False
+    assert data["suspension_reason"] is None
+
+
+@pytest.mark.asyncio
 async def test_suspend_admin_returns_403(client, db_session):
     from app.services.auth_service import create_access_token
     admin = await _make_user(db_session, UserRole.admin)
@@ -127,6 +145,7 @@ async def test_suspend_admin_returns_403(client, db_session):
 
     resp = await client.put(
         f"/api/v1/admin/users/{other_admin.id}/suspend",
+        json={"reason": "Test"},
         headers={"Authorization": f"Bearer {token}"},
     )
     assert resp.status_code == 403
@@ -140,6 +159,7 @@ async def test_suspend_nonexistent_user_returns_404(client, db_session):
 
     resp = await client.put(
         f"/api/v1/admin/users/{uuid.uuid4()}/suspend",
+        json={"reason": "Test"},
         headers={"Authorization": f"Bearer {token}"},
     )
     assert resp.status_code == 404

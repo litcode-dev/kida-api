@@ -6,7 +6,7 @@ from decimal import Decimal
 from app.database import get_db
 from app.middleware.auth_middleware import require_admin, get_redis
 from app.middleware.rate_limit import limiter
-from app.schemas.user import UserResponse
+from app.schemas.user import UserResponse, SuspendRequest
 from app.schemas.common import success
 from app.schemas.loop import LoopCreate, LoopUpdate, LoopResponse
 from app.schemas.stem_pack import StemPackCreate, StemCreate, StemPackResponse, StemResponse
@@ -172,6 +172,7 @@ async def toggle_user_ai(
 async def suspend_user(
     request: Request,
     user_id: uuid.UUID,
+    body: SuspendRequest,
     db: AsyncSession = Depends(get_db),
     redis: Redis = Depends(get_redis),
     admin=Depends(require_admin),
@@ -182,15 +183,16 @@ async def suspend_user(
     if user.role == UserRole.admin:
         raise ForbiddenError("Cannot suspend an admin")
     user.is_suspended = True
+    user.suspension_reason = body.reason
     await db.commit()
     await db.refresh(user)
-    await redis.set(f"suspended:{user_id}", "1")
+    await redis.set(f"suspended:{user_id}", body.reason)
     from app.services.email_service import send_email, account_suspended_html, account_suspended_text
     await send_email(
         to=user.email,
         subject="Your Kida account has been suspended",
-        html=account_suspended_html(user.full_name),
-        text=account_suspended_text(user.full_name),
+        html=account_suspended_html(user.full_name, body.reason),
+        text=account_suspended_text(user.full_name, body.reason),
     )
     return success(UserResponse.model_validate(user).model_dump(), "User suspended")
 
@@ -208,6 +210,7 @@ async def unsuspend_user(
     if not user:
         raise NotFoundError("User not found")
     user.is_suspended = False
+    user.suspension_reason = None
     await db.commit()
     await db.refresh(user)
     await redis.delete(f"suspended:{user_id}")

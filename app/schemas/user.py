@@ -30,8 +30,13 @@ class UserResponse(BaseModel):
     avatar_url: str | None = None
     created_at: datetime
     is_suspended: bool = False
+    suspension_reason: str | None = None
 
     model_config = {"from_attributes": True}
+
+
+class SuspendRequest(BaseModel):
+    reason: str
 
 
 class TokenResponse(BaseModel):

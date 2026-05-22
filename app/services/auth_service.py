@@ -92,7 +92,8 @@ async def authenticate_user(db: AsyncSession, email: str, password: str) -> User
     if not user or not user.password_hash or not await verify_password(password, user.password_hash):
         raise UnauthorizedError("Invalid credentials")
     if user.is_suspended:
-        raise UnauthorizedError("Account suspended")
+        msg = f"Account suspended: {user.suspension_reason}" if user.suspension_reason else "Account suspended"
+        raise UnauthorizedError(msg)
     return user
 
 
@@ -113,7 +114,8 @@ async def find_or_create_oauth_user(
     )
     if user:
         if user.is_suspended:
-            raise UnauthorizedError("Account suspended")
+            msg = f"Account suspended: {user.suspension_reason}" if user.suspension_reason else "Account suspended"
+            raise UnauthorizedError(msg)
         if avatar_url and user.avatar_url != avatar_url:
             user.avatar_url = avatar_url
             await db.commit()
@@ -124,7 +126,8 @@ async def find_or_create_oauth_user(
     user = await db.scalar(select(User).where(User.email == email))
     if user:
         if user.is_suspended:
-            raise UnauthorizedError("Account suspended")
+            msg = f"Account suspended: {user.suspension_reason}" if user.suspension_reason else "Account suspended"
+            raise UnauthorizedError(msg)
         user.oauth_provider = provider
         user.oauth_provider_id = provider_id
         if avatar_url:

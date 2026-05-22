@@ -29,11 +29,13 @@ async def get_current_user(
     payload = decode_access_token(token)
     user = await get_user_by_id(db, payload["sub"])
     try:
-        redis_suspended = bool(await redis.exists(f"suspended:{user.id}"))
+        redis_reason = await redis.get(f"suspended:{user.id}")
     except Exception:
-        redis_suspended = False
-    if redis_suspended or user.is_suspended:
-        raise UnauthorizedError("Account suspended")
+        redis_reason = None
+    if redis_reason or user.is_suspended:
+        reason = redis_reason or user.suspension_reason
+        msg = f"Account suspended: {reason}" if reason else "Account suspended"
+        raise UnauthorizedError(msg)
     return user
 
 

@@ -122,7 +122,7 @@ def _brand_footer(unsubscribe_email: str = "support@litcode.com.ng") -> str:
           <tr>
             <td colspan="2" style="padding-top:16px;border-top:1px solid #1f1f1f;margin-top:16px;">
               <p style="margin:12px 0 0 0;font-size:11px;color:#aaa;line-height:1.8;">
-                Lagos, Nigeria &middot; <a href="https://kida.litcode.com.ng" style="color:#1FBF62;text-decoration:none;">kida.litcode.com.ng</a><br>
+                Nigeria &middot; <a href="https://kida.litcode.com.ng" style="color:#1FBF62;text-decoration:none;">kida.litcode.com.ng</a><br>
                 &copy; {year} Litcode. All rights reserved.<br>
                 <a href="mailto:{unsubscribe_email}?subject=Unsubscribe"
                    style="color:#1FBF62;text-decoration:underline;font-size:11px;">Unsubscribe</a>
@@ -579,7 +579,7 @@ def new_content_text(title: str, content_type: str) -> str:
     )
 
 
-def account_suspended_html(full_name: str) -> str:
+def account_suspended_html(full_name: str, reason: str) -> str:
     year = datetime.now(timezone.utc).year
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -614,10 +614,15 @@ def account_suspended_html(full_name: str) -> str:
       <!-- BODY -->
       <tr><td style="background:#f2ede4;padding:36px 32px 28px 32px;">
         <p style="margin:0 0 8px 0;font-size:17px;font-weight:700;color:#0a0a0a;">Hi {full_name},</p>
-        <p style="margin:0 0 28px 0;font-size:15px;line-height:1.6;color:#333;">
+        <p style="margin:0 0 16px 0;font-size:15px;line-height:1.6;color:#333;">
           Your Kida account has been suspended by our team. You will not be able to log in or access any content until the suspension is lifted.
-          If you believe this is a mistake, please contact our support team.
         </p>
+        <table width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 28px 0;">
+          <tr><td style="background:#fff0f0;border-left:3px solid #e53e3e;padding:14px 16px;border-radius:0 4px 4px 0;">
+            <p style="margin:0 0 4px 0;font-size:11px;font-weight:700;color:#e53e3e;letter-spacing:0.1em;text-transform:uppercase;">REASON</p>
+            <p style="margin:0;font-size:14px;color:#0a0a0a;">{reason}</p>
+          </td></tr>
+        </table>
         <a href="mailto:support@litcode.com.ng"
            style="display:inline-block;padding:14px 28px;background:#0a0a0a;color:#fff;
                   font-size:14px;font-weight:700;text-decoration:none;border-radius:4px;
@@ -635,10 +640,11 @@ def account_suspended_html(full_name: str) -> str:
 </html>"""
 
 
-def account_suspended_text(full_name: str) -> str:
+def account_suspended_text(full_name: str, reason: str) -> str:
     return (
         f"Hi {full_name},\n\n"
         f"Your Kida account has been suspended by our team.\n\n"
+        f"Reason: {reason}\n\n"
         f"You will not be able to log in or access any content until the suspension is lifted.\n"
         f"If you believe this is a mistake, please contact us at support@litcode.com.ng."
         + _text_footer()
