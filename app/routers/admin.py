@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, UploadFile, File, Form, Query
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from decimal import Decimal
@@ -22,7 +22,7 @@ from app.models.loop import Genre, TempoFeel
 from app.models.drone_pad import MusicalKey
 from app.models.drum_kit import DrumKit
 from app.models.user import User, UserRole
-from app.exceptions import NotFoundError
+from app.exceptions import NotFoundError, AppError
 import uuid
 from app.tasks.upload_tasks import process_drone_upload, process_loop_upload, process_drum_sample_upload
 from app.tasks.notification_tasks import send_new_content_emails
@@ -736,8 +736,6 @@ async def platform_analytics(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_admin),
 ):
-    from pydantic import ValidationError
-    from app.exceptions import AppError
     try:
         params = AnalyticsParams(period=period, from_date=from_date, to_date=to_date)
     except ValidationError as e:
