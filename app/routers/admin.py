@@ -1,10 +1,11 @@
-from fastapi import APIRouter, Depends, Query, UploadFile, File, Form
+from fastapi import APIRouter, Depends, Query, Request, UploadFile, File, Form
 from pydantic import BaseModel, EmailStr, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from decimal import Decimal
 from app.database import get_db
 from app.middleware.auth_middleware import require_admin
+from app.middleware.rate_limit import limiter
 from app.schemas.user import UserResponse
 from app.schemas.common import success
 from app.schemas.loop import LoopCreate, LoopUpdate, LoopResponse
@@ -52,7 +53,8 @@ class EmailTestRequest(BaseModel):
         422: {"description": "Invalid email address"},
     },
 )
-async def test_email(body: EmailTestRequest, _: User = Depends(require_admin)):
+@limiter.limit("5/minute")
+async def test_email(request: Request, body: EmailTestRequest, _: User = Depends(require_admin)):
     from app.services.email_service import send_email, registration_html, registration_text
     await send_email(
         to=body.email,
@@ -66,7 +68,9 @@ async def test_email(body: EmailTestRequest, _: User = Depends(require_admin)):
 # --- Loop endpoints ---
 
 @router.delete("/loops/{loop_id}")
+@limiter.limit("20/minute")
 async def delete_loop(
+    request: Request,
     loop_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     admin=Depends(require_admin),
@@ -78,7 +82,9 @@ async def delete_loop(
 # --- StemPack endpoints ---
 
 @router.delete("/stem-packs/{pack_id}")
+@limiter.limit("20/minute")
 async def delete_stem_pack(
+    request: Request,
     pack_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     admin=Depends(require_admin),
@@ -101,7 +107,9 @@ async def delete_stem_pack(
 # --- User management endpoints (admin only) ---
 
 @router.get("/users")
+@limiter.limit("60/minute")
 async def list_users(
+    request: Request,
     page: int = 1,
     page_size: int = 20,
     db: AsyncSession = Depends(get_db),
@@ -119,7 +127,9 @@ async def list_users(
 
 
 @router.put("/users/{user_id}/role")
+@limiter.limit("30/minute")
 async def change_user_role(
+    request: Request,
     user_id: uuid.UUID,
     role: UserRole,
     db: AsyncSession = Depends(get_db),
@@ -137,7 +147,9 @@ async def change_user_role(
 # --- AI administration ---
 
 @router.put("/users/{user_id}/ai-enabled")
+@limiter.limit("30/minute")
 async def toggle_user_ai(
+    request: Request,
     user_id: uuid.UUID,
     enabled: bool,
     db: AsyncSession = Depends(get_db),
@@ -155,7 +167,9 @@ async def toggle_user_ai(
 
 
 @router.get("/ai/generations")
+@limiter.limit("60/minute")
 async def list_all_generations(
+    request: Request,
     page: int = 1,
     page_size: int = 20,
     db: AsyncSession = Depends(get_db),
@@ -181,7 +195,9 @@ async def list_all_generations(
 # --- Drone pad administration ---
 
 @router.delete("/drones/categories/{category_id}")
+@limiter.limit("20/minute")
 async def delete_drone_category(
+    request: Request,
     category_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     admin=Depends(require_admin),
@@ -197,7 +213,9 @@ async def delete_drone_category(
 
 
 @router.delete("/drones/{drone_id}")
+@limiter.limit("20/minute")
 async def delete_drone(
+    request: Request,
     drone_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     admin=Depends(require_admin),
@@ -225,7 +243,9 @@ async def delete_drone(
         404: {"description": "Drum kit not found"},
     },
 )
+@limiter.limit("20/minute")
 async def delete_drum_kit(
+    request: Request,
     kit_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     admin=Depends(require_admin),
@@ -252,7 +272,9 @@ async def delete_drum_kit(
         403: {"description": "Admin role required"},
     },
 )
+@limiter.limit("60/minute")
 async def list_newsletter_subscribers(
+    request: Request,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     active: bool | None = Query(None, description="Filter by subscription status"),
@@ -309,7 +331,9 @@ async def list_newsletter_subscribers(
         422: {"description": "Invalid period or mismatched date range"},
     },
 )
+@limiter.limit("30/minute")
 async def platform_analytics(
+    request: Request,
     period: AnalyticsPeriod = Query(AnalyticsPeriod.all),
     from_date: date | None = Query(None),
     to_date: date | None = Query(None),
@@ -329,7 +353,9 @@ async def platform_analytics(
 # --- Loop upload / management (admin mirror of producer endpoints) ---
 
 @router.post("/loops")
+@limiter.limit("10/minute")
 async def upload_loop(
+    request: Request,
     file: UploadFile = File(...),
     thumbnail: UploadFile | None = File(None),
     title: str = Form(...),
@@ -354,7 +380,9 @@ async def upload_loop(
 
 
 @router.get("/loops/{loop_id}/status")
+@limiter.limit("60/minute")
 async def loop_upload_status(
+    request: Request,
     loop_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     admin=Depends(require_admin),
@@ -364,7 +392,9 @@ async def loop_upload_status(
 
 
 @router.put("/loops/{loop_id}")
+@limiter.limit("20/minute")
 async def update_loop(
+    request: Request,
     loop_id: uuid.UUID,
     thumbnail: UploadFile | None = File(None),
     file: UploadFile | None = File(None),
@@ -401,7 +431,9 @@ async def update_loop(
 # --- StemPack endpoints (admin mirror) ---
 
 @router.post("/stem-packs")
+@limiter.limit("30/minute")
 async def create_stem_pack(
+    request: Request,
     body: StemPackCreate,
     db: AsyncSession = Depends(get_db),
     admin=Depends(require_admin),
@@ -411,7 +443,9 @@ async def create_stem_pack(
 
 
 @router.post("/stem-packs/{pack_id}/stems")
+@limiter.limit("10/minute")
 async def add_stem(
+    request: Request,
     pack_id: uuid.UUID,
     file: UploadFile = File(...),
     label: str = Form(...),
@@ -425,7 +459,9 @@ async def add_stem(
 
 
 @router.put("/stem-packs/{pack_id}")
+@limiter.limit("20/minute")
 async def update_stem_pack(
+    request: Request,
     pack_id: uuid.UUID,
     body: StemPackCreate,
     db: AsyncSession = Depends(get_db),
@@ -445,7 +481,9 @@ async def update_stem_pack(
 # --- Drone pad endpoints (admin mirror) ---
 
 @router.post("/drones/categories")
+@limiter.limit("30/minute")
 async def create_drone_category(
+    request: Request,
     body: DronePadCategoryCreate,
     db: AsyncSession = Depends(get_db),
     admin=Depends(require_admin),
@@ -462,7 +500,9 @@ async def create_drone_category(
 
 
 @router.get("/drones/categories")
+@limiter.limit("60/minute")
 async def list_drone_categories(
+    request: Request,
     db: AsyncSession = Depends(get_db),
     admin=Depends(require_admin),
 ):
@@ -471,7 +511,9 @@ async def list_drone_categories(
 
 
 @router.post("/drones")
+@limiter.limit("10/minute")
 async def upload_drone(
+    request: Request,
     file: UploadFile = File(...),
     thumbnail: UploadFile | None = File(None),
     title: str = Form(...),
@@ -507,7 +549,9 @@ async def upload_drone(
 
 
 @router.post("/drones/bulk")
+@limiter.limit("5/minute")
 async def bulk_upload_drones(
+    request: Request,
     files: list[UploadFile] = File(...),
     keys: str = Form(...),
     title: str = Form(...),
@@ -556,7 +600,9 @@ async def bulk_upload_drones(
 
 
 @router.get("/drones/bulk/status")
+@limiter.limit("60/minute")
 async def bulk_drone_upload_status(
+    request: Request,
     ids: str,
     db: AsyncSession = Depends(get_db),
     admin=Depends(require_admin),
@@ -576,7 +622,9 @@ async def bulk_drone_upload_status(
 
 
 @router.get("/drones/{drone_id}/status")
+@limiter.limit("60/minute")
 async def drone_upload_status(
+    request: Request,
     drone_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     admin=Depends(require_admin),
@@ -590,7 +638,9 @@ async def drone_upload_status(
 
 
 @router.put("/drones/{drone_id}")
+@limiter.limit("20/minute")
 async def update_drone(
+    request: Request,
     drone_id: uuid.UUID,
     thumbnail: UploadFile | None = File(None),
     title: str | None = Form(None),
@@ -618,7 +668,9 @@ async def update_drone(
 
 
 @router.patch("/drones/{drone_id}/pads/{pad_id}")
+@limiter.limit("20/minute")
 async def replace_drone_pad_audio(
+    request: Request,
     drone_id: uuid.UUID,
     pad_id: uuid.UUID,
     file: UploadFile = File(...),
@@ -653,7 +705,9 @@ async def replace_drone_pad_audio(
     },
     status_code=201,
 )
+@limiter.limit("10/minute")
 async def create_drum_kit(
+    request: Request,
     thumbnail: UploadFile | None = File(None),
     title: str = Form(...),
     description: str | None = Form(None),
@@ -697,7 +751,9 @@ async def create_drum_kit(
         403: {"description": "Admin role required"},
     },
 )
+@limiter.limit("60/minute")
 async def list_drum_kits_admin(
+    request: Request,
     search: str | None = None,
     is_free: bool | None = None,
     tags: str | None = None,
@@ -725,7 +781,9 @@ async def list_drum_kits_admin(
 
 
 @router.put("/drum-kits/{kit_id}")
+@limiter.limit("20/minute")
 async def update_drum_kit(
+    request: Request,
     kit_id: uuid.UUID,
     thumbnail: UploadFile | None = File(None),
     title: str | None = Form(None),
@@ -741,7 +799,9 @@ async def update_drum_kit(
 
 
 @router.patch("/drum-kits/{kit_id}/samples/{sample_id}")
+@limiter.limit("20/minute")
 async def replace_drum_sample_audio(
+    request: Request,
     kit_id: uuid.UUID,
     sample_id: uuid.UUID,
     file: UploadFile = File(...),

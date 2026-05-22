@@ -2,13 +2,14 @@
 import uuid
 from datetime import date
 from decimal import Decimal
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile
 from pydantic import ValidationError
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.exceptions import AppError, NotFoundError
 from app.middleware.auth_middleware import require_producer
+from app.middleware.rate_limit import limiter
 from app.schemas.common import success
 from app.schemas.drum_kit import DrumKitCreate, DrumKitFilter, DrumKitResponse, DrumKitUpdate
 from app.schemas.drone_pad import (
@@ -34,7 +35,9 @@ router = APIRouter(prefix="/producer", tags=["producer"])
 
 
 @router.get("/analytics")
+@limiter.limit("60/minute")
 async def producer_analytics(
+    request: Request,
     period: AnalyticsPeriod = Query(AnalyticsPeriod.all),
     from_date: date | None = Query(None),
     to_date: date | None = Query(None),
@@ -67,7 +70,9 @@ async def producer_analytics(
 # --- Loop endpoints ---
 
 @router.post("/loops")
+@limiter.limit("10/minute")
 async def upload_loop(
+    request: Request,
     file: UploadFile = File(...),
     thumbnail: UploadFile | None = File(None),
     title: str = Form(...),
@@ -92,7 +97,9 @@ async def upload_loop(
 
 
 @router.get("/loops/{loop_id}/status")
+@limiter.limit("60/minute")
 async def loop_upload_status(
+    request: Request,
     loop_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     producer=Depends(require_producer),
@@ -102,7 +109,9 @@ async def loop_upload_status(
 
 
 @router.put("/loops/{loop_id}")
+@limiter.limit("20/minute")
 async def update_loop(
+    request: Request,
     loop_id: uuid.UUID,
     thumbnail: UploadFile | None = File(None),
     file: UploadFile | None = File(None),
@@ -139,7 +148,9 @@ async def update_loop(
 # --- StemPack endpoints ---
 
 @router.post("/stem-packs")
+@limiter.limit("30/minute")
 async def create_stem_pack(
+    request: Request,
     body: StemPackCreate,
     db: AsyncSession = Depends(get_db),
     producer=Depends(require_producer),
@@ -149,7 +160,9 @@ async def create_stem_pack(
 
 
 @router.post("/stem-packs/{pack_id}/stems")
+@limiter.limit("10/minute")
 async def add_stem(
+    request: Request,
     pack_id: uuid.UUID,
     file: UploadFile = File(...),
     label: str = Form(...),
@@ -163,7 +176,9 @@ async def add_stem(
 
 
 @router.put("/stem-packs/{pack_id}")
+@limiter.limit("20/minute")
 async def update_stem_pack(
+    request: Request,
     pack_id: uuid.UUID,
     body: StemPackCreate,
     db: AsyncSession = Depends(get_db),
@@ -183,7 +198,9 @@ async def update_stem_pack(
 # --- Drone pad endpoints ---
 
 @router.post("/drones/categories")
+@limiter.limit("30/minute")
 async def create_drone_category(
+    request: Request,
     body: DronePadCategoryCreate,
     db: AsyncSession = Depends(get_db),
     producer=Depends(require_producer),
@@ -200,7 +217,9 @@ async def create_drone_category(
 
 
 @router.get("/drones/categories")
+@limiter.limit("60/minute")
 async def list_drone_categories(
+    request: Request,
     db: AsyncSession = Depends(get_db),
     producer=Depends(require_producer),
 ):
@@ -209,7 +228,9 @@ async def list_drone_categories(
 
 
 @router.post("/drones")
+@limiter.limit("10/minute")
 async def upload_drone(
+    request: Request,
     file: UploadFile = File(...),
     thumbnail: UploadFile | None = File(None),
     title: str = Form(...),
@@ -245,7 +266,9 @@ async def upload_drone(
 
 
 @router.post("/drones/bulk")
+@limiter.limit("5/minute")
 async def bulk_upload_drones(
+    request: Request,
     files: list[UploadFile] = File(...),
     keys: str = Form(...),
     title: str = Form(...),
@@ -294,7 +317,9 @@ async def bulk_upload_drones(
 
 
 @router.get("/drones/bulk/status")
+@limiter.limit("60/minute")
 async def bulk_drone_upload_status(
+    request: Request,
     ids: str,
     db: AsyncSession = Depends(get_db),
     producer=Depends(require_producer),
@@ -314,7 +339,9 @@ async def bulk_drone_upload_status(
 
 
 @router.get("/drones/{drone_id}/status")
+@limiter.limit("60/minute")
 async def drone_upload_status(
+    request: Request,
     drone_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     producer=Depends(require_producer),
@@ -328,7 +355,9 @@ async def drone_upload_status(
 
 
 @router.put("/drones/{drone_id}")
+@limiter.limit("20/minute")
 async def update_drone(
+    request: Request,
     drone_id: uuid.UUID,
     thumbnail: UploadFile | None = File(None),
     title: str | None = Form(None),
@@ -356,7 +385,9 @@ async def update_drone(
 
 
 @router.patch("/drones/{drone_id}/pads/{pad_id}")
+@limiter.limit("20/minute")
 async def replace_drone_pad_audio(
+    request: Request,
     drone_id: uuid.UUID,
     pad_id: uuid.UUID,
     file: UploadFile = File(...),
@@ -391,7 +422,9 @@ async def replace_drone_pad_audio(
     },
     status_code=201,
 )
+@limiter.limit("10/minute")
 async def create_drum_kit(
+    request: Request,
     thumbnail: UploadFile | None = File(None),
     title: str = Form(...),
     description: str | None = Form(None),
@@ -435,7 +468,9 @@ async def create_drum_kit(
         403: {"description": "Producer or admin role required"},
     },
 )
+@limiter.limit("60/minute")
 async def list_drum_kits_producer(
+    request: Request,
     search: str | None = None,
     is_free: bool | None = None,
     tags: str | None = None,
@@ -463,7 +498,9 @@ async def list_drum_kits_producer(
 
 
 @router.put("/drum-kits/{kit_id}")
+@limiter.limit("20/minute")
 async def update_drum_kit(
+    request: Request,
     kit_id: uuid.UUID,
     thumbnail: UploadFile | None = File(None),
     title: str | None = Form(None),
@@ -479,7 +516,9 @@ async def update_drum_kit(
 
 
 @router.patch("/drum-kits/{kit_id}/samples/{sample_id}")
+@limiter.limit("20/minute")
 async def replace_drum_sample_audio(
+    request: Request,
     kit_id: uuid.UUID,
     sample_id: uuid.UUID,
     file: UploadFile = File(...),
