@@ -23,10 +23,13 @@ async def get_redis() -> Redis:
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Security(bearer),
     db: AsyncSession = Depends(get_db),
+    redis: Redis = Depends(get_redis),
 ) -> User:
     token = credentials.credentials
     payload = decode_access_token(token)
     user = await get_user_by_id(db, payload["sub"])
+    if await redis.exists(f"suspended:{user.id}") or user.is_suspended:
+        raise UnauthorizedError("Account suspended")
     return user
 
 

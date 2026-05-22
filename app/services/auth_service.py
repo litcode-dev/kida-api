@@ -91,6 +91,8 @@ async def authenticate_user(db: AsyncSession, email: str, password: str) -> User
     user = await db.scalar(select(User).where(User.email == email))
     if not user or not user.password_hash or not await verify_password(password, user.password_hash):
         raise UnauthorizedError("Invalid credentials")
+    if user.is_suspended:
+        raise UnauthorizedError("Account suspended")
     return user
 
 
