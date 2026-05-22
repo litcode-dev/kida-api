@@ -62,25 +62,24 @@ async def list_drum_kits(
     db: AsyncSession = Depends(get_db),
 ):
     cache_key = _list_cache_key(search, is_free, tags, page, page_size)
-    cached = await cache_service.get(cache_key)
-    if cached is not None:
-        return success(cached)
 
-    filters = DrumKitFilter(
-        search=search,
-        is_free=is_free,
-        tags=[t.strip() for t in tags.split(",") if t.strip()] if tags else None,
-        page=page,
-        page_size=page_size,
-    )
-    kits, total = await drum_kit_service.list_drum_kits(db, filters)
-    data = {
-        "items": list(await asyncio.gather(*[_kit_to_dict(k) for k in kits])),
-        "total": total,
-        "page": page,
-        "page_size": page_size,
-    }
-    await cache_service.set(cache_key, data, cache_service.TTL_DRUM_KIT_LIST)
+    async def _fetch():
+        filters = DrumKitFilter(
+            search=search,
+            is_free=is_free,
+            tags=[t.strip() for t in tags.split(",") if t.strip()] if tags else None,
+            page=page,
+            page_size=page_size,
+        )
+        kits, total = await drum_kit_service.list_drum_kits(db, filters)
+        return {
+            "items": list(await asyncio.gather(*[_kit_to_dict(k) for k in kits])),
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+        }
+
+    data = await cache_service.get_or_set(cache_key, _fetch, cache_service.TTL_DRUM_KIT_LIST)
     return success(data)
 
 
@@ -93,21 +92,19 @@ async def list_drum_kits(
 )
 async def get_drum_kit(kit_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     cache_key = f"drum_kit:detail:{kit_id}"
-    cached = await cache_service.get(cache_key)
-    if cached is not None:
-        return success(cached)
 
-    result = await db.execute(
-        select(DrumKit)
-        .options(selectinload(DrumKit.samples))
-        .where(DrumKit.id == kit_id)
-    )
-    kit = result.scalar_one_or_none()
-    if not kit:
-        raise NotFoundError(f"Drum kit {kit_id} not found")
+    async def _fetch():
+        result = await db.execute(
+            select(DrumKit)
+            .options(selectinload(DrumKit.samples))
+            .where(DrumKit.id == kit_id)
+        )
+        kit = result.scalar_one_or_none()
+        if not kit:
+            raise NotFoundError(f"Drum kit {kit_id} not found")
+        return await _kit_to_dict(kit)
 
-    data = await _kit_to_dict(kit)
-    await cache_service.set(cache_key, data, cache_service.TTL_DRUM_KIT_DETAIL)
+    data = await cache_service.get_or_set(cache_key, _fetch, cache_service.TTL_DRUM_KIT_DETAIL)
     return success(data)
 
 

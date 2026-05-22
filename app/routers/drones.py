@@ -16,24 +16,23 @@ router = APIRouter(prefix="/drones", tags=["drones"])
 
 @router.get("/categories")
 async def list_drone_categories(db: AsyncSession = Depends(get_db)):
-    cached = await cache_service.get("drone:categories")
-    if cached is not None:
-        return success(cached)
-    categories = await drone_service.list_categories(db)
-    data = [DronePadCategoryResponse.model_validate(c).model_dump(mode="json") for c in categories]
-    await cache_service.set("drone:categories", data, cache_service.TTL_DRONE_CATEGORIES)
+    async def _fetch():
+        categories = await drone_service.list_categories(db)
+        return [DronePadCategoryResponse.model_validate(c).model_dump(mode="json") for c in categories]
+
+    data = await cache_service.get_or_set("drone:categories", _fetch, cache_service.TTL_DRONE_CATEGORIES)
     return success(data)
 
 
 @router.get("/categories/{category_id}")
 async def get_drone_category(category_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     cache_key = f"drone:category:{category_id}"
-    cached = await cache_service.get(cache_key)
-    if cached is not None:
-        return success(cached)
-    category = await drone_service.get_category(db, category_id)
-    data = DronePadCategoryResponse.model_validate(category).model_dump(mode="json")
-    await cache_service.set(cache_key, data, cache_service.TTL_DRONE_CATEGORIES)
+
+    async def _fetch():
+        category = await drone_service.get_category(db, category_id)
+        return DronePadCategoryResponse.model_validate(category).model_dump(mode="json")
+
+    data = await cache_service.get_or_set(cache_key, _fetch, cache_service.TTL_DRONE_CATEGORIES)
     return success(data)
 
 
@@ -52,22 +51,21 @@ async def list_drones(
         f":{category_id or 'none'}"
         f":{page}:{page_size}"
     )
-    cached = await cache_service.get(cache_key)
-    if cached is not None:
-        return success(cached)
 
-    filters = DronePadFilter(
-        key=key, is_free=is_free, category_id=category_id,
-        page=page, page_size=page_size,
-    )
-    drones, total = await drone_service.list_drones(db, filters)
-    data = {
-        "items": [DroneResponse.model_validate(d).model_dump(mode="json") for d in drones],
-        "total": total,
-        "page": page,
-        "page_size": page_size,
-    }
-    await cache_service.set(cache_key, data, cache_service.TTL_DRONE_LIST)
+    async def _fetch():
+        filters = DronePadFilter(
+            key=key, is_free=is_free, category_id=category_id,
+            page=page, page_size=page_size,
+        )
+        drones, total = await drone_service.list_drones(db, filters)
+        return {
+            "items": [DroneResponse.model_validate(d).model_dump(mode="json") for d in drones],
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+        }
+
+    data = await cache_service.get_or_set(cache_key, _fetch, cache_service.TTL_DRONE_LIST)
     return success(data)
 
 
