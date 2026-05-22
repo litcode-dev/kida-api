@@ -84,3 +84,62 @@ async def test_get_current_user_rejects_suspended_redis_key(client, db_session):
             assert False, "Should have raised UnauthorizedError"
         except UnauthorizedError as e:
             assert "suspended" in str(e).lower()
+
+
+@pytest.mark.asyncio
+async def test_suspend_endpoint_sets_flag_and_returns_suspended_true(client, db_session):
+    from app.services.auth_service import create_access_token
+    admin = await _make_user(db_session, UserRole.admin)
+    target = await _make_user(db_session, UserRole.user)
+    token = create_access_token(str(admin.id), admin.role.value)
+
+    resp = await client.put(
+        f"/api/v1/admin/users/{target.id}/suspend",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["data"]["is_suspended"] is True
+
+
+@pytest.mark.asyncio
+async def test_unsuspend_endpoint_clears_flag(client, db_session):
+    from app.services.auth_service import create_access_token
+    admin = await _make_user(db_session, UserRole.admin)
+    target = await _make_user(db_session, UserRole.user)
+    target.is_suspended = True
+    await db_session.commit()
+    token = create_access_token(str(admin.id), admin.role.value)
+
+    resp = await client.put(
+        f"/api/v1/admin/users/{target.id}/unsuspend",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["data"]["is_suspended"] is False
+
+
+@pytest.mark.asyncio
+async def test_suspend_admin_returns_403(client, db_session):
+    from app.services.auth_service import create_access_token
+    admin = await _make_user(db_session, UserRole.admin)
+    other_admin = await _make_user(db_session, UserRole.admin)
+    token = create_access_token(str(admin.id), admin.role.value)
+
+    resp = await client.put(
+        f"/api/v1/admin/users/{other_admin.id}/suspend",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_suspend_nonexistent_user_returns_404(client, db_session):
+    from app.services.auth_service import create_access_token
+    admin = await _make_user(db_session, UserRole.admin)
+    token = create_access_token(str(admin.id), admin.role.value)
+
+    resp = await client.put(
+        f"/api/v1/admin/users/{uuid.uuid4()}/suspend",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 404

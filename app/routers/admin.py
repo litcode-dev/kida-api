@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from decimal import Decimal
 from app.database import get_db
-from app.middleware.auth_middleware import require_admin
+from app.middleware.auth_middleware import require_admin, get_redis
 from app.middleware.rate_limit import limiter
 from app.schemas.user import UserResponse
 from app.schemas.common import success
@@ -22,7 +22,8 @@ from app.schemas.producer_analytics import AnalyticsPeriod, AnalyticsParams
 from app.models.user import User, UserRole
 from app.models.loop import Genre, TempoFeel
 from app.models.drone_pad import MusicalKey
-from app.exceptions import NotFoundError, AppError
+from app.exceptions import NotFoundError, AppError, ForbiddenError
+from redis.asyncio import Redis
 from app.services import loop_service, stem_pack_service, drone_service, drum_kit_service, cache_service
 from app.services.admin_analytics_service import get_platform_analytics
 from app.tasks.notification_tasks import send_new_content_emails
@@ -164,6 +165,46 @@ async def toggle_user_ai(
         {"ai_enabled": user.ai_enabled},
         f"AI {'enabled' if enabled else 'disabled'} for user",
     )
+
+
+@router.put("/users/{user_id}/suspend")
+@limiter.limit("10/minute")
+async def suspend_user(
+    request: Request,
+    user_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    redis: Redis = Depends(get_redis),
+    admin=Depends(require_admin),
+):
+    user = await db.get(User, user_id)
+    if not user:
+        raise NotFoundError("User not found")
+    if user.role == UserRole.admin:
+        raise ForbiddenError("Cannot suspend an admin")
+    user.is_suspended = True
+    await db.commit()
+    await db.refresh(user)
+    await redis.set(f"suspended:{user_id}", "1")
+    return success(UserResponse.model_validate(user).model_dump(), "User suspended")
+
+
+@router.put("/users/{user_id}/unsuspend")
+@limiter.limit("10/minute")
+async def unsuspend_user(
+    request: Request,
+    user_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    redis: Redis = Depends(get_redis),
+    admin=Depends(require_admin),
+):
+    user = await db.get(User, user_id)
+    if not user:
+        raise NotFoundError("User not found")
+    user.is_suspended = False
+    await db.commit()
+    await db.refresh(user)
+    await redis.delete(f"suspended:{user_id}")
+    return success(UserResponse.model_validate(user).model_dump(), "User unsuspended")
 
 
 @router.get("/ai/generations")
