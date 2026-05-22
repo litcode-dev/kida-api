@@ -2,6 +2,7 @@
 import uuid
 from decimal import Decimal
 from datetime import datetime
+import structlog as _structlog
 from sqlalchemy import select, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.loop import Loop
@@ -46,11 +47,8 @@ async def _revenue_by_type(
         row = (await db.execute(pq)).one()
         earnings_sales[name] = (row.earnings, row.sales)
 
+        # Download counts are total platform downloads (not scoped to purchases within the time window).
         dq = select(func.count(Download.id).label("cnt")).where(d_fk.isnot(None))
-        if from_dt:
-            dq = dq.where(Download.downloaded_at >= from_dt)
-        if to_dt:
-            dq = dq.where(Download.downloaded_at <= to_dt)
         dl_row = (await db.execute(dq)).one()
         downloads[name] = dl_row.cnt
 
@@ -83,6 +81,8 @@ async def _user_stats(
     from_dt: datetime | None,
     to_dt: datetime | None,
 ) -> UserGrowthStats:
+    # total_users and by_role are intentionally not time-filtered (platform headcount).
+    # Only new_users uses the time window (growth metric).
     total = await db.scalar(select(func.count()).select_from(User)) or 0
 
     new_q = select(func.count()).select_from(User)
@@ -125,6 +125,8 @@ async def _top_content(
         )
         .outerjoin(Purchase, and_(*loop_join))
         .group_by(Loop.id, Loop.title, Loop.thumbnail_s3_key)
+        .order_by(func.coalesce(func.sum(Purchase.amount_paid), _ZERO).desc())
+        .limit(limit)
     )
     for r in (await db.execute(lq)).all():
         items.append(TopContentItem(
@@ -153,6 +155,8 @@ async def _top_content(
         .outerjoin(DronePad, DronePad.drone_id == Drone.id)
         .outerjoin(Purchase, and_(*drone_join))
         .group_by(Drone.id, Drone.title, Drone.thumbnail_url)
+        .order_by(func.coalesce(func.sum(Purchase.amount_paid), _ZERO).desc())
+        .limit(limit)
     )
     for r in (await db.execute(dq)).all():
         items.append(TopContentItem(
@@ -180,6 +184,8 @@ async def _top_content(
         )
         .outerjoin(Purchase, and_(*kit_join))
         .group_by(DrumKit.id, DrumKit.title, DrumKit.thumbnail_s3_key)
+        .order_by(func.coalesce(func.sum(Purchase.amount_paid), _ZERO).desc())
+        .limit(limit)
     )
     for r in (await db.execute(kq)).all():
         items.append(TopContentItem(
@@ -265,22 +271,27 @@ async def _top_producers(
     users = (await db.scalars(select(User).where(User.id.in_(sorted_ids)))).all()
     user_map = {u.id: u for u in users}
 
-    return [
-        TopProducerItem(
+    result = []
+    for pid in sorted_ids:
+        if pid not in user_map:
+            _structlog.get_logger().warning(
+                "top_producers_missing_user",
+                producer_id=str(pid),
+            )
+            continue
+        result.append(TopProducerItem(
             id=pid,
             full_name=user_map[pid].full_name,
             email=user_map[pid].email,
             total_earnings=totals[pid][0],
             total_sales=totals[pid][1],
-        )
-        for pid in sorted_ids
-        if pid in user_map
-    ]
+        ))
+    return result
 
 
 async def get_platform_analytics(db: AsyncSession, params: AnalyticsParams) -> dict:
     from app.config import get_settings
-    cf_base = get_settings().s3_cloudfront_url.rstrip("/")
+    cf_base = (get_settings().s3_cloudfront_url or "").rstrip("/")
     from_dt, to_dt = params.resolve_window()
 
     earnings_sales, dl_by_type = await _revenue_by_type(db, from_dt, to_dt)

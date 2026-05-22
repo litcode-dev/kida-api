@@ -365,3 +365,31 @@ async def test_service_period_filter_excludes_old_purchases(db_session):
     assert result["revenue"]["total_earnings"] == Decimal("0")
     assert result["revenue"]["total_sales"] == 0
     assert result["top_producers"] == []
+
+
+@pytest.mark.asyncio
+async def test_service_drone_earnings_aggregate_across_pads(db_session):
+    producer = await _make_user(db_session, UserRole.producer)
+    buyer = await _make_user(db_session)
+    # Drone with TWO pads
+    drone = Drone(
+        id=uuid.uuid4(), title="Multi-pad Drone",
+        price=Decimal("3.99"), is_free=False, created_by=producer.id,
+    )
+    db_session.add(drone)
+    await db_session.commit()
+    pad_a = DronePad(id=uuid.uuid4(), drone_id=drone.id, key=MusicalKey.C, status="ready", duration=0)
+    pad_b = DronePad(id=uuid.uuid4(), drone_id=drone.id, key=MusicalKey.D, status="ready", duration=0)
+    db_session.add(pad_a)
+    db_session.add(pad_b)
+    await db_session.commit()
+    # Purchase on pad_a only
+    await _make_purchase(db_session, buyer.id, drone_pad_id=pad_a.id, amount="5.00")
+
+    result = await get_platform_analytics(db_session, AnalyticsParams())
+
+    top = result["top_content"]
+    drone_items = [i for i in top if i["content_type"] == "drone"]
+    assert len(drone_items) == 1
+    assert drone_items[0]["earnings"] == Decimal("5.00")
+    assert drone_items[0]["sales"] == 1
