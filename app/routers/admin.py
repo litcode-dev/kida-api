@@ -66,76 +66,6 @@ async def test_email(body: EmailTestRequest, _: User = Depends(require_admin)):
 
 # --- Loop endpoints ---
 
-@router.post("/loops")
-async def upload_loop(
-    file: UploadFile = File(...),
-    thumbnail: UploadFile | None = File(None),
-    title: str = Form(...),
-    genre: Genre = Form(...),
-    bpm: int = Form(...),
-    tempo_feel: TempoFeel = Form(...),
-    price: Decimal = Form(...),
-    is_free: bool = Form(False),
-    tags: str = Form(""),  # comma-separated
-    db: AsyncSession = Depends(get_db),
-    producer=Depends(require_producer),
-):
-    data = LoopCreate(
-        title=title, genre=genre, bpm=bpm,
-        tempo_feel=tempo_feel, price=price, is_free=is_free,
-        tags=[t.strip() for t in tags.split(",") if t.strip()],
-    )
-    loop = await loop_service.create_loop(db, file, data, producer.id, thumbnail=thumbnail)
-    process_loop_upload.delay(str(loop.id))
-    send_new_content_emails.delay(loop.title, "loop")
-    return success(LoopResponse.model_validate(loop).model_dump(), "Loop upload queued")
-
-
-@router.get("/loops/{loop_id}/status")
-async def loop_upload_status(
-    loop_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
-    producer=Depends(require_producer),
-):
-    loop = await loop_service.get_loop(db, loop_id)
-    return success({"id": str(loop.id), "status": loop.status})
-
-
-@router.put("/loops/{loop_id}")
-async def update_loop(
-    loop_id: uuid.UUID,
-    thumbnail: UploadFile | None = File(None),
-    file: UploadFile | None = File(None),
-    title: str | None = Form(None),
-    description: str | None = Form(None),
-    genre: Genre | None = Form(None),
-    bpm: int | None = Form(None),
-    tempo_feel: TempoFeel | None = Form(None),
-    tags: str | None = Form(None),
-    price: Decimal | None = Form(None),
-    is_free: bool | None = Form(None),
-    db: AsyncSession = Depends(get_db),
-    admin=Depends(require_admin),
-):
-    tags_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else None
-    data = LoopUpdate(
-        title=title,
-        description=description,
-        genre=genre,
-        bpm=bpm,
-        tempo_feel=tempo_feel,
-        tags=tags_list,
-        price=price,
-        is_free=is_free,
-    )
-    loop, should_reprocess = await loop_service.update_loop(
-        db, loop_id, data, thumbnail=thumbnail, file=file
-    )
-    if should_reprocess:
-        process_loop_upload.delay(str(loop_id))
-    return success(LoopResponse.model_validate(loop).model_dump(), "Loop updated")
-
-
 @router.delete("/loops/{loop_id}")
 async def delete_loop(
     loop_id: uuid.UUID,
@@ -147,48 +77,6 @@ async def delete_loop(
 
 
 # --- StemPack endpoints ---
-
-@router.post("/stem-packs")
-async def create_stem_pack(
-    body: StemPackCreate,
-    db: AsyncSession = Depends(get_db),
-    producer=Depends(require_producer),
-):
-    pack = await stem_pack_service.create_stem_pack(db, body, producer.id)
-    return success(StemPackResponse.model_validate(pack).model_dump(), "StemPack created")
-
-
-@router.post("/stem-packs/{pack_id}/stems")
-async def add_stem(
-    pack_id: uuid.UUID,
-    file: UploadFile = File(...),
-    label: str = Form(...),
-    duration: int = Form(...),
-    db: AsyncSession = Depends(get_db),
-    producer=Depends(require_producer),
-):
-    data = StemCreate(label=label, duration=duration)
-    stem = await stem_pack_service.add_stem_to_pack(db, pack_id, file, data)
-    return success(StemResponse.model_validate(stem).model_dump(), "Stem added")
-
-
-@router.put("/stem-packs/{pack_id}")
-async def update_stem_pack(
-    pack_id: uuid.UUID,
-    body: StemPackCreate,
-    db: AsyncSession = Depends(get_db),
-    admin=Depends(require_admin),
-):
-    from app.models.stem_pack import StemPack
-    pack = await db.get(StemPack, pack_id)
-    if not pack:
-        raise NotFoundError("StemPack not found")
-    for field, value in body.model_dump(exclude_none=True).items():
-        setattr(pack, field, value)
-    await db.commit()
-    await db.refresh(pack)
-    return success(StemPackResponse.model_validate(pack).model_dump(), "StemPack updated")
-
 
 @router.delete("/stem-packs/{pack_id}")
 async def delete_stem_pack(
