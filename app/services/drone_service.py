@@ -147,6 +147,8 @@ async def get_drone_pad(db: AsyncSession, pad_id: uuid.UUID) -> DronePad:
 
 async def list_drones(db: AsyncSession, filters: DronePadFilter) -> tuple[list[Drone], int]:
     q = select(Drone)
+    if filters.created_by:
+        q = q.where(Drone.created_by == filters.created_by)
     if filters.is_free is not None:
         q = q.where(Drone.is_free == filters.is_free)
     if filters.category_id is not None:

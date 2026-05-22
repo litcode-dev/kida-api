@@ -119,6 +119,8 @@ async def update_drum_kit(
 
 async def list_drum_kits(db: AsyncSession, filters: DrumKitFilter) -> tuple[list[DrumKit], int]:
     q = select(DrumKit)
+    if filters.created_by:
+        q = q.where(DrumKit.created_by == filters.created_by)
     if filters.search:
         q = q.where(DrumKit.title.ilike(f"%{filters.search}%"))
     if filters.is_free is not None:

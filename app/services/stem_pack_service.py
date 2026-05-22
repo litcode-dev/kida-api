@@ -1,7 +1,7 @@
 import uuid
 import re
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 from app.models.stem_pack import StemPack, Stem
 from app.models.purchase import Purchase
@@ -76,6 +76,21 @@ async def add_stem_to_pack(
     await db.commit()
     await db.refresh(stem)
     return stem
+
+
+async def list_stem_packs(
+    db: AsyncSession, created_by: uuid.UUID, page: int = 1, page_size: int = 20
+) -> tuple[list[StemPack], int]:
+    q = select(StemPack).where(StemPack.created_by == created_by)
+    total = await db.scalar(select(func.count()).select_from(q.subquery()))
+    q = (
+        q.options(selectinload(StemPack.stems))
+        .order_by(StemPack.created_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
+    result = await db.scalars(q)
+    return list(result.all()), total or 0
 
 
 async def get_stem_pack_with_stems(db: AsyncSession, pack_id: uuid.UUID) -> StemPack:

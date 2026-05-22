@@ -90,3 +90,4 @@ class LoopFilter(BaseModel):
     sort: str = "newest"
     page: int = 1
     page_size: int = 20
+    created_by: uuid.UUID | None = None

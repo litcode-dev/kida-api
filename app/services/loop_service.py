@@ -70,6 +70,8 @@ async def get_loop(db: AsyncSession, loop_id: uuid.UUID) -> Loop:
 
 async def list_loops(db: AsyncSession, filters: LoopFilter) -> tuple[list[Loop], int]:
     q = select(Loop)
+    if filters.created_by:
+        q = q.where(Loop.created_by == filters.created_by)
     if filters.search:
         q = q.where(Loop.title.ilike(f"%{filters.search}%"))
     if filters.genre:

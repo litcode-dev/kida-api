@@ -87,6 +87,7 @@ class DrumKitFilter(BaseModel):
     tags: list[str] | None = None
     page: int = 1
     page_size: int = 20
+    created_by: uuid.UUID | None = None
 
     @field_validator("page_size")
     @classmethod

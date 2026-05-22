@@ -91,3 +91,4 @@ class DronePadFilter(BaseModel):
     category_id: uuid.UUID | None = None
     page: int = 1
     page_size: int = 50
+    created_by: uuid.UUID | None = None

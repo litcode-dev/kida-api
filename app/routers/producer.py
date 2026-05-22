@@ -7,7 +7,7 @@ from pydantic import ValidationError
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
-from app.exceptions import AppError, NotFoundError
+from app.exceptions import AppError, ForbiddenError, NotFoundError
 from app.middleware.auth_middleware import require_producer
 from app.middleware.rate_limit import limiter
 from app.schemas.common import success
@@ -19,7 +19,7 @@ from app.schemas.drone_pad import (
     DronePadUpdate,
     DroneResponse,
 )
-from app.schemas.loop import LoopCreate, LoopUpdate, LoopResponse
+from app.schemas.loop import LoopCreate, LoopFilter, LoopUpdate, LoopResponse
 from app.schemas.producer_analytics import AnalyticsParams, AnalyticsPeriod
 from app.schemas.stem_pack import StemPackCreate, StemCreate, StemPackResponse, StemResponse
 from app.models.drum_kit import DrumKit
@@ -32,6 +32,11 @@ from app.tasks.notification_tasks import send_new_content_emails
 from app.tasks.upload_tasks import process_drone_upload, process_drum_sample_upload, process_loop_upload
 
 router = APIRouter(prefix="/producer", tags=["producer"])
+
+
+def _assert_owns(resource, producer, label: str) -> None:
+    if resource.created_by != producer.id:
+        raise ForbiddenError(f"You do not own this {label}")
 
 
 @router.get("/analytics")
@@ -69,6 +74,37 @@ async def producer_analytics(
 
 # --- Loop endpoints ---
 
+@router.get("/loops")
+@limiter.limit("60/minute")
+async def list_producer_loops(
+    request: Request,
+    search: str | None = None,
+    genre: Genre | None = None,
+    bpm_min: int | None = None,
+    bpm_max: int | None = None,
+    key: str | None = None,
+    tempo_feel: TempoFeel | None = None,
+    is_free: bool | None = None,
+    sort: str = "newest",
+    page: int = 1,
+    page_size: int = 20,
+    db: AsyncSession = Depends(get_db),
+    producer=Depends(require_producer),
+):
+    filters = LoopFilter(
+        search=search, genre=genre, bpm_min=bpm_min, bpm_max=bpm_max,
+        key=key, tempo_feel=tempo_feel, is_free=is_free, sort=sort,
+        page=page, page_size=page_size, created_by=producer.id,
+    )
+    loops, total = await loop_service.list_loops(db, filters)
+    return success({
+        "items": [LoopResponse.model_validate(l).model_dump() for l in loops],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    })
+
+
 @router.post("/loops")
 @limiter.limit("10/minute")
 async def upload_loop(
@@ -105,6 +141,7 @@ async def loop_upload_status(
     producer=Depends(require_producer),
 ):
     loop = await loop_service.get_loop(db, loop_id)
+    _assert_owns(loop, producer, "loop")
     return success({"id": str(loop.id), "status": loop.status})
 
 
@@ -126,6 +163,8 @@ async def update_loop(
     db: AsyncSession = Depends(get_db),
     producer=Depends(require_producer),
 ):
+    existing = await loop_service.get_loop(db, loop_id)
+    _assert_owns(existing, producer, "loop")
     tags_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else None
     data = LoopUpdate(
         title=title,
@@ -146,6 +185,24 @@ async def update_loop(
 
 
 # --- StemPack endpoints ---
+
+@router.get("/stem-packs")
+@limiter.limit("60/minute")
+async def list_producer_stem_packs(
+    request: Request,
+    page: int = 1,
+    page_size: int = 20,
+    db: AsyncSession = Depends(get_db),
+    producer=Depends(require_producer),
+):
+    packs, total = await stem_pack_service.list_stem_packs(db, producer.id, page, page_size)
+    return success({
+        "items": [StemPackResponse.model_validate(p).model_dump() for p in packs],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    })
+
 
 @router.post("/stem-packs")
 @limiter.limit("30/minute")
@@ -170,6 +227,11 @@ async def add_stem(
     db: AsyncSession = Depends(get_db),
     producer=Depends(require_producer),
 ):
+    from app.models.stem_pack import StemPack
+    pack = await db.get(StemPack, pack_id)
+    if not pack:
+        raise NotFoundError("StemPack not found")
+    _assert_owns(pack, producer, "stem pack")
     data = StemCreate(label=label, duration=duration)
     stem = await stem_pack_service.add_stem_to_pack(db, pack_id, file, data)
     return success(StemResponse.model_validate(stem).model_dump(), "Stem added")
@@ -188,6 +250,7 @@ async def update_stem_pack(
     pack = await db.get(StemPack, pack_id)
     if not pack:
         raise NotFoundError("StemPack not found")
+    _assert_owns(pack, producer, "stem pack")
     for field, value in body.model_dump(exclude_none=True).items():
         setattr(pack, field, value)
     await db.commit()
@@ -196,6 +259,32 @@ async def update_stem_pack(
 
 
 # --- Drone pad endpoints ---
+
+@router.get("/drones")
+@limiter.limit("60/minute")
+async def list_producer_drones(
+    request: Request,
+    key: MusicalKey | None = None,
+    is_free: bool | None = None,
+    category_id: uuid.UUID | None = None,
+    page: int = 1,
+    page_size: int = 20,
+    db: AsyncSession = Depends(get_db),
+    producer=Depends(require_producer),
+):
+    from app.schemas.drone_pad import DronePadFilter
+    filters = DronePadFilter(
+        key=key, is_free=is_free, category_id=category_id,
+        page=page, page_size=page_size, created_by=producer.id,
+    )
+    drones, total = await drone_service.list_drones(db, filters)
+    return success({
+        "items": [DroneResponse.model_validate(d).model_dump(mode="json") for d in drones],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    })
+
 
 @router.post("/drones/categories")
 @limiter.limit("30/minute")
@@ -324,17 +413,17 @@ async def bulk_drone_upload_status(
     db: AsyncSession = Depends(get_db),
     producer=Depends(require_producer),
 ):
-    from app.exceptions import AppError
     parsed_ids = [i.strip() for i in ids.split(",") if i.strip()]
     try:
         validated_ids = [uuid.UUID(i) for i in parsed_ids]
     except ValueError:
         raise AppError("Invalid UUID in ids", status_code=422)
 
-    drones = await drone_service.get_drones_by_ids(db, validated_ids)
+    pads = await drone_service.get_drones_by_ids(db, validated_ids)
+    owned = [p for p in pads if p.drone.created_by == producer.id]
     return success([
-        {"id": str(d.id), "drone_id": str(d.drone_id), "key": d.key, "status": d.status}
-        for d in drones
+        {"id": str(p.id), "drone_id": str(p.drone_id), "key": p.key, "status": p.status}
+        for p in owned
     ])
 
 
@@ -347,6 +436,7 @@ async def drone_upload_status(
     producer=Depends(require_producer),
 ):
     drone = await drone_service.get_drone(db, drone_id)
+    _assert_owns(drone, producer, "drone")
     return success({
         "id": str(drone.id),
         "status": "ready" if all(p.status == "ready" for p in drone.pads) else "processing",
@@ -368,6 +458,8 @@ async def update_drone(
     db: AsyncSession = Depends(get_db),
     producer=Depends(require_producer),
 ):
+    existing = await drone_service.get_drone(db, drone_id)
+    _assert_owns(existing, producer, "drone")
     data = DronePadUpdate(
         title=title,
         description=description,
@@ -394,6 +486,8 @@ async def replace_drone_pad_audio(
     db: AsyncSession = Depends(get_db),
     producer=Depends(require_producer),
 ):
+    existing = await drone_service.get_drone(db, drone_id)
+    _assert_owns(existing, producer, "drone")
     pad = await drone_service.replace_pad_audio(db, drone_id, pad_id, file)
     import structlog as _structlog
     try:
@@ -487,6 +581,7 @@ async def list_drum_kits_producer(
         tags=[t.strip() for t in tags.split(",") if t.strip()] if tags else None,
         page=page,
         page_size=page_size,
+        created_by=producer.id,
     )
     kits, total = await drum_kit_service.list_drum_kits(db, filters)
     return success({
@@ -510,6 +605,8 @@ async def update_drum_kit(
     db: AsyncSession = Depends(get_db),
     producer=Depends(require_producer),
 ):
+    existing = await drum_kit_service.get_drum_kit(db, kit_id)
+    _assert_owns(existing, producer, "drum kit")
     data = DrumKitUpdate(title=title, description=description, price=price, is_free=is_free)
     kit = await drum_kit_service.update_drum_kit(db, kit_id, data, thumbnail=thumbnail)
     return success(DrumKitResponse.model_validate(kit).model_dump(), "Drum kit updated")
