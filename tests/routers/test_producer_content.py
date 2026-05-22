@@ -210,3 +210,64 @@ async def test_admin_drone_pad_patch_removed(client):
     fake_pad = uuid.uuid4()
     resp = await client.patch(f"/api/v1/admin/drones/{fake_drone}/pads/{fake_pad}")
     assert resp.status_code in {404, 405}
+
+
+# ── drum kits ─────────────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_producer_drum_kits_post_exists(client):
+    resp = await client.post("/api/v1/producer/drum-kits")
+    assert resp.status_code != 404
+
+
+@pytest.mark.asyncio
+async def test_admin_drum_kits_post_removed(client):
+    resp = await client.post("/api/v1/admin/drum-kits")
+    assert resp.status_code in {404, 405}
+
+
+@pytest.mark.asyncio
+async def test_producer_drum_kits_get_exists(client):
+    resp = await client.get("/api/v1/producer/drum-kits")
+    assert resp.status_code != 404
+
+
+@pytest.mark.asyncio
+async def test_admin_drum_kits_get_removed(client):
+    resp = await client.get("/api/v1/admin/drum-kits")
+    assert resp.status_code in {404, 405}
+
+
+@pytest.mark.asyncio
+async def test_producer_drum_kit_update_accepts_producer_token(client, db_session):
+    producer = await _make_user(db_session, UserRole.producer)
+    token = create_access_token(str(producer.id), producer.role.value)
+    fake_id = uuid.uuid4()
+    resp = await client.put(
+        f"/api/v1/producer/drum-kits/{fake_id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code != 403, "Producer should be allowed on PUT /producer/drum-kits/{id}"
+
+
+@pytest.mark.asyncio
+async def test_admin_drum_kit_update_removed(client):
+    fake_id = uuid.uuid4()
+    resp = await client.put(f"/api/v1/admin/drum-kits/{fake_id}")
+    assert resp.status_code in {404, 405}
+
+
+@pytest.mark.asyncio
+async def test_producer_drum_kit_sample_patch_exists(client):
+    fake_kit = uuid.uuid4()
+    fake_sample = uuid.uuid4()
+    resp = await client.patch(f"/api/v1/producer/drum-kits/{fake_kit}/samples/{fake_sample}")
+    assert resp.status_code != 404
+
+
+@pytest.mark.asyncio
+async def test_admin_drum_kit_sample_patch_removed(client):
+    fake_kit = uuid.uuid4()
+    fake_sample = uuid.uuid4()
+    resp = await client.patch(f"/api/v1/admin/drum-kits/{fake_kit}/samples/{fake_sample}")
+    assert resp.status_code in {404, 405}

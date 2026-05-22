@@ -371,3 +371,121 @@ async def replace_drone_pad_audio(
         _structlog.get_logger().warning("cache_invalidation_failed", endpoint="replace_drone_pad_audio", error=str(e))
     process_drone_upload.delay(str(pad_id))
     return success({"pad_id": str(pad.id), "status": pad.status}, "Pad audio replacement queued")
+
+
+# --- Drum kit endpoints ---
+
+@router.post(
+    "/drum-kits",
+    summary="Create drum kit",
+    description=(
+        "Creates a drum kit and uploads all samples in one request. "
+        "For paid kits (`is_free=false`), `price` is required — `store_product_id` is auto-generated. "
+        "Samples are queued for background processing after upload; their `status` starts as `processing`."
+    ),
+    response_description="Created drum kit with samples",
+    responses={
+        401: {"description": "Missing or invalid token"},
+        403: {"description": "Producer or admin role required"},
+        422: {"description": "Validation error — missing price for paid kit, or sample/label count mismatch"},
+    },
+    status_code=201,
+)
+async def create_drum_kit(
+    thumbnail: UploadFile | None = File(None),
+    title: str = Form(...),
+    description: str | None = Form(None),
+    tags: str = Form(""),
+    is_free: bool = Form(True),
+    price: Decimal | None = Form(None),
+    sample_files: list[UploadFile] = File(...),
+    sample_labels: str = Form(...),  # comma-separated labels matching sample_files order
+    db: AsyncSession = Depends(get_db),
+    producer=Depends(require_producer),
+):
+    import structlog as _structlog
+    labels = [l.strip() for l in sample_labels.split(",") if l.strip()]
+    data = DrumKitCreate(
+        title=title,
+        description=description,
+        tags=[t.strip() for t in tags.split(",") if t.strip()],
+        is_free=is_free,
+        price=price,
+    )
+    kit, sample_ids = await drum_kit_service.create_drum_kit(
+        db, data, producer.id, sample_files, labels, thumbnail=thumbnail
+    )
+    for sid in sample_ids:
+        process_drum_sample_upload.delay(sid)
+    send_new_content_emails.delay(kit.title, "drum_kit")
+    try:
+        await cache_service.delete_pattern("drum_kit:list:*")
+    except Exception as e:
+        _structlog.get_logger().warning("cache_invalidation_failed", endpoint="create_drum_kit", error=str(e))
+    return success(DrumKitResponse.model_validate(kit).model_dump(), "Drum kit created, samples queued for processing")
+
+
+@router.get(
+    "/drum-kits",
+    summary="List drum kits (producer)",
+    description="Paginated list of all drum kits with samples. Supports the same filters as the public endpoint.",
+    response_description="Paginated drum kit list",
+    responses={
+        401: {"description": "Missing or invalid token"},
+        403: {"description": "Producer or admin role required"},
+    },
+)
+async def list_drum_kits_producer(
+    search: str | None = None,
+    is_free: bool | None = None,
+    tags: str | None = None,
+    page: int = 1,
+    page_size: int = 20,
+    db: AsyncSession = Depends(get_db),
+    producer=Depends(require_producer),
+):
+    import asyncio as _asyncio
+    from app.routers.drum_kits import _kit_to_dict
+    filters = DrumKitFilter(
+        search=search,
+        is_free=is_free,
+        tags=[t.strip() for t in tags.split(",") if t.strip()] if tags else None,
+        page=page,
+        page_size=page_size,
+    )
+    kits, total = await drum_kit_service.list_drum_kits(db, filters)
+    return success({
+        "items": list(await _asyncio.gather(*[_kit_to_dict(k) for k in kits])),
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    })
+
+
+@router.put("/drum-kits/{kit_id}")
+async def update_drum_kit(
+    kit_id: uuid.UUID,
+    thumbnail: UploadFile | None = File(None),
+    title: str | None = Form(None),
+    description: str | None = Form(None),
+    price: Decimal | None = Form(None),
+    is_free: bool | None = Form(None),
+    db: AsyncSession = Depends(get_db),
+    producer=Depends(require_producer),
+):
+    data = DrumKitUpdate(title=title, description=description, price=price, is_free=is_free)
+    kit = await drum_kit_service.update_drum_kit(db, kit_id, data, thumbnail=thumbnail)
+    return success(DrumKitResponse.model_validate(kit).model_dump(), "Drum kit updated")
+
+
+@router.patch("/drum-kits/{kit_id}/samples/{sample_id}")
+async def replace_drum_sample_audio(
+    kit_id: uuid.UUID,
+    sample_id: uuid.UUID,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    producer=Depends(require_producer),
+):
+    sample = await drum_kit_service.replace_sample_audio(db, kit_id, sample_id, file)
+    process_drum_sample_upload.delay(str(sample_id))
+    return success({"sample_id": str(sample.id), "status": sample.status}, "Sample audio replacement queued")
