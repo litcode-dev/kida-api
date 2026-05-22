@@ -185,6 +185,13 @@ async def suspend_user(
     await db.commit()
     await db.refresh(user)
     await redis.set(f"suspended:{user_id}", "1")
+    from app.services.email_service import send_email, account_suspended_html, account_suspended_text
+    await send_email(
+        to=user.email,
+        subject="Your Kida account has been suspended",
+        html=account_suspended_html(user.full_name),
+        text=account_suspended_text(user.full_name),
+    )
     return success(UserResponse.model_validate(user).model_dump(), "User suspended")
 
 
@@ -204,6 +211,13 @@ async def unsuspend_user(
     await db.commit()
     await db.refresh(user)
     await redis.delete(f"suspended:{user_id}")
+    from app.services.email_service import send_email, account_unsuspended_html, account_unsuspended_text
+    await send_email(
+        to=user.email,
+        subject="Your Kida account has been reinstated",
+        html=account_unsuspended_html(user.full_name),
+        text=account_unsuspended_text(user.full_name),
+    )
     return success(UserResponse.model_validate(user).model_dump(), "User unsuspended")
 
 

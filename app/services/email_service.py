@@ -577,3 +577,135 @@ def new_content_text(title: str, content_type: str) -> str:
         f"Get it before everyone else: https://kida.litcode.com.ng"
         + _text_footer()
     )
+
+
+def account_suspended_html(full_name: str) -> str:
+    year = datetime.now(timezone.utc).year
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#e8e3d9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#e8e3d9;">
+  <tr><td align="center" style="padding:32px 16px;">
+    <table width="520" cellpadding="0" cellspacing="0" style="max-width:520px;width:100%;">
+
+      <!-- HEADER -->
+      <tr><td style="background:#0a0a0a;padding:24px 32px 0 32px;border-radius:8px 8px 0 0;">
+        <table width="100%" cellpadding="0" cellspacing="0">
+          <tr>
+            <td style="color:#fff;font-size:11px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;">KIDA</td>
+            <td align="right" style="color:#fff;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;">ACCOUNT</td>
+          </tr>
+        </table>
+      </td></tr>
+
+      <!-- HERO -->
+      <tr><td style="background:#0a0a0a;padding:32px 32px 8px 32px;">
+        <p style="margin:0 0 16px 0;color:#e53e3e;font-size:12px;font-weight:800;letter-spacing:0.15em;text-transform:uppercase;">SUSPENDED.</p>
+        <p style="margin:0;font-size:52px;font-weight:800;line-height:1.05;color:#fff;letter-spacing:-0.02em;">Your account</p>
+        <p style="margin:0;font-size:52px;font-weight:800;line-height:1.05;color:#e53e3e;letter-spacing:-0.02em;">is suspended.</p>
+      </td></tr>
+
+      <!-- META STRIP -->
+      <tr><td style="background:#0a0a0a;padding:24px 32px 28px 32px;border-bottom:1px solid #1f1f1f;">
+        <p style="margin:0;color:#fff;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;">{year} &nbsp;&middot;&nbsp; KIDA &nbsp;&middot;&nbsp; ACCOUNT NOTICE</p>
+      </td></tr>
+
+      <!-- BODY -->
+      <tr><td style="background:#f2ede4;padding:36px 32px 28px 32px;">
+        <p style="margin:0 0 8px 0;font-size:17px;font-weight:700;color:#0a0a0a;">Hi {full_name},</p>
+        <p style="margin:0 0 28px 0;font-size:15px;line-height:1.6;color:#333;">
+          Your Kida account has been suspended by our team. You will not be able to log in or access any content until the suspension is lifted.
+          If you believe this is a mistake, please contact our support team.
+        </p>
+        <a href="mailto:support@litcode.com.ng"
+           style="display:inline-block;padding:14px 28px;background:#0a0a0a;color:#fff;
+                  font-size:14px;font-weight:700;text-decoration:none;border-radius:4px;
+                  letter-spacing:0.02em;">
+          Contact Support &rarr;
+        </a>
+      </td></tr>
+
+      {_brand_footer()}
+
+    </table>
+  </td></tr>
+</table>
+</body>
+</html>"""
+
+
+def account_suspended_text(full_name: str) -> str:
+    return (
+        f"Hi {full_name},\n\n"
+        f"Your Kida account has been suspended by our team.\n\n"
+        f"You will not be able to log in or access any content until the suspension is lifted.\n"
+        f"If you believe this is a mistake, please contact us at support@litcode.com.ng."
+        + _text_footer()
+    )
+
+
+def account_unsuspended_html(full_name: str) -> str:
+    year = datetime.now(timezone.utc).year
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#e8e3d9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#e8e3d9;">
+  <tr><td align="center" style="padding:32px 16px;">
+    <table width="520" cellpadding="0" cellspacing="0" style="max-width:520px;width:100%;">
+
+      <!-- HEADER -->
+      <tr><td style="background:#0a0a0a;padding:24px 32px 0 32px;border-radius:8px 8px 0 0;">
+        <table width="100%" cellpadding="0" cellspacing="0">
+          <tr>
+            <td style="color:#fff;font-size:11px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;">KIDA</td>
+            <td align="right" style="color:#fff;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;">ACCOUNT</td>
+          </tr>
+        </table>
+      </td></tr>
+
+      <!-- HERO -->
+      <tr><td style="background:#0a0a0a;padding:32px 32px 8px 32px;">
+        <p style="margin:0 0 16px 0;color:#1FBF62;font-size:12px;font-weight:800;letter-spacing:0.15em;text-transform:uppercase;">RESTORED.</p>
+        <p style="margin:0;font-size:52px;font-weight:800;line-height:1.05;color:#fff;letter-spacing:-0.02em;">You're back</p>
+        <p style="margin:0;font-size:52px;font-weight:800;line-height:1.05;color:#1FBF62;letter-spacing:-0.02em;">in.</p>
+      </td></tr>
+
+      <!-- META STRIP -->
+      <tr><td style="background:#0a0a0a;padding:24px 32px 28px 32px;border-bottom:1px solid #1f1f1f;">
+        <p style="margin:0;color:#fff;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;">{year} &nbsp;&middot;&nbsp; KIDA &nbsp;&middot;&nbsp; ACCOUNT NOTICE</p>
+      </td></tr>
+
+      <!-- BODY -->
+      <tr><td style="background:#f2ede4;padding:36px 32px 28px 32px;">
+        <p style="margin:0 0 8px 0;font-size:17px;font-weight:700;color:#0a0a0a;">Hi {full_name},</p>
+        <p style="margin:0 0 28px 0;font-size:15px;line-height:1.6;color:#333;">
+          Your Kida account has been reinstated. You can now log in and access all your content again.
+          Welcome back — we're glad to have you.
+        </p>
+        <a href="https://kida.litcode.com.ng"
+           style="display:inline-block;padding:14px 28px;background:#0a0a0a;color:#fff;
+                  font-size:14px;font-weight:700;text-decoration:none;border-radius:4px;
+                  letter-spacing:0.02em;">
+          Go to Kida &rarr;
+        </a>
+      </td></tr>
+
+      {_brand_footer()}
+
+    </table>
+  </td></tr>
+</table>
+</body>
+</html>"""
+
+
+def account_unsuspended_text(full_name: str) -> str:
+    return (
+        f"Hi {full_name},\n\n"
+        f"Your Kida account has been reinstated.\n\n"
+        f"You can now log in and access all your content again.\n"
+        f"Welcome back: https://kida.litcode.com.ng"
+        + _text_footer()
+    )
