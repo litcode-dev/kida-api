@@ -25,7 +25,7 @@ class User(Base):
     password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     full_name: Mapped[str] = mapped_column(String(255), nullable=False)
     role: Mapped[UserRole] = mapped_column(SAEnum(UserRole), default=UserRole.user, nullable=False)
-    onesignal_player_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    onesignal_player_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     avatar_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     oauth_provider: Mapped[str | None] = mapped_column(String(50), nullable=True)
     oauth_provider_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)

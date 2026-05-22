@@ -20,7 +20,7 @@ class DrumKit(Base):
     price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
     store_product_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     download_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    created_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    created_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     samples: Mapped[list["DrumSample"]] = relationship(
@@ -33,7 +33,7 @@ class DrumSample(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     drum_kit_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("drum_kits.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=True), ForeignKey("drum_kits.id", ondelete="CASCADE"), nullable=False, index=True
     )
     label: Mapped[str] = mapped_column(String(100), nullable=False)
     file_s3_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
