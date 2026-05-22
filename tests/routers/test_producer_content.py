@@ -99,3 +99,17 @@ async def test_admin_stem_pack_update_removed(client):
     fake_id = uuid.uuid4()
     resp = await client.put(f"/api/v1/admin/stem-packs/{fake_id}")
     assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_producer_stem_add_route_exists(client):
+    fake_id = uuid.uuid4()
+    resp = await client.post(f"/api/v1/producer/stem-packs/{fake_id}/stems")
+    assert resp.status_code != 404, "POST /producer/stem-packs/{id}/stems route is missing"
+
+
+@pytest.mark.asyncio
+async def test_admin_stem_add_removed(client):
+    fake_id = uuid.uuid4()
+    resp = await client.post(f"/api/v1/admin/stem-packs/{fake_id}/stems")
+    assert resp.status_code == 404, "POST /admin/stem-packs/{id}/stems should be gone"
