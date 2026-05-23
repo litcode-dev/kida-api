@@ -46,6 +46,7 @@ class TokenResponse(BaseModel):
     full_name: str
     role: UserRole
     avatar_url: str | None = None
+    subscribed_to_newsletter: bool = False
 
 
 class RefreshRequest(BaseModel):

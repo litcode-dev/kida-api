@@ -35,6 +35,7 @@ async def login(
     user = await auth_service.authenticate_user(db, body.email, body.password)
     access_token = auth_service.create_access_token(str(user.id), user.role.value)
     refresh_token = auth_service.create_refresh_token()
+    subscribed = await auth_service.is_newsletter_subscriber(db, user.email)
     await auth_service.store_refresh_token(redis, refresh_token, str(user.id))
     return success(
         TokenResponse(
@@ -43,6 +44,7 @@ async def login(
             full_name=user.full_name,
             role=user.role,
             avatar_url=user.avatar_url,
+            subscribed_to_newsletter=subscribed,
         ).model_dump(),
         "Login successful",
     )
@@ -138,6 +140,7 @@ async def google_oauth_mobile(
     )
     access_token = auth_service.create_access_token(str(user.id), user.role.value)
     refresh_token = auth_service.create_refresh_token()
+    subscribed = await auth_service.is_newsletter_subscriber(db, user.email)
     await auth_service.store_refresh_token(redis, refresh_token, str(user.id))
     return success(
         TokenResponse(
@@ -146,6 +149,7 @@ async def google_oauth_mobile(
             full_name=user.full_name,
             role=user.role,
             avatar_url=user.avatar_url,
+            subscribed_to_newsletter=subscribed,
         ).model_dump(),
         "OAuth login successful",
     )
@@ -173,6 +177,7 @@ async def apple_oauth_mobile(
     )
     access_token = auth_service.create_access_token(str(user.id), user.role.value)
     refresh_token = auth_service.create_refresh_token()
+    subscribed = await auth_service.is_newsletter_subscriber(db, user.email)
     await auth_service.store_refresh_token(redis, refresh_token, str(user.id))
     return success(
         TokenResponse(
@@ -181,6 +186,7 @@ async def apple_oauth_mobile(
             full_name=user.full_name,
             role=user.role,
             avatar_url=user.avatar_url,
+            subscribed_to_newsletter=subscribed,
         ).model_dump(),
         "OAuth login successful",
     )
@@ -205,6 +211,7 @@ async def google_oauth_callback(
     )
     access_token = auth_service.create_access_token(str(user.id), user.role.value)
     refresh_token = auth_service.create_refresh_token()
+    subscribed = await auth_service.is_newsletter_subscriber(db, user.email)
     await auth_service.store_refresh_token(redis, refresh_token, str(user.id))
     return success(
         TokenResponse(
@@ -213,6 +220,7 @@ async def google_oauth_callback(
             full_name=user.full_name,
             role=user.role,
             avatar_url=user.avatar_url,
+            subscribed_to_newsletter=subscribed,
         ).model_dump(),
         "OAuth login successful",
     )

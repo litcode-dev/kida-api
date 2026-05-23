@@ -10,6 +10,7 @@ from sqlalchemy import select, delete
 from sqlalchemy.exc import IntegrityError
 from app.config import get_settings
 from app.models.user import User, UserRole
+from app.models.newsletter import NewsletterSubscriber
 from app.exceptions import UnauthorizedError, ConflictError
 
 settings = get_settings()
@@ -95,6 +96,16 @@ async def authenticate_user(db: AsyncSession, email: str, password: str) -> User
         msg = f"Account suspended: {user.suspension_reason}" if user.suspension_reason else "Account suspended"
         raise UnauthorizedError(msg)
     return user
+
+
+async def is_newsletter_subscriber(db: AsyncSession, email: str) -> bool:
+    row = await db.scalar(
+        select(NewsletterSubscriber).where(
+            NewsletterSubscriber.email == email,
+            NewsletterSubscriber.is_active == True,  # noqa: E712
+        )
+    )
+    return row is not None
 
 
 async def find_or_create_oauth_user(
