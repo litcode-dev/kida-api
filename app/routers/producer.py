@@ -622,6 +622,8 @@ async def replace_drum_sample_audio(
     db: AsyncSession = Depends(get_db),
     producer=Depends(require_producer),
 ):
+    existing = await drum_kit_service.get_drum_kit(db, kit_id)
+    _assert_owns(existing, producer, "drum kit")
     sample = await drum_kit_service.replace_sample_audio(db, kit_id, sample_id, file)
     process_drum_sample_upload.delay(str(sample_id))
     return success({"sample_id": str(sample.id), "status": sample.status}, "Sample audio replacement queued")
