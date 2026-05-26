@@ -24,7 +24,7 @@ class DrumKit(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     samples: Mapped[list["DrumSample"]] = relationship(
-        "DrumSample", back_populates="drum_kit", lazy="noload", passive_deletes=True
+        "DrumSample", back_populates="drum_kit", lazy="noload", cascade="all, delete-orphan"
     )
 
 
