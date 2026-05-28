@@ -114,6 +114,7 @@ async def upload_loop(
     title: str = Form(...),
     genre: Genre = Form(...),
     bpm: int = Form(...),
+    time_signature: str = Form("4/4"),
     tempo_feel: TempoFeel = Form(...),
     price: Decimal = Form(...),
     is_free: bool = Form(False),
@@ -123,7 +124,8 @@ async def upload_loop(
 ):
     data = LoopCreate(
         title=title, genre=genre, bpm=bpm,
-        tempo_feel=tempo_feel, price=price, is_free=is_free,
+        time_signature=time_signature, tempo_feel=tempo_feel,
+        price=price, is_free=is_free,
         tags=[t.strip() for t in tags.split(",") if t.strip()],
     )
     loop = await loop_service.create_loop(db, file, data, producer.id, thumbnail=thumbnail)
@@ -156,6 +158,7 @@ async def update_loop(
     description: str | None = Form(None),
     genre: Genre | None = Form(None),
     bpm: int | None = Form(None),
+    time_signature: str | None = Form(None),
     tempo_feel: TempoFeel | None = Form(None),
     tags: str | None = Form(None),
     price: Decimal | None = Form(None),
@@ -171,6 +174,7 @@ async def update_loop(
         description=description,
         genre=genre,
         bpm=bpm,
+        time_signature=time_signature,
         tempo_feel=tempo_feel,
         tags=tags_list,
         price=price,

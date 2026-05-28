@@ -1,8 +1,11 @@
+import re
 import uuid
 from datetime import datetime
 from decimal import Decimal
 from pydantic import BaseModel, Field, field_validator, model_validator
 from app.models.loop import Genre, TempoFeel
+
+TIME_SIGNATURE_RE = re.compile(r"[1-9]\d?/(1|2|4|8|16|32)")
 
 
 class LoopCreate(BaseModel):
@@ -10,6 +13,7 @@ class LoopCreate(BaseModel):
     description: str | None = None
     genre: Genre
     bpm: int
+    time_signature: str = "4/4"
     tempo_feel: TempoFeel
     tags: list[str] = []
     price: Decimal
@@ -22,12 +26,23 @@ class LoopCreate(BaseModel):
             raise ValueError("BPM must be between 60 and 140")
         return v
 
+    @field_validator("time_signature")
+    @classmethod
+    def time_signature_format(cls, v: str) -> str:
+        value = v.strip()
+        if not TIME_SIGNATURE_RE.fullmatch(value):
+            raise ValueError(
+                "Time signature must be in numerator/denominator format, e.g. 4/4"
+            )
+        return value
+
 
 class LoopUpdate(BaseModel):
     title: str | None = None
     description: str | None = None
     genre: Genre | None = None
     bpm: int | None = None
+    time_signature: str | None = None
     tempo_feel: TempoFeel | None = None
     tags: list[str] | None = None
     price: Decimal | None = None
@@ -40,6 +55,18 @@ class LoopUpdate(BaseModel):
             raise ValueError("BPM must be between 60 and 140")
         return v
 
+    @field_validator("time_signature")
+    @classmethod
+    def time_signature_format(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        value = v.strip()
+        if not TIME_SIGNATURE_RE.fullmatch(value):
+            raise ValueError(
+                "Time signature must be in numerator/denominator format, e.g. 4/4"
+            )
+        return value
+
 
 class LoopResponse(BaseModel):
     id: uuid.UUID
@@ -47,6 +74,7 @@ class LoopResponse(BaseModel):
     slug: str
     genre: Genre
     bpm: int
+    time_signature: str
     key: str | None = None
     duration: int
     tempo_feel: TempoFeel
