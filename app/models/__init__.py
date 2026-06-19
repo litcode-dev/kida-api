@@ -7,3 +7,4 @@ from app.models.like import Like  # noqa: F401
 from app.models.subscription import Subscription, SubscriptionPlan, SubscriptionStatus  # noqa: F401
 from app.models.ai_generation import AIGeneration, AIProvider, AIGenerationStatus  # noqa: F401
 from app.models.drone_pad import Drone, DronePad, DronePadCategory, MusicalKey  # noqa: F401
+from app.models.app_download_request import AppDownloadRequest  # noqa: F401

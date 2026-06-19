@@ -440,6 +440,61 @@ def newsletter_subscribe_text(email: str) -> str:
     )
 
 
+def app_download_html(os_label: str, link: str, expires_at: datetime) -> str:
+    expires = expires_at.strftime("%b %d, %Y")
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#e8e3d9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#e8e3d9;">
+  <tr><td align="center" style="padding:32px 16px;">
+    <table width="520" cellpadding="0" cellspacing="0" style="max-width:520px;width:100%;">
+
+      <!-- HEADER -->
+      <tr><td style="background:#0a0a0a;padding:24px 32px;border-radius:8px 8px 0 0;color:#fff;font-size:11px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;">KIDA &nbsp;&middot;&nbsp; DESKTOP APP</td></tr>
+
+      <!-- HERO -->
+      <tr><td style="background:#0a0a0a;padding:8px 32px 32px 32px;">
+        <p style="margin:0;font-size:40px;font-weight:800;line-height:1.05;color:#fff;letter-spacing:-0.02em;">Download for</p>
+        <p style="margin:0;font-size:40px;font-weight:800;line-height:1.05;color:#1FBF62;letter-spacing:-0.02em;">{os_label}.</p>
+      </td></tr>
+
+      <!-- BODY -->
+      <tr><td style="background:#f2ede4;padding:36px 32px 28px 32px;">
+        <p style="margin:0 0 24px 0;font-size:15px;line-height:1.6;color:#333;">
+          Here's your download link for the Kida desktop app on <strong>{os_label}</strong>.
+          This link expires on <strong>{expires}</strong>.
+        </p>
+        <a href="{link}"
+           style="display:inline-block;padding:14px 28px;background:#0a0a0a;color:#fff;
+                  font-size:14px;font-weight:700;text-decoration:none;border-radius:4px;
+                  letter-spacing:0.02em;">
+          Download Kida &rarr;
+        </a>
+        <p style="margin:24px 0 0 0;font-size:12px;line-height:1.6;color:#777;">
+          If the button doesn't work, paste this link into your browser:<br>{link}
+        </p>
+      </td></tr>
+
+      {_brand_footer()}
+
+    </table>
+  </td></tr>
+</table>
+</body>
+</html>"""
+
+
+def app_download_text(os_label: str, link: str, expires_at: datetime) -> str:
+    expires = expires_at.strftime("%b %d, %Y")
+    return (
+        f"Download Kida for {os_label}\n\n"
+        f"Here's your download link for the Kida desktop app:\n{link}\n\n"
+        f"This link expires on {expires}."
+        + _text_footer()
+    )
+
+
 def newsletter_unsubscribe_html(email: str) -> str:
     year = datetime.now(timezone.utc).year
     return f"""<!DOCTYPE html>

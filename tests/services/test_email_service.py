@@ -1,5 +1,7 @@
 import pytest
-from app.services.email_service import registration_html
+from datetime import datetime, timezone
+
+from app.services.email_service import registration_html, app_download_html, app_download_text
 
 
 def test_registration_html_contains_name():
@@ -32,3 +34,19 @@ def test_registration_html_footer():
     html = registration_html("Ada")
     assert "LM" in html
     assert "LITMUSIC" in html
+
+
+def test_app_download_html_contains_link_and_os():
+    exp = datetime(2026, 6, 22, tzinfo=timezone.utc)
+    html = app_download_html("macOS", "https://api.example/api/v1/app/download/tok123", exp)
+    assert "https://api.example/api/v1/app/download/tok123" in html
+    assert "macOS" in html
+    assert "Jun 22, 2026" in html
+
+
+def test_app_download_text_contains_link_and_os():
+    exp = datetime(2026, 6, 22, tzinfo=timezone.utc)
+    txt = app_download_text("Windows", "https://api.example/api/v1/app/download/tok123", exp)
+    assert "https://api.example/api/v1/app/download/tok123" in txt
+    assert "Windows" in txt
+    assert "Jun 22, 2026" in txt

@@ -88,6 +88,10 @@ class Settings(BaseSettings):
     android_package_name: str = "com.litcode.kida"
     google_service_account_json: str = "{}"  # Full service account JSON as a string
 
+    # App installers (desktop download)
+    app_installer_macos_s3_key: str = "installers/kida-macos.dmg"
+    app_installer_windows_s3_key: str = "installers/kida-windows.exe"
+
     # Sentry
     sentry_dsn: str = ""
 
