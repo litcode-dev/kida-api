@@ -27,14 +27,17 @@ presigned URL for the correct OS installer.
 
 ## Where the installers live
 
-The macOS and Windows installers are uploaded to the existing S3 bucket under a
-stable prefix, e.g.:
+The macOS and Windows installers are uploaded to a **Cloudflare R2** bucket
+(S3-compatible) under a stable prefix, e.g.:
 
 - `installers/kida-macos.dmg`
 - `installers/kida-windows.exe`
 
-A new release is shipped by overwriting these objects; the S3 keys stay
-constant. The keys are configured via env vars, not hardcoded.
+A new release is shipped by overwriting these objects; the keys stay constant.
+The keys are configured via env vars, not hardcoded. The redeem step generates a
+short-lived presigned GET URL against R2 via a dedicated R2 boto3 client
+(`s3_service.generate_r2_presigned_url`, `s3v4` signing). The rest of the
+marketplace content remains on AWS S3.
 
 ## Flow
 

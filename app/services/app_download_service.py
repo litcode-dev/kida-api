@@ -72,7 +72,7 @@ async def redeem(db: AsyncSession, token: str) -> str:
         raise AppError("This download link has expired", status_code=410)
 
     key = _installer_key(req.os)
-    url = await s3_service.generate_presigned_url(key, expiry_seconds=PRESIGN_TTL_SECONDS)
+    url = await s3_service.generate_r2_presigned_url(key, expiry_seconds=PRESIGN_TTL_SECONDS)
 
     req.last_redeemed_at = datetime.now(timezone.utc)
     await db.commit()

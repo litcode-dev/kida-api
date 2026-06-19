@@ -2,6 +2,8 @@ import pytest
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock
 
+from sqlalchemy import select, func
+
 from app.models.app_download_request import AppDownloadRequest
 from app.services import app_download_service, s3_service
 from app.exceptions import AppError, NotFoundError
@@ -26,10 +28,10 @@ def test_build_download_link(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_redeem_valid_returns_presigned_url(db_session, monkeypatch):
-    monkeypatch.setattr(s3_service, "generate_presigned_url", AsyncMock(return_value="https://s3/signed"))
+    monkeypatch.setattr(s3_service, "generate_r2_presigned_url", AsyncMock(return_value="https://r2/signed"))
     req = await app_download_service.create_request(db_session, "u@test.com", "windows")
     url = await app_download_service.redeem(db_session, req.token)
-    assert url == "https://s3/signed"
+    assert url == "https://r2/signed"
     refreshed = await db_session.get(AppDownloadRequest, req.id)
     assert refreshed.last_redeemed_at is not None
 
@@ -62,7 +64,6 @@ async def test_create_request_throttles_repeat_email(db_session):
     second = await app_download_service.create_request(db_session, "dup@test.com", "macos")
     assert second is None
 
-    from sqlalchemy import func
     count = await db_session.scalar(
         select(func.count())
         .select_from(AppDownloadRequest)

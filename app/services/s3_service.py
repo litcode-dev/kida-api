@@ -1,5 +1,6 @@
 import asyncio
 import boto3
+from botocore.config import Config
 from app.config import get_settings
 
 settings = get_settings()
@@ -11,6 +12,37 @@ _client = boto3.client(
     aws_secret_access_key=settings.aws_secret_access_key,
     region_name=settings.aws_region,
 )
+
+# Cloudflare R2 is S3-compatible — a separate client pointed at the R2 endpoint,
+# used for the desktop app installers (the rest of the content lives on AWS S3).
+# Constructed lazily so the app still boots when R2 isn't configured.
+_r2_client = None
+
+
+def _get_r2_client():
+    global _r2_client
+    if _r2_client is None:
+        _r2_client = boto3.client(
+            "s3",
+            endpoint_url=settings.r2_endpoint_url,
+            aws_access_key_id=settings.r2_access_key_id,
+            aws_secret_access_key=settings.r2_secret_access_key,
+            region_name="auto",
+            config=Config(signature_version="s3v4"),
+        )
+    return _r2_client
+
+
+async def generate_r2_presigned_url(key: str, expiry_seconds: int = 900) -> str:
+    """Generate a pre-signed GET URL for an object in the Cloudflare R2 bucket."""
+    def _presign():
+        return _get_r2_client().generate_presigned_url(
+            "get_object",
+            Params={"Bucket": settings.r2_bucket_name, "Key": key},
+            ExpiresIn=expiry_seconds,
+        )
+
+    return await asyncio.to_thread(_presign)
 
 
 async def upload_bytes(key: str, data: bytes, content_type: str = "application/octet-stream") -> str:
