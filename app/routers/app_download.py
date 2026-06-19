@@ -7,8 +7,7 @@ from app.middleware.rate_limit import limiter
 from app.schemas.app_download import AppDownloadRequestBody
 from app.schemas.common import success
 from app.services import app_download_service
-from app.services.app_download_service import OS_LABELS
-from app.services.email_service import send_email, app_download_html, app_download_text
+from app.tasks.notification_tasks import send_app_download_email
 
 router = APIRouter(prefix="/app", tags=["app"])
 
@@ -33,14 +32,7 @@ async def request_download(
 ):
     req = await app_download_service.create_request(db, body.email, body.os)
     if req is not None:
-        link = app_download_service.build_download_link(req.token)
-        os_label = OS_LABELS[body.os]
-        await send_email(
-            to=body.email,
-            subject=f"Your Kida download link for {os_label}",
-            html=app_download_html(os_label, link, req.expires_at),
-            text=app_download_text(os_label, link, req.expires_at),
-        )
+        send_app_download_email.delay(str(req.id))
     return success(
         message="Download link sent",
         data={"email": body.email, "os": body.os},
