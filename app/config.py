@@ -26,6 +26,12 @@ class Settings(BaseSettings):
     s3_bucket_name: str
     s3_cloudfront_url: str = ""  # e.g. https://d2q7nhojr9v45l.cloudfront.net
 
+    # Cloudflare R2 (S3-compatible) — hosts the desktop app installers
+    r2_endpoint_url: str = ""  # e.g. https://<account_id>.r2.cloudflarestorage.com
+    r2_access_key_id: str = ""
+    r2_secret_access_key: str = ""
+    r2_bucket_name: str = ""
+
     # Flutterwave
     flw_secret_key: str = ""
     flw_hash: str = ""  # Webhook verification hash (set in Flutterwave dashboard)
@@ -88,7 +94,7 @@ class Settings(BaseSettings):
     android_package_name: str = "com.litcode.kida"
     google_service_account_json: str = "{}"  # Full service account JSON as a string
 
-    # App installers (desktop download)
+    # App installers (desktop download) — object keys within the R2 bucket
     app_installer_macos_s3_key: str = "installers/kida-macos.dmg"
     app_installer_windows_s3_key: str = "installers/kida-windows.exe"
 

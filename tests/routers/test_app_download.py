@@ -47,7 +47,7 @@ async def test_redeem_redirects_to_installer(client, db_session, monkeypatch):
     monkeypatch.setattr(mod, "send_email", AsyncMock())
     from app.services import s3_service
     monkeypatch.setattr(
-        s3_service, "generate_presigned_url", AsyncMock(return_value="https://s3/installer.exe")
+        s3_service, "generate_r2_presigned_url", AsyncMock(return_value="https://r2/installer.exe")
     )
 
     await client.post(
@@ -60,7 +60,7 @@ async def test_redeem_redirects_to_installer(client, db_session, monkeypatch):
 
     resp = await client.get(f"/api/v1/app/download/{req.token}", follow_redirects=False)
     assert resp.status_code == 302
-    assert resp.headers["location"] == "https://s3/installer.exe"
+    assert resp.headers["location"] == "https://r2/installer.exe"
 
 
 @pytest.mark.asyncio
