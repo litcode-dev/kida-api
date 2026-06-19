@@ -32,14 +32,15 @@ async def request_download(
     db: AsyncSession = Depends(get_db),
 ):
     req = await app_download_service.create_request(db, body.email, body.os)
-    link = app_download_service.build_download_link(req.token)
-    os_label = OS_LABELS[body.os]
-    await send_email(
-        to=body.email,
-        subject=f"Your Kida download link for {os_label}",
-        html=app_download_html(os_label, link, req.expires_at),
-        text=app_download_text(os_label, link, req.expires_at),
-    )
+    if req is not None:
+        link = app_download_service.build_download_link(req.token)
+        os_label = OS_LABELS[body.os]
+        await send_email(
+            to=body.email,
+            subject=f"Your Kida download link for {os_label}",
+            html=app_download_html(os_label, link, req.expires_at),
+            text=app_download_text(os_label, link, req.expires_at),
+        )
     return success(
         message="Download link sent",
         data={"email": body.email, "os": body.os},

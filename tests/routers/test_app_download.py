@@ -67,3 +67,23 @@ async def test_redeem_redirects_to_installer(client, db_session, monkeypatch):
 async def test_redeem_unknown_token_returns_404(client):
     resp = await client.get("/api/v1/app/download/nonexistent-token", follow_redirects=False)
     assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_request_download_throttles_repeat_email(client, monkeypatch):
+    import app.routers.app_download as mod
+    mock_send = AsyncMock()
+    monkeypatch.setattr(mod, "send_email", mock_send)
+
+    first = await client.post(
+        "/api/v1/app/download-request",
+        json={"email": "throttle@test.com", "os": "macos"},
+    )
+    second = await client.post(
+        "/api/v1/app/download-request",
+        json={"email": "throttle@test.com", "os": "macos"},
+    )
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert second.json() == first.json()   # identical generic response, no enumeration
+    assert mock_send.await_count == 1      # email sent only once

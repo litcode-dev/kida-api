@@ -11,6 +11,7 @@ from app.services import s3_service
 
 LINK_TTL_DAYS = 3
 PRESIGN_TTL_SECONDS = 300
+RESEND_COOLDOWN_MINUTES = 15
 
 OS_LABELS = {"macos": "macOS", "windows": "Windows"}
 
@@ -27,8 +28,22 @@ def _installer_key(os: str) -> str:
     return key
 
 
-async def create_request(db: AsyncSession, email: str, os: str) -> AppDownloadRequest:
-    """Persist a download request with a 3-day expiry and return it."""
+async def create_request(db: AsyncSession, email: str, os: str) -> AppDownloadRequest | None:
+    """Persist a download request with a 3-day expiry and return it.
+
+    Returns None (creating nothing) when this email already requested a link
+    within the last RESEND_COOLDOWN_MINUTES — this throttles per-recipient email
+    so the public endpoint cannot be used to email-bomb a victim.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=RESEND_COOLDOWN_MINUTES)
+    recent = await db.scalar(
+        select(AppDownloadRequest)
+        .where(AppDownloadRequest.email == email, AppDownloadRequest.created_at >= cutoff)
+        .limit(1)
+    )
+    if recent is not None:
+        return None
+
     req = AppDownloadRequest(
         email=email,
         os=os,

@@ -53,3 +53,19 @@ async def test_redeem_expired_token_raises_410(db_session):
     with pytest.raises(AppError) as exc:
         await app_download_service.redeem(db_session, "expired-token")
     assert exc.value.status_code == 410
+
+
+@pytest.mark.asyncio
+async def test_create_request_throttles_repeat_email(db_session):
+    first = await app_download_service.create_request(db_session, "dup@test.com", "macos")
+    assert first is not None
+    second = await app_download_service.create_request(db_session, "dup@test.com", "macos")
+    assert second is None
+
+    from sqlalchemy import func
+    count = await db_session.scalar(
+        select(func.count())
+        .select_from(AppDownloadRequest)
+        .where(AppDownloadRequest.email == "dup@test.com")
+    )
+    assert count == 1
