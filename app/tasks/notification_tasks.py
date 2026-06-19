@@ -162,3 +162,35 @@ def send_new_loop_notification(loop_id: str):
                 )
 
     asyncio.run(_run())
+
+
+@celery_app.task
+def send_app_download_email(request_id: str):
+    """Email the desktop-app download link for a previously created request."""
+    log.info("app_download_email.task_started", request_id=request_id)
+
+    async def _run():
+        from app.database import AsyncSessionLocal
+        from app.models.app_download_request import AppDownloadRequest
+        from app.services import app_download_service
+        from app.services.email_service import send_email, app_download_html, app_download_text
+        import uuid
+
+        async with AsyncSessionLocal() as db:
+            req = await db.get(AppDownloadRequest, uuid.UUID(request_id))
+            if not req:
+                log.warning("app_download_email.request_not_found", request_id=request_id)
+                return
+
+            link = app_download_service.build_download_link(req.token)
+            os_label = app_download_service.OS_LABELS.get(req.os, req.os)
+            log.info("app_download_email.sending", request_id=request_id, email=req.email)
+            await send_email(
+                to=req.email,
+                subject=f"Your Kida download link for {os_label}",
+                html=app_download_html(os_label, link, req.expires_at),
+                text=app_download_text(os_label, link, req.expires_at),
+            )
+            log.info("app_download_email.done", request_id=request_id, email=req.email)
+
+    asyncio.run(_run())

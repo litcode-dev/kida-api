@@ -1,15 +1,15 @@
 import pytest
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 from sqlalchemy import select
 
 from app.models.app_download_request import AppDownloadRequest
 
 
 @pytest.mark.asyncio
-async def test_request_download_sends_email(client, monkeypatch):
+async def test_request_download_enqueues_email(client, monkeypatch):
     import app.routers.app_download as mod
-    mock_send = AsyncMock()
-    monkeypatch.setattr(mod, "send_email", mock_send)
+    mock_task = MagicMock()
+    monkeypatch.setattr(mod, "send_app_download_email", mock_task)
 
     resp = await client.post(
         "/api/v1/app/download-request",
@@ -20,7 +20,7 @@ async def test_request_download_sends_email(client, monkeypatch):
     assert body["status"] == "success"
     assert body["data"]["email"] == "a@test.com"
     assert body["data"]["os"] == "macos"
-    mock_send.assert_awaited_once()
+    mock_task.delay.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -44,7 +44,7 @@ async def test_request_download_rejects_invalid_email(client):
 @pytest.mark.asyncio
 async def test_redeem_redirects_to_installer(client, db_session, monkeypatch):
     import app.routers.app_download as mod
-    monkeypatch.setattr(mod, "send_email", AsyncMock())
+    monkeypatch.setattr(mod, "send_app_download_email", MagicMock())
     from app.services import s3_service
     monkeypatch.setattr(
         s3_service, "generate_r2_presigned_url", AsyncMock(return_value="https://r2/installer.exe")
@@ -72,8 +72,8 @@ async def test_redeem_unknown_token_returns_404(client):
 @pytest.mark.asyncio
 async def test_request_download_throttles_repeat_email(client, monkeypatch):
     import app.routers.app_download as mod
-    mock_send = AsyncMock()
-    monkeypatch.setattr(mod, "send_email", mock_send)
+    mock_task = MagicMock()
+    monkeypatch.setattr(mod, "send_app_download_email", mock_task)
 
     first = await client.post(
         "/api/v1/app/download-request",
@@ -86,4 +86,4 @@ async def test_request_download_throttles_repeat_email(client, monkeypatch):
     assert first.status_code == 200
     assert second.status_code == 200
     assert second.json() == first.json()   # identical generic response, no enumeration
-    assert mock_send.await_count == 1      # email sent only once
+    assert mock_task.delay.call_count == 1  # enqueued only once
