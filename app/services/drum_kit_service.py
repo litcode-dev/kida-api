@@ -7,7 +7,7 @@ from fastapi import UploadFile
 from app.models.drum_kit import DrumKit, DrumSample
 from app.schemas.drum_kit import DrumKitCreate, DrumKitFilter
 from app.exceptions import NotFoundError, AppError
-from app.services import s3_service
+from app.services import price_sync_service, s3_service, store_sku
 from app.utils.audio_validator import validate_wav_upload
 
 MAX_SAMPLES_PER_KIT = 50
@@ -45,7 +45,7 @@ async def create_drum_kit(
         await s3_service.upload_bytes(thumb_key, thumb_bytes, content_type)
 
     slug = _slugify(data.title, kit_id)
-    store_product_id = None if data.is_free else f"com.litmusic.drumkit.{slug}"
+    store_product_id = None if data.is_free else store_sku.generate_sku("kit", data.title, kit_id)
 
     kit = DrumKit(
         id=uuid.UUID(kit_id),
@@ -56,6 +56,7 @@ async def create_drum_kit(
         tags=data.tags,
         is_free=data.is_free,
         price=data.price,
+        desired_price_usd=data.desired_price_usd,
         store_product_id=store_product_id,
         created_by=created_by,
     )
@@ -109,8 +110,16 @@ async def update_drum_kit(
         await s3_service.upload_bytes(new_thumb_key, thumb_bytes, content_type)
         kit.thumbnail_s3_key = new_thumb_key
 
-    for field, value in data.model_dump(exclude_none=True).items():
+    update_fields = data.model_dump(exclude_none=True)
+    new_desired = update_fields.pop("desired_price_usd", None)
+    for field, value in update_fields.items():
         setattr(kit, field, value)
+
+    if new_desired is not None and new_desired != kit.desired_price_usd:
+        kit.desired_price_usd = new_desired
+        price_sync_service.mark_price_dirty(kit)
+        if not kit.is_free:
+            price_sync_service.ensure_sku(kit, "kit")
 
     await db.commit()
     await db.refresh(kit)

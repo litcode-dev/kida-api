@@ -14,7 +14,7 @@ from app.schemas.drone_pad import (
     DronePadUpdate,
 )
 from app.exceptions import NotFoundError, EntitlementError
-from app.services import s3_service
+from app.services import price_sync_service, s3_service
 from app.utils.audio_validator import validate_wav_upload
 
 
@@ -109,9 +109,12 @@ async def create_drone(
         thumbnail_url=thumb_url,
         price=data.price,
         is_free=data.is_free,
+        desired_price_usd=data.desired_price_usd,
         category_id=data.category_id,
         created_by=created_by,
     )
+    if not drone.is_free:
+        price_sync_service.ensure_sku(drone, "drone")
     pad = DronePad(
         id=uuid.UUID(pad_id),
         drone_id=drone.id,
@@ -238,6 +241,8 @@ async def bulk_create_drones(
         category_id=category_id,
         created_by=created_by,
     )
+    if not drone.is_free:
+        price_sync_service.ensure_sku(drone, "drone")
     db.add(drone)
     await db.flush()
 
@@ -320,8 +325,16 @@ async def update_drone(
         for pad in drone.pads:
             pad.thumbnail_s3_key = new_thumb_key
 
-    for field, value in data.model_dump(exclude_none=True).items():
+    update_fields = data.model_dump(exclude_none=True)
+    new_desired = update_fields.pop("desired_price_usd", None)
+    for field, value in update_fields.items():
         setattr(drone, field, value)
+
+    if new_desired is not None and new_desired != drone.desired_price_usd:
+        drone.desired_price_usd = new_desired
+        price_sync_service.mark_price_dirty(drone)
+        if not drone.is_free:
+            price_sync_service.ensure_sku(drone, "drone")
 
     await db.commit()
     return await get_drone(db, drone_id)

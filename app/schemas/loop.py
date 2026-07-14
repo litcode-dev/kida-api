@@ -18,6 +18,7 @@ class LoopCreate(BaseModel):
     tags: list[str] = []
     price: Decimal
     is_free: bool = False
+    desired_price_usd: Decimal | None = Field(default=None, gt=0)
 
     @field_validator("bpm")
     @classmethod
@@ -47,6 +48,7 @@ class LoopUpdate(BaseModel):
     tags: list[str] | None = None
     price: Decimal | None = None
     is_free: bool | None = None
+    desired_price_usd: Decimal | None = Field(default=None, gt=0)
 
     @field_validator("bpm")
     @classmethod
