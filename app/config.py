@@ -89,6 +89,8 @@ class Settings(BaseSettings):
 
     # IAP — Apple
     apple_shared_secret: str = ""  # App-specific shared secret from App Store Connect
+    # Subscription verification shared secret (falls back to apple_shared_secret)
+    app_store_shared_secret: str = ""
 
     # IAP — Google
     android_package_name: str = "com.litcode.kida"

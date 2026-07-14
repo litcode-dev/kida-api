@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+from typing import Literal
 from pydantic import BaseModel
 from app.models.subscription import SubscriptionPlan, SubscriptionStatus
 from app.models.purchase import PaymentProvider
@@ -7,6 +8,20 @@ from app.models.purchase import PaymentProvider
 
 class SubscriptionInitiateRequest(BaseModel):
     provider: PaymentProvider
+
+
+class IapVerifyRequest(BaseModel):
+    """Store-subscription verification payload sent by the Kiɗa app."""
+
+    product_id: str
+    platform: Literal["ios", "android"]
+    receipt: str
+
+
+class EntitlementResponse(BaseModel):
+    active: bool
+    expires_at: str | None = None
+    product_id: str | None = None
 
 
 class ExtraCreditsInitiateRequest(BaseModel):
