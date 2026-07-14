@@ -9,6 +9,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
+from app.models.price_sync import PriceSyncMixin
 
 
 class MusicalKey(str, enum.Enum):
@@ -40,7 +41,7 @@ class DronePadCategory(Base):
     drones: Mapped[list["Drone"]] = relationship("Drone", back_populates="category", lazy="noload")
 
 
-class Drone(Base):
+class Drone(PriceSyncMixin, Base):
     __tablename__ = "drones"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -49,7 +50,7 @@ class Drone(Base):
     thumbnail_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
     is_free: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    store_product_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    store_product_id: Mapped[str | None] = mapped_column(String(255), unique=True, index=True, nullable=True)
     download_count: Mapped[int] = mapped_column(Integer, default=0)
     category_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),

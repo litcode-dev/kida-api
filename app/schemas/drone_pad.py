@@ -25,6 +25,7 @@ class DronePadCreate(BaseModel):
     key: MusicalKey
     price: Decimal | None = None
     is_free: bool = False
+    desired_price_usd: Decimal | None = Field(default=None, gt=0)
     category_id: uuid.UUID | None = None
 
 
@@ -33,6 +34,7 @@ class DronePadUpdate(BaseModel):
     description: str | None = None
     price: Decimal | None = None
     is_free: bool | None = None
+    desired_price_usd: Decimal | None = Field(default=None, gt=0)
     category_id: uuid.UUID | None = None
 
 

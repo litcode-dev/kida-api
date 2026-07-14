@@ -423,6 +423,7 @@ async def upload_loop(
     tempo_feel: TempoFeel = Form(...),
     price: Decimal = Form(...),
     is_free: bool = Form(False),
+    desired_price_usd: Decimal | None = Form(None),
     tags: str = Form(""),
     db: AsyncSession = Depends(get_db),
     admin=Depends(require_admin),
@@ -431,6 +432,7 @@ async def upload_loop(
         title=title, genre=genre, bpm=bpm,
         time_signature=time_signature, tempo_feel=tempo_feel,
         price=price, is_free=is_free,
+        desired_price_usd=desired_price_usd,
         tags=[t.strip() for t in tags.split(",") if t.strip()],
     )
     loop = await loop_service.create_loop(db, file, data, admin.id, thumbnail=thumbnail)
@@ -467,6 +469,7 @@ async def update_loop(
     tags: str | None = Form(None),
     price: Decimal | None = Form(None),
     is_free: bool | None = Form(None),
+    desired_price_usd: Decimal | None = Form(None),
     db: AsyncSession = Depends(get_db),
     admin=Depends(require_admin),
 ):
@@ -481,6 +484,7 @@ async def update_loop(
         tags=tags_list,
         price=price,
         is_free=is_free,
+        desired_price_usd=desired_price_usd,
     )
     loop, should_reprocess = await loop_service.update_loop(
         db, loop_id, data, thumbnail=thumbnail, file=file
@@ -583,6 +587,7 @@ async def upload_drone(
     key: MusicalKey = Form(...),
     price: Decimal | None = Form(None),
     is_free: bool = Form(False),
+    desired_price_usd: Decimal | None = Form(None),
     category_id: uuid.UUID | None = Form(None),
     db: AsyncSession = Depends(get_db),
     admin=Depends(require_admin),
@@ -596,6 +601,7 @@ async def upload_drone(
         key=key,
         price=price,
         is_free=is_free,
+        desired_price_usd=desired_price_usd,
         category_id=category_id,
     )
     drone = await drone_service.create_drone(db, file, data, admin.id, thumbnail=thumbnail)
@@ -709,6 +715,7 @@ async def update_drone(
     description: str | None = Form(None),
     price: Decimal | None = Form(None),
     is_free: bool | None = Form(None),
+    desired_price_usd: Decimal | None = Form(None),
     category_id: uuid.UUID | None = Form(None),
     db: AsyncSession = Depends(get_db),
     admin=Depends(require_admin),
@@ -718,6 +725,7 @@ async def update_drone(
         description=description,
         price=price,
         is_free=is_free,
+        desired_price_usd=desired_price_usd,
         category_id=category_id,
     )
     drone = await drone_service.update_drone(db, drone_id, data, thumbnail=thumbnail)
@@ -776,6 +784,7 @@ async def create_drum_kit(
     tags: str = Form(""),
     is_free: bool = Form(True),
     price: Decimal | None = Form(None),
+    desired_price_usd: Decimal | None = Form(None),
     sample_files: list[UploadFile] = File(...),
     sample_labels: str = Form(...),  # comma-separated labels matching sample_files order
     db: AsyncSession = Depends(get_db),
@@ -789,6 +798,7 @@ async def create_drum_kit(
         tags=[t.strip() for t in tags.split(",") if t.strip()],
         is_free=is_free,
         price=price,
+        desired_price_usd=desired_price_usd,
     )
     kit, sample_ids = await drum_kit_service.create_drum_kit(
         db, data, admin.id, sample_files, labels, thumbnail=thumbnail
@@ -852,10 +862,14 @@ async def update_drum_kit(
     description: str | None = Form(None),
     price: Decimal | None = Form(None),
     is_free: bool | None = Form(None),
+    desired_price_usd: Decimal | None = Form(None),
     db: AsyncSession = Depends(get_db),
     admin=Depends(require_admin),
 ):
-    data = DrumKitUpdate(title=title, description=description, price=price, is_free=is_free)
+    data = DrumKitUpdate(
+        title=title, description=description, price=price, is_free=is_free,
+        desired_price_usd=desired_price_usd,
+    )
     kit = await drum_kit_service.update_drum_kit(db, kit_id, data, thumbnail=thumbnail)
     return success(DrumKitResponse.model_validate(kit).model_dump(), "Drum kit updated")
 
@@ -873,3 +887,71 @@ async def replace_drum_sample_audio(
     sample = await drum_kit_service.replace_sample_audio(db, kit_id, sample_id, file)
     process_drum_sample_upload.delay(str(sample_id))
     return success({"sample_id": str(sample.id), "status": sample.status}, "Sample audio replacement queued")
+
+
+# --- IAP price sync administration ---
+
+@router.get(
+    "/price-sync/errors",
+    summary="List items whose store price sync failed",
+    description=(
+        "Returns every sellable item (loop, drum kit, drone group) in "
+        "`price_sync_state=error` with the recorded failure message. Re-setting "
+        "`desired_price_usd` on an item flips it back to `pending` for retry."
+    ),
+    responses={
+        401: {"description": "Missing or invalid token"},
+        403: {"description": "Admin role required"},
+    },
+)
+@limiter.limit("60/minute")
+async def list_price_sync_errors(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_admin),
+):
+    from app.services import price_sync_service
+    return success(await price_sync_service.list_sync_errors(db))
+
+
+@router.post(
+    "/price-sync/run",
+    summary="Trigger a store price sync run now",
+    description="Queues the reconcile worker immediately instead of waiting for the next scheduled run.",
+    responses={
+        401: {"description": "Missing or invalid token"},
+        403: {"description": "Admin role required"},
+    },
+)
+@limiter.limit("10/minute")
+async def trigger_price_sync(
+    request: Request,
+    _: User = Depends(require_admin),
+):
+    from app.tasks.price_sync_tasks import reconcile_store_prices
+    reconcile_store_prices.delay()
+    return success(message="Price sync run queued")
+
+
+@router.post(
+    "/price-sync/{store_product_id}/retire",
+    summary="Retire a store product",
+    description=(
+        "Sets the Google Play product to inactive and removes the App Store product "
+        "from sale. SKUs are never deleted or reused — retiring is the only way to "
+        "take an item off the stores."
+    ),
+    responses={
+        401: {"description": "Missing or invalid token"},
+        403: {"description": "Admin role required"},
+    },
+)
+@limiter.limit("10/minute")
+async def retire_store_product(
+    request: Request,
+    store_product_id: str,
+    _: User = Depends(require_admin),
+):
+    from app.services import price_sync_service
+    await price_sync_service.retire_product(store_product_id)
+    return success(message=f"Store product {store_product_id} retired")

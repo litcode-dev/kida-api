@@ -1,7 +1,7 @@
 import uuid
 from decimal import Decimal
 from datetime import datetime
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 DOWNLOAD_EXPIRY_SECONDS = 900  # 15 minutes
 
@@ -12,6 +12,7 @@ class DrumKitCreate(BaseModel):
     tags: list[str] = []
     is_free: bool = True
     price: Decimal | None = None
+    desired_price_usd: Decimal | None = Field(default=None, gt=0)
 
     @model_validator(mode="after")
     def price_required_for_paid(self) -> "DrumKitCreate":
@@ -27,6 +28,7 @@ class DrumKitUpdate(BaseModel):
     description: str | None = None
     price: Decimal | None = None
     is_free: bool | None = None
+    desired_price_usd: Decimal | None = Field(default=None, gt=0)
 
     @model_validator(mode="after")
     def price_required_for_paid(self) -> "DrumKitUpdate":

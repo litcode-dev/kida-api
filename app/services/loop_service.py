@@ -7,7 +7,7 @@ from app.models.purchase import Purchase
 from app.models.user import User
 from app.schemas.loop import LoopCreate, LoopUpdate, LoopFilter
 from app.exceptions import NotFoundError, EntitlementError
-from app.services import s3_service
+from app.services import price_sync_service, s3_service
 from app.utils.audio_validator import validate_wav_upload
 from fastapi import UploadFile
 
@@ -52,10 +52,13 @@ async def create_loop(
         price=data.price,
         is_free=data.is_free,
         is_paid=not data.is_free,
+        desired_price_usd=data.desired_price_usd,
         thumbnail_s3_key=thumb_key,
         created_by=created_by,
         status="processing",
     )
+    if not loop.is_free:
+        price_sync_service.ensure_sku(loop, "loop")
     db.add(loop)
     await db.commit()
     await db.refresh(loop)
@@ -158,8 +161,16 @@ async def update_loop(
         loop.status = "processing"
         should_reprocess = True
 
-    for field, value in data.model_dump(exclude_none=True).items():
+    update_fields = data.model_dump(exclude_none=True)
+    new_desired = update_fields.pop("desired_price_usd", None)
+    for field, value in update_fields.items():
         setattr(loop, field, value)
+
+    if new_desired is not None and new_desired != loop.desired_price_usd:
+        loop.desired_price_usd = new_desired
+        price_sync_service.mark_price_dirty(loop)
+        if not loop.is_free:
+            price_sync_service.ensure_sku(loop, "loop")
 
     await db.commit()
     await db.refresh(loop)

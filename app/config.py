@@ -94,6 +94,20 @@ class Settings(BaseSettings):
     android_package_name: str = "com.litcode.kida"
     google_service_account_json: str = "{}"  # Full service account JSON as a string
 
+    # IAP price sync — Google Play (falls back to google_service_account_json if unset)
+    google_play_service_account_json: str = ""
+
+    # IAP price sync — App Store Connect API
+    app_store_issuer_id: str = ""
+    app_store_key_id: str = ""
+    app_store_private_key: str = ""  # PEM contents of the .p8 key (escaped "\n" allowed)
+    app_store_app_id: str = ""  # Numeric Apple app ID that owns the in-app purchases
+    app_store_review_screenshot_path: str = ""  # Shared review screenshot for new IAPs
+
+    # IAP price sync — worker
+    price_sync_ngn_per_usd: int = 1600  # USD→NGN rate for the pinned NG region price
+    price_sync_interval_seconds: int = 600
+
     # App installers (desktop download) — object keys within the R2 bucket
     app_installer_macos_s3_key: str = "installers/kida-macos.dmg"
     app_installer_windows_s3_key: str = "installers/kida-windows.exe"

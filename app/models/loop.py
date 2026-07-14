@@ -9,6 +9,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 from app.database import Base
+from app.models.price_sync import PriceSyncMixin
 
 
 class Genre(str, enum.Enum):
@@ -31,7 +32,7 @@ class TempoFeel(str, enum.Enum):
     fast = "fast"
 
 
-class Loop(Base):
+class Loop(PriceSyncMixin, Base):
     __tablename__ = "loops"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -49,7 +50,7 @@ class Loop(Base):
     price: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
     is_free: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_paid: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    store_product_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    store_product_id: Mapped[str | None] = mapped_column(String(255), unique=True, index=True, nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     file_s3_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
     preview_s3_key: Mapped[str | None] = mapped_column(String(500), nullable=True)

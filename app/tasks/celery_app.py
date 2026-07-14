@@ -13,6 +13,7 @@ celery_app = Celery(
         "app.tasks.scheduled_tasks",
         "app.tasks.ai_tasks",
         "app.tasks.upload_tasks",
+        "app.tasks.price_sync_tasks",
     ],
 )
 
@@ -22,6 +23,10 @@ celery_app.conf.beat_schedule = {
     "cleanup-expired-downloads-hourly": {
         "task": "app.tasks.download_tasks.cleanup_expired_downloads",
         "schedule": 3600.0,
+    },
+    "reconcile-store-prices": {
+        "task": "app.tasks.price_sync_tasks.reconcile_store_prices",
+        "schedule": float(settings.price_sync_interval_seconds),
     },
 }
 celery_app.conf.timezone = "UTC"
