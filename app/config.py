@@ -87,8 +87,8 @@ class Settings(BaseSettings):
     free_tier_loop_downloads: int = 2
     free_tier_drum_kit_downloads: int = 1
     free_tier_drone_pad_downloads: int = 1
-    # Full-group drone downloads of free groups are subscriber-only (cap 0).
-    free_tier_drone_group_downloads: int = 0
+    # Free users may download one whole free drone group (all its keys).
+    free_tier_drone_group_downloads: int = 1
 
     # Subscription pricing (amounts in kobo for Paystack; divide by 100 for Flutterwave major units)
     subscription_monthly_price: int = 200000   # ₦2,000 in kobo
