@@ -10,3 +10,4 @@ from app.models.ai_generation import AIGeneration, AIProvider, AIGenerationStatu
 from app.models.drone_pad import Drone, DronePad, DronePadCategory, MusicalKey  # noqa: F401
 from app.models.price_sync import PriceSyncState  # noqa: F401
 from app.models.app_download_request import AppDownloadRequest  # noqa: F401
+from app.models.download_grant import DownloadGrant, DownloadGrantType  # noqa: F401

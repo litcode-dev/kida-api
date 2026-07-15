@@ -82,6 +82,14 @@ class Settings(BaseSettings):
     ai_selfhosted_url: str = ""
     ai_selfhosted_api_key: str = ""
 
+    # Free-tier download caps (lifetime grants per account for FREE content;
+    # subscribers and per-item purchasers are exempt). Tunable without a deploy.
+    free_tier_loop_downloads: int = 2
+    free_tier_drum_kit_downloads: int = 1
+    free_tier_drone_pad_downloads: int = 1
+    # Full-group drone downloads of free groups are subscriber-only (cap 0).
+    free_tier_drone_group_downloads: int = 0
+
     # Subscription pricing (amounts in kobo for Paystack; divide by 100 for Flutterwave major units)
     subscription_monthly_price: int = 200000   # ₦2,000 in kobo
     ai_extra_credits_price: int = 50000        # ₦500 in kobo

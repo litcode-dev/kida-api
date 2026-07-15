@@ -40,6 +40,28 @@ class EntitlementError(AppError):
         super().__init__(message, status_code=status.HTTP_403_FORBIDDEN)
 
 
+class FreeTierLimitError(AppError):
+    """A free-tier download cap was hit. Rendered with a stable machine-readable
+    body (see free_tier_limit_handler) so the app can show the paywall directly.
+    """
+
+    def __init__(self, item_type: str, limit: int):
+        self.item_type = item_type
+        self.limit = limit
+        super().__init__(
+            f"Free-tier {item_type} download limit reached ({limit})",
+            status_code=status.HTTP_403_FORBIDDEN,
+        )
+
+
+async def free_tier_limit_handler(request: Request, exc: FreeTierLimitError) -> JSONResponse:
+    # Stable contract parsed by the app — do not change field names or shape.
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"error": "free_tier_limit", "type": exc.item_type, "limit": exc.limit},
+    )
+
+
 async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
     return JSONResponse(
         status_code=exc.status_code,

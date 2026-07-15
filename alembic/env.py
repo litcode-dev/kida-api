@@ -29,7 +29,11 @@ def run_migrations_offline() -> None:
 def do_run_migrations(connection):
     def on_version_apply(ctx, step, heads, run_args):
         direction = "upgrade" if step.is_upgrade else "downgrade"
-        revision = step.up_revision if step.is_upgrade else (step.down_revision or "base")
+        revision = (
+            step.up_revision
+            if step.is_upgrade
+            else (", ".join(str(r) for r in step.down_revisions) if step.down_revisions else "base")
+        )
         description = getattr(step, "doc", None) or revision
         try:
             connection.execute(sa.text("SAVEPOINT migration_log_sp"))

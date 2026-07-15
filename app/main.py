@@ -11,7 +11,7 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.config import get_settings
-from app.exceptions import AppError, app_error_handler
+from app.exceptions import AppError, FreeTierLimitError, app_error_handler, free_tier_limit_handler
 from app.middleware.logging_middleware import LoggingMiddleware
 from app.middleware.rate_limit import limiter
 from app.routers import auth, loops, stem_packs, payments, admin, downloads, likes, subscriptions, ai, drones, drum_kits, purchases, producer, newsletter, push_notifications, app_download
@@ -95,6 +95,9 @@ app.add_middleware(LoggingMiddleware)
 
 # Error handlers — all responses use the same envelope format
 app.add_exception_handler(AppError, app_error_handler)
+# Except free-tier cap refusals, which use a stable machine-readable body the
+# app parses to show the paywall (most-derived handler wins over AppError's).
+app.add_exception_handler(FreeTierLimitError, free_tier_limit_handler)
 
 
 @app.exception_handler(StarletteHTTPException)

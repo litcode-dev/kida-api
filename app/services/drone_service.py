@@ -4,7 +4,7 @@ from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
 from fastapi import UploadFile
 
-from app.models.drone_pad import Drone, DronePad, DronePadCategory
+from app.models.drone_pad import Drone, DronePad, DronePadCategory, MusicalKey
 from app.models.purchase import Purchase
 from app.models.user import User
 from app.schemas.drone_pad import (
@@ -299,9 +299,64 @@ async def _download_items_for_pads(
     return results
 
 
-async def get_drone_downloads(db: AsyncSession, user: User, drone_id: uuid.UUID) -> list[dict]:
+def _pads_for_key(drone: Drone, key: MusicalKey | None) -> list[DronePad]:
+    if key is None:
+        return list(drone.pads)
+    return [p for p in drone.pads if p.key == key]
+
+
+async def get_drone_downloads(
+    db: AsyncSession, user: User, drone_id: uuid.UUID, key: MusicalKey | None = None
+) -> list[dict]:
+    from app.services import free_tier_service
+
     drone = await get_drone(db, drone_id)
-    return await _download_items_for_pads(db, user, list(drone.pads))
+    pads = _pads_for_key(drone, key)
+    if key is not None and not pads:
+        raise NotFoundError(f"Drone {drone_id} has no pad in key {key.value}")
+    await free_tier_service.enforce_drone_download(db, user, drone, key)
+    return await _download_items_for_pads(db, user, pads)
+
+
+async def get_title_downloads(
+    db: AsyncSession, user: User, title: str, key: MusicalKey | None = None
+) -> list[dict]:
+    from app.exceptions import FreeTierLimitError
+    from app.services import free_tier_service
+
+    drones = list(
+        await db.scalars(
+            select(Drone)
+            .options(
+                selectinload(Drone.category),
+                selectinload(Drone.pads).selectinload(DronePad.drone),
+            )
+            .where(Drone.title.ilike(title))
+            .order_by(Drone.created_at)
+        )
+    )
+    if not drones:
+        raise NotFoundError(f"No drones found with title '{title}'")
+
+    items: list[dict] = []
+    matched_any = False
+    refusal: FreeTierLimitError | None = None
+    for drone in drones:
+        pads = _pads_for_key(drone, key)
+        if not pads:
+            continue
+        matched_any = True
+        try:
+            await free_tier_service.enforce_drone_download(db, user, drone, key)
+        except FreeTierLimitError as exc:
+            refusal = exc
+            continue
+        items.extend(await _download_items_for_pads(db, user, pads))
+    if key is not None and not matched_any:
+        raise NotFoundError(f"No '{title}' pad in key {key.value}")
+    if not items and refusal is not None:
+        raise refusal
+    return items
 
 
 async def update_drone(

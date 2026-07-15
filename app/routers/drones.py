@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 import httpx
@@ -70,6 +70,24 @@ async def list_drones(
     return success(data)
 
 
+@router.get("/titles/{title}/download")
+async def download_drones_by_title(
+    title: str,
+    key: MusicalKey | None = Query(
+        None,
+        description=(
+            "Musical key of a single pad (URL-encoded, e.g. `C%23`). When present, "
+            "only that pad is returned and one free-tier drone_pad grant is used. "
+            "When absent, downloading a free group requires an active subscription."
+        ),
+    ),
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    items = await drone_service.get_title_downloads(db, user, title, key)
+    return success({"items": items, "total": len(items)})
+
+
 @router.get("/{drone_id}")
 async def get_drone(drone_id: uuid.UUID, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
     drone = await drone_service.get_drone(db, drone_id)
@@ -97,8 +115,16 @@ async def stream_preview(drone_id: uuid.UUID, db: AsyncSession = Depends(get_db)
 @router.get("/{drone_id}/download")
 async def download_drone(
     drone_id: uuid.UUID,
+    key: MusicalKey | None = Query(
+        None,
+        description=(
+            "Musical key of a single pad (URL-encoded, e.g. `C%23`). When present, "
+            "only that pad is returned and one free-tier drone_pad grant is used. "
+            "When absent, downloading a free group requires an active subscription."
+        ),
+    ),
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
 ):
-    items = await drone_service.get_drone_downloads(db, user, drone_id)
+    items = await drone_service.get_drone_downloads(db, user, drone_id, key)
     return success({"items": items, "total": len(items)})
