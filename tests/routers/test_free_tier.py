@@ -277,14 +277,21 @@ async def test_purchased_paid_drum_kit_creates_no_grant(client, db_session):
 # ── Drone groups and pads ────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_free_drone_group_download_requires_subscription(client, db_session):
+async def test_free_drone_group_download_allows_one_then_blocks(client, db_session):
     user = await _create_user(db_session)
-    drone = await _create_drone(db_session, user.id)
+    first = await _create_drone(db_session, user.id)
+    second = await _create_drone(db_session, user.id)
     with _patch_s3():
-        resp = await client.get(f"/api/v1/drones/{drone.id}/download", headers=_headers(user))
-    assert resp.status_code == 403
-    assert resp.json() == {"error": "free_tier_limit", "type": "drone_group", "limit": 0}
-    assert await _grant_count(db_session, user.id) == 0
+        resp1 = await client.get(f"/api/v1/drones/{first.id}/download", headers=_headers(user))
+        # Re-requesting the same group is idempotent — no new grant consumed.
+        again = await client.get(f"/api/v1/drones/{first.id}/download", headers=_headers(user))
+        resp2 = await client.get(f"/api/v1/drones/{second.id}/download", headers=_headers(user))
+    assert resp1.status_code == 200
+    assert resp1.json()["data"]["total"] == 2
+    assert again.status_code == 200
+    assert resp2.status_code == 403
+    assert resp2.json() == {"error": "free_tier_limit", "type": "drone_group", "limit": 1}
+    assert await _grant_count(db_session, user.id, DownloadGrantType.drone_group) == 1
 
 
 @pytest.mark.asyncio
@@ -401,13 +408,16 @@ async def test_unknown_pad_key_is_404(client, db_session):
 # ── Drone title downloads ────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_title_download_full_group_requires_subscription(client, db_session):
+async def test_title_download_full_group_allowed_once_then_blocked(client, db_session):
     user = await _create_user(db_session)
     await _create_drone(db_session, user.id, title="Warm Pad")
+    await _create_drone(db_session, user.id, title="Cold Pad")
     with _patch_s3():
-        resp = await client.get("/api/v1/drones/titles/Warm Pad/download", headers=_headers(user))
-    assert resp.status_code == 403
-    assert resp.json() == {"error": "free_tier_limit", "type": "drone_group", "limit": 0}
+        first = await client.get("/api/v1/drones/titles/Warm Pad/download", headers=_headers(user))
+        second = await client.get("/api/v1/drones/titles/Cold Pad/download", headers=_headers(user))
+    assert first.status_code == 200
+    assert second.status_code == 403
+    assert second.json() == {"error": "free_tier_limit", "type": "drone_group", "limit": 1}
 
 
 @pytest.mark.asyncio
