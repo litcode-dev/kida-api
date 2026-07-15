@@ -5,7 +5,7 @@ import httpx
 from app.database import get_db
 from app.middleware.auth_middleware import get_current_user
 from app.middleware.rate_limit import limiter
-from app.services import loop_service, s3_service, like_service
+from app.services import loop_service, s3_service, like_service, free_tier_service
 from app.schemas.loop import LoopFilter, LoopResponse
 from app.schemas.common import success
 from app.models.loop import Genre, TempoFeel
@@ -78,6 +78,7 @@ async def download_loop(
 
     loop = await loop_service.get_loop(db, loop_id)
     await loop_service.check_download_entitlement(db, user, loop)
+    await free_tier_service.enforce_loop_cap(db, user, loop)
 
     download_url = await s3_service.get_download_url(loop.file_s3_key, expiry_seconds=900)
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=15)

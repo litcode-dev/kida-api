@@ -2,6 +2,7 @@ import pytest
 import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
+from sqlalchemy.pool import NullPool
 from app.main import app
 from app.database import Base, get_db
 from app.middleware.auth_middleware import get_redis
@@ -9,7 +10,7 @@ from unittest.mock import AsyncMock
 
 TEST_DB_URL = "postgresql+asyncpg://litmusic:litmusic@localhost:5432/litmusic_test"
 
-test_engine = create_async_engine(TEST_DB_URL, echo=False)
+test_engine = create_async_engine(TEST_DB_URL, echo=False, poolclass=NullPool)
 TestSessionLocal = async_sessionmaker(bind=test_engine, class_=AsyncSession, expire_on_commit=False)
 
 

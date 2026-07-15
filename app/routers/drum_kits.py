@@ -8,7 +8,7 @@ import uuid
 
 from app.database import get_db
 from app.middleware.auth_middleware import get_current_user
-from app.services import drum_kit_service, s3_service, cache_service
+from app.services import drum_kit_service, s3_service, cache_service, free_tier_service
 from app.schemas.drum_kit import (
     DrumKitFilter, DrumKitResponse,
     DrumKitDownloadResponse, DrumSampleDownloadItem, DOWNLOAD_EXPIRY_SECONDS,
@@ -162,6 +162,8 @@ async def download_drum_kit(
 
     if not sample_items:
         raise AppError("No ready samples available for download yet", status_code=409)
+
+    await free_tier_service.enforce_drum_kit_cap(db, user, kit)
 
     dl = Download(
         user_id=user.id,
