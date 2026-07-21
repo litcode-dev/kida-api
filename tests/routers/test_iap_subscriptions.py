@@ -5,9 +5,7 @@ import pytest
 
 from app.models.iap_subscription import IapSubscription, IapSubscriptionStatus
 from app.models.user import User, UserRole
-from app.services import iap_subscription_service
 from app.services.auth_service import hash_password, create_access_token
-from app.services.iap_types import VerifiedSubscription
 
 
 async def _create_user(db):
@@ -74,19 +72,8 @@ async def test_me_expired(client, db_session):
 
 
 @pytest.mark.asyncio
-async def test_verify_android_creates_entitlement(client, db_session, monkeypatch):
+async def test_verify_android_creates_entitlement(client, db_session):
     user = await _create_user(db_session)
-    verified = VerifiedSubscription(
-        store_transaction_id="play-token-x", product_id="kida.premium.monthly",
-        expires_at=datetime.now(timezone.utc) + timedelta(days=30),
-        status="active", latest_receipt="{...}", raw_payload={},
-    )
-
-    class _FakePlay:
-        async def verify(self, receipt):
-            return verified
-
-    monkeypatch.setattr(iap_subscription_service, "PlaySubscriptions", lambda: _FakePlay())
 
     resp = await client.post(
         "/api/v1/subscriptions/verify",

@@ -1,3 +1,4 @@
+import hashlib
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -8,7 +9,6 @@ from app.models.iap_subscription import IapSubscription, IapSubscriptionStatus
 from app.models.user import User, UserRole
 from app.services.auth_service import hash_password
 from app.services import iap_subscription_service
-from app.services.iap_types import VerifiedSubscription
 
 
 async def _create_user(db):
@@ -22,83 +22,49 @@ async def _create_user(db):
     return user
 
 
-class _FakeClient:
-    """Stand-in for PlaySubscriptions / AppStoreSubscriptions."""
-
-    def __init__(self, verified: VerifiedSubscription):
-        self._verified = verified
-        self.calls = 0
-
-    async def verify(self, receipt: str) -> VerifiedSubscription:
-        self.calls += 1
-        return self._verified
-
-
 def _future(days=30):
     return datetime.now(timezone.utc) + timedelta(days=days)
 
 
 # ---- verify_and_upsert (mocked store clients) ----
 
+# ---- verify_and_upsert (store-side verification disabled — trusts the client) ----
+
 @pytest.mark.asyncio
 async def test_android_verify_creates_active_row(db_session):
     user = await _create_user(db_session)
-    verified = VerifiedSubscription(
-        store_transaction_id="play-token-1",
-        product_id="kida.premium.monthly",
-        expires_at=_future(),
-        status="active",
-        latest_receipt="{...}",
-        raw_payload={"subscriptionState": "SUBSCRIPTION_STATE_ACTIVE"},
-    )
-    client = _FakeClient(verified)
     sub = await iap_subscription_service.verify_and_upsert(
-        db_session, user.id, "kida.premium.monthly", "android", "{...}", play_client=client,
+        db_session, user.id, "kida.premium.monthly", "android", "{...}",
     )
     assert sub.status == IapSubscriptionStatus.active
-    assert sub.store_transaction_id == "play-token-1"
+    assert sub.store_transaction_id == hashlib.sha256(b"{...}").hexdigest()
     assert sub.product_id == "kida.premium.monthly"
     assert iap_subscription_service.is_active(sub) is True
-    assert client.calls == 1
+    # Monthly product ids get a ~30 day assumed billing period.
+    assert 29 <= (sub.expires_at - datetime.now(timezone.utc)).days <= 30
 
 
 @pytest.mark.asyncio
 async def test_ios_verify_creates_active_row(db_session):
     user = await _create_user(db_session)
-    verified = VerifiedSubscription(
-        store_transaction_id="orig-txn-1",
-        product_id="kida.premium.yearly",
-        expires_at=_future(365),
-        status="active",
-        latest_receipt="b64",
-        raw_payload={"status": 0},
-    )
-    client = _FakeClient(verified)
     sub = await iap_subscription_service.verify_and_upsert(
-        db_session, user.id, "kida.premium.yearly", "ios", "b64", app_store_client=client,
+        db_session, user.id, "kida.premium.yearly", "ios", "b64",
     )
     assert sub.platform.value == "ios"
-    assert sub.store_transaction_id == "orig-txn-1"
+    assert sub.store_transaction_id == hashlib.sha256(b"b64").hexdigest()
     assert iap_subscription_service.is_active(sub) is True
+    # Yearly product ids get a ~365 day assumed billing period.
+    assert 364 <= (sub.expires_at - datetime.now(timezone.utc)).days <= 365
 
 
 @pytest.mark.asyncio
 async def test_idempotent_reverify_updates_same_row(db_session):
     user = await _create_user(db_session)
-    verified = VerifiedSubscription(
-        store_transaction_id="play-token-1",
-        product_id="kida.premium.monthly",
-        expires_at=_future(),
-        status="active",
-        latest_receipt="{...}",
-        raw_payload={},
-    )
-    client = _FakeClient(verified)
     first = await iap_subscription_service.verify_and_upsert(
-        db_session, user.id, "kida.premium.monthly", "android", "{...}", play_client=client,
+        db_session, user.id, "kida.premium.monthly", "android", "{...}",
     )
     second = await iap_subscription_service.verify_and_upsert(
-        db_session, user.id, "kida.premium.monthly", "android", "{...}", play_client=client,
+        db_session, user.id, "kida.premium.monthly", "android", "{...}",
     )
     assert first.id == second.id
     count = await db_session.scalar(
@@ -110,26 +76,27 @@ async def test_idempotent_reverify_updates_same_row(db_session):
 @pytest.mark.asyncio
 async def test_switching_plan_updates_same_row(db_session):
     user = await _create_user(db_session)
-    monthly = VerifiedSubscription(
-        store_transaction_id="token-monthly", product_id="kida.premium.monthly",
-        expires_at=_future(), status="active", latest_receipt="{...}", raw_payload={},
-    )
-    yearly = VerifiedSubscription(
-        store_transaction_id="token-yearly", product_id="kida.premium.yearly",
-        expires_at=_future(365), status="active", latest_receipt="{...}", raw_payload={},
-    )
     await iap_subscription_service.verify_and_upsert(
-        db_session, user.id, "kida.premium.monthly", "android", "{...}", play_client=_FakeClient(monthly),
+        db_session, user.id, "kida.premium.monthly", "android", "{...monthly...}",
     )
     sub = await iap_subscription_service.verify_and_upsert(
-        db_session, user.id, "kida.premium.yearly", "android", "{...}", play_client=_FakeClient(yearly),
+        db_session, user.id, "kida.premium.yearly", "android", "{...yearly...}",
     )
     assert sub.product_id == "kida.premium.yearly"
-    assert sub.store_transaction_id == "token-yearly"
+    assert sub.store_transaction_id == hashlib.sha256(b"{...yearly...}").hexdigest()
     count = await db_session.scalar(
         select(func.count()).select_from(IapSubscription).where(IapSubscription.user_id == user.id)
     )
     assert count == 1
+
+
+@pytest.mark.asyncio
+async def test_rejects_bad_platform(db_session):
+    user = await _create_user(db_session)
+    with pytest.raises(Exception):
+        await iap_subscription_service.verify_and_upsert(
+            db_session, user.id, "kida.premium.monthly", "windows", "{...}",
+        )
 
 
 # ---- entitlement / is_active ----

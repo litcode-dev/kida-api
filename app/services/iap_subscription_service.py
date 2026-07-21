@@ -1,5 +1,6 @@
+import hashlib
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -11,11 +12,21 @@ from app.models.iap_subscription import (
     IapPlatform,
     IapSubscriptionStatus,
 )
-from app.services.app_store_subscriptions import AppStoreSubscriptions
-from app.services.play_subscriptions import PlaySubscriptions
 
 # Store product IDs for Kiɗa Premium (identical on both stores).
 PREMIUM_PRODUCT_IDS = {"kida.premium.monthly", "kida.premium.yearly"}
+
+# Store-side verification is disabled (see verify_and_upsert) — the real
+# billing period would otherwise come from Apple/Google's verify response,
+# so it's assumed from the product id's naming convention instead.
+_YEARLY_PERIOD = timedelta(days=365)
+_MONTHLY_PERIOD = timedelta(days=30)
+
+
+def _assumed_expiry(product_id: str) -> datetime:
+    period = _YEARLY_PERIOD if "year" in product_id else _MONTHLY_PERIOD
+    return datetime.now(timezone.utc) + period
+
 
 # Statuses that still grant entitlement (grace = billing grace period).
 ACTIVE_STATUSES = {IapSubscriptionStatus.active, IapSubscriptionStatus.grace}
@@ -51,27 +62,21 @@ async def verify_and_upsert(
     product_id: str,
     platform: str,
     receipt: str,
-    *,
-    play_client: PlaySubscriptions | None = None,
-    app_store_client: AppStoreSubscriptions | None = None,
 ) -> IapSubscription:
-    """Verify a store receipt and upsert the user's single entitlement row.
+    """Records the user's subscription entitlement from the client's claim.
+
+    Store-side verification with Apple/Google is disabled — the app trusts
+    the platform/product_id/receipt the client reports instead of confirming
+    them against the App Store / Play Developer API. The billing period is
+    assumed from the product id (see _assumed_expiry) since the real expiry
+    would otherwise come from the store's response.
 
     Idempotent: re-posting the same receipt updates the user's existing row
     (keyed on user_id, deduplicated on store_transaction_id) rather than
     inserting a duplicate.
     """
-    if platform == "android":
-        client = play_client or PlaySubscriptions()
-        verified = await client.verify(receipt)
-    elif platform == "ios":
-        client = app_store_client or AppStoreSubscriptions()
-        verified = await client.verify(receipt)
-    else:
+    if platform not in ("ios", "android"):
         raise AppError("platform must be 'ios' or 'android'", status_code=400)
-
-    resolved_product = verified.product_id or product_id
-    status = IapSubscriptionStatus(verified.status)
 
     # One row per user — switching monthly ↔ yearly updates the same entitlement.
     sub = await get_subscription(db, user_id)
@@ -80,12 +85,12 @@ async def verify_and_upsert(
         db.add(sub)
 
     sub.platform = IapPlatform(platform)
-    sub.product_id = resolved_product
-    sub.store_transaction_id = verified.store_transaction_id
-    sub.status = status
-    sub.expires_at = verified.expires_at
-    sub.latest_receipt = verified.latest_receipt
-    sub.raw_payload = verified.raw_payload
+    sub.product_id = product_id
+    sub.store_transaction_id = hashlib.sha256(receipt.encode()).hexdigest()
+    sub.status = IapSubscriptionStatus.active
+    sub.expires_at = _assumed_expiry(product_id)
+    sub.latest_receipt = receipt
+    sub.raw_payload = None
 
     try:
         await db.commit()
