@@ -184,20 +184,46 @@ async def get_drones_by_ids(db: AsyncSession, drone_ids: list[uuid.UUID]) -> lis
     return list(result.all())
 
 
-async def check_download_entitlement(db: AsyncSession, user: User, pad: DronePad) -> None:
-    if pad.drone.is_free:
-        return
-    purchase = await db.scalar(
-        select(Purchase).where(
-            Purchase.user_id == user.id,
+async def _owned_ids(
+    db: AsyncSession, user_id: uuid.UUID, pads: list[DronePad]
+) -> set[uuid.UUID]:
+    """Ids the user's purchases cover, for a batch of pads, in a single query.
+
+    Returns the pad ids and drone ids the user owns, so a pad is entitled when
+    either its own id or its drone's id is in the set. Batched deliberately —
+    the group download paths check many pads at once and one query per pad
+    turned a single request into dozens.
+    """
+    paid = [p for p in pads if not p.drone.is_free]
+    if not paid:
+        return set()
+
+    pad_ids = {p.id for p in paid}
+    drone_ids = {p.drone_id for p in paid}
+    rows = await db.execute(
+        select(Purchase.drone_pad_id, Purchase.item_id).where(
+            Purchase.user_id == user_id,
             (
-                (Purchase.drone_pad_id == pad.id)
-                | (Purchase.item_id == pad.drone_id)
-                | (Purchase.item_id == pad.id)
+                Purchase.drone_pad_id.in_(pad_ids)
+                | Purchase.item_id.in_(pad_ids | drone_ids)
             ),
         )
     )
-    if not purchase:
+    owned: set[uuid.UUID] = set()
+    for drone_pad_id, item_id in rows:
+        if drone_pad_id:
+            owned.add(drone_pad_id)
+        if item_id:
+            owned.add(item_id)
+    return owned
+
+
+def _is_entitled(pad: DronePad, owned: set[uuid.UUID]) -> bool:
+    return pad.drone.is_free or pad.id in owned or pad.drone_id in owned
+
+
+async def check_download_entitlement(db: AsyncSession, user: User, pad: DronePad) -> None:
+    if not _is_entitled(pad, await _owned_ids(db, user.id, [pad])):
         raise EntitlementError()
 
 
@@ -274,12 +300,12 @@ async def _download_items_for_pads(
     db: AsyncSession, user: User, pads: list[DronePad]
 ) -> list[dict]:
     results = []
+    # One purchase lookup for every pad, rather than one per pad.
+    owned = await _owned_ids(db, user.id, pads)
     for pad in pads:
         if pad.status != "ready":
             continue
-        try:
-            await check_download_entitlement(db, user, pad)
-        except EntitlementError:
+        if not _is_entitled(pad, owned):
             continue
         if not pad.file_s3_key:
             continue
@@ -341,17 +367,25 @@ async def get_title_downloads(
     items: list[dict] = []
     matched_any = False
     refusal: FreeTierLimitError | None = None
+    # Resolved once for the whole request — the answer is the same for every drone.
+    subscribed = await free_tier_service.is_subscribed(db, user.id)
+    allowed: list[DronePad] = []
     for drone in drones:
         pads = _pads_for_key(drone, key)
         if not pads:
             continue
         matched_any = True
         try:
-            await free_tier_service.enforce_drone_download(db, user, drone, key)
+            await free_tier_service.enforce_drone_download(
+                db, user, drone, key, subscribed=subscribed
+            )
         except FreeTierLimitError as exc:
             refusal = exc
             continue
-        items.extend(await _download_items_for_pads(db, user, pads))
+        allowed.extend(pads)
+    # Signed once for every allowed pad, so the purchase lookup stays a single query.
+    if allowed:
+        items = await _download_items_for_pads(db, user, allowed)
     if key is not None and not matched_any:
         raise NotFoundError(f"No '{title}' pad in key {key.value}")
     if not items and refusal is not None:

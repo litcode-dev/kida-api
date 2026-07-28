@@ -148,7 +148,11 @@ def drone_pad_grant_id(drone_id: uuid.UUID, key: MusicalKey) -> str:
 
 
 async def enforce_drone_download(
-    db: AsyncSession, user: User, drone: Drone, key: MusicalKey | None
+    db: AsyncSession,
+    user: User,
+    drone: Drone,
+    key: MusicalKey | None,
+    subscribed: bool | None = None,
 ) -> None:
     """Gate a drone download request against the free-tier rules.
 
@@ -156,10 +160,16 @@ async def enforce_drone_download(
     group ownership. Single-pad requests (?key=) consume one drone_pad grant.
     Paid groups are untouched — per-pad purchase checks already guard them, and
     an owned paid group is always downloadable.
+
+    Callers gating several drones in one request should resolve the user's
+    subscription once and pass it as ``subscribed``; otherwise this re-queries
+    the same entitlement for every drone.
     """
     if not drone.is_free:
         return
-    if await is_subscribed(db, user.id):
+    if subscribed is None:
+        subscribed = await is_subscribed(db, user.id)
+    if subscribed:
         return
 
     if key is None:

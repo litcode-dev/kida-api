@@ -143,7 +143,7 @@ async def test_download_drone_returns_signed_urls(client, db_session):
     pad.file_s3_key = "drones/fake-key.wav"
     await db_session.commit()
 
-    token = create_access_token({"sub": str(user.id), "role": user.role.value})
+    token = create_access_token(str(user.id), user.role.value)
     with patch(
         "app.services.s3_service.get_download_url",
         new=AsyncMock(return_value="https://signed.url/file.wav"),
@@ -181,7 +181,7 @@ async def test_download_drone_excludes_unpurchased_paid_drone(client, db_session
     pad.file_s3_key = "drones/paid-key.wav"
     await db_session.commit()
 
-    token = create_access_token({"sub": str(user.id), "role": user.role.value})
+    token = create_access_token(str(user.id), user.role.value)
     resp = await client.get(
         f"/api/v1/drones/{pad.drone_id}/download",
         headers={"Authorization": f"Bearer {token}"},
@@ -202,7 +202,7 @@ async def test_download_drone_increments_download_count(client, db_session):
     pad.file_s3_key = "drones/count-key.wav"
     await db_session.commit()
 
-    token = create_access_token({"sub": str(user.id), "role": user.role.value})
+    token = create_access_token(str(user.id), user.role.value)
     with patch(
         "app.services.s3_service.get_download_url",
         new=AsyncMock(return_value="https://signed.url/file.wav"),
