@@ -19,6 +19,10 @@ from app.schemas.drone_pad import (
 )
 from app.schemas.drum_kit import DrumKitCreate, DrumKitFilter, DrumKitResponse, DrumKitUpdate
 from app.schemas.producer_analytics import AnalyticsPeriod, AnalyticsParams
+from app.schemas.subscription import (
+    AdminSubscriptionActivateRequest,
+    AdminSubscriptionDeactivateRequest,
+)
 from app.models.user import User, UserRole
 from app.models.loop import Genre, TempoFeel
 from app.models.drone_pad import MusicalKey
@@ -222,6 +226,119 @@ async def unsuspend_user(
         text=account_unsuspended_text(user.full_name),
     )
     return success(UserResponse.model_validate(user).model_dump(), "User unsuspended")
+
+
+# --- Subscription administration ---
+
+@router.get(
+    "/users/{user_id}/subscription",
+    summary="View a user's premium subscription",
+    description=(
+        "The user's Kiɗa Premium entitlement: whether it is currently active, the "
+        "plan (monthly or yearly), when it expires, and whether it came from a store "
+        "purchase or an admin grant. Returns `active: false` with null fields when the "
+        "user has never subscribed."
+    ),
+    responses={
+        401: {"description": "Missing or invalid token"},
+        403: {"description": "Admin role required"},
+        404: {"description": "User not found"},
+    },
+)
+@limiter.limit("60/minute")
+async def get_user_subscription(
+    request: Request,
+    user_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_admin),
+):
+    from app.services import iap_subscription_service
+    user = await db.get(User, user_id)
+    if not user:
+        raise NotFoundError("User not found")
+    sub = await iap_subscription_service.get_subscription(db, user_id)
+    return success(iap_subscription_service.admin_view(user_id, sub))
+
+
+@router.put(
+    "/users/{user_id}/subscription/activate",
+    summary="Activate a user's premium subscription",
+    description=(
+        "Grants Kiɗa Premium on the `monthly` or `yearly` plan without a store purchase — "
+        "for comps, support credits and testing. Also used to switch an existing subscriber "
+        "between plans, since a user has a single entitlement.\n\n"
+        "`expires_at` defaults to 30 days ahead for monthly and 365 for yearly; pass an "
+        "explicit future timestamp to set a custom end date. Activating clears an earlier "
+        "admin deactivation.\n\n"
+        "This grants content entitlement only — the AI generation quota comes from a paid "
+        "web subscription and is not affected."
+    ),
+    responses={
+        400: {"description": "expires_at is not in the future"},
+        401: {"description": "Missing or invalid token"},
+        403: {"description": "Admin role required"},
+        404: {"description": "User not found"},
+    },
+)
+@limiter.limit("30/minute")
+async def activate_user_subscription(
+    request: Request,
+    user_id: uuid.UUID,
+    body: AdminSubscriptionActivateRequest,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_admin),
+):
+    from app.services import iap_subscription_service
+    user = await db.get(User, user_id)
+    if not user:
+        raise NotFoundError("User not found")
+    sub = await iap_subscription_service.admin_activate(
+        db, user_id, body.plan, expires_at=body.expires_at, note=body.note
+    )
+    return success(
+        iap_subscription_service.admin_view(user_id, sub),
+        f"{body.plan.value.capitalize()} subscription activated",
+    )
+
+
+@router.put(
+    "/users/{user_id}/subscription/deactivate",
+    summary="Deactivate a user's premium subscription",
+    description=(
+        "Revokes the user's Kiɗa Premium entitlement immediately: free-tier download caps "
+        "apply again and any active web subscription (with its AI quota) is expired.\n\n"
+        "The entitlement is kept and locked rather than deleted, so the record survives and "
+        "the app cannot restore premium by re-posting its store receipt — receipt "
+        "verification returns 403 until an admin activates the user again.\n\n"
+        "This does not cancel the user's billing with Apple or Google; they must do that "
+        "from their own store account, otherwise they keep being charged."
+    ),
+    responses={
+        401: {"description": "Missing or invalid token"},
+        403: {"description": "Admin role required"},
+        404: {"description": "User not found"},
+    },
+)
+@limiter.limit("30/minute")
+async def deactivate_user_subscription(
+    request: Request,
+    user_id: uuid.UUID,
+    body: AdminSubscriptionDeactivateRequest | None = None,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_admin),
+):
+    from app.services import iap_subscription_service, subscription_service
+    user = await db.get(User, user_id)
+    if not user:
+        raise NotFoundError("User not found")
+
+    note = body.note if body else None
+    sub = await iap_subscription_service.admin_deactivate(db, user_id, note=note)
+    web_sub = await subscription_service.expire_active_subscription(db, user_id)
+
+    data = iap_subscription_service.admin_view(user_id, sub)
+    data["web_subscription_expired"] = web_sub is not None
+    return success(data, "Subscription deactivated")
 
 
 @router.get("/ai/generations")

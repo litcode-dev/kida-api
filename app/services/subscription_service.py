@@ -64,6 +64,21 @@ async def renew_subscription(
     return await create_subscription(db, user_id, provider, payment_reference, amount)
 
 
+async def expire_active_subscription(db: AsyncSession, user_id: uuid.UUID) -> Subscription | None:
+    """Mark a user's active legacy web subscription expired, returning it if there was one.
+
+    Used when an admin revokes premium, so the AI quota granted by a web payment
+    goes away with the store entitlement instead of outliving it.
+    """
+    sub = await get_active_subscription(db, user_id)
+    if sub is None:
+        return None
+    sub.status = SubscriptionStatus.expired
+    await db.commit()
+    await db.refresh(sub)
+    return sub
+
+
 async def _process_subscription_webhook(
     db: AsyncSession,
     user_id: str,
