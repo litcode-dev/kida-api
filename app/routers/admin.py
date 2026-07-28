@@ -111,7 +111,20 @@ async def delete_stem_pack(
 
 # --- User management endpoints (admin only) ---
 
-@router.get("/users")
+@router.get(
+    "/users",
+    summary="List users",
+    description=(
+        "A page of users, each with a `subscription` object in the same shape as "
+        "`GET /admin/users/{user_id}/subscription` so a listing can show plan and "
+        "status without a request per row. Users who never subscribed carry a "
+        "`subscription` with `active: false` and null fields."
+    ),
+    responses={
+        401: {"description": "Missing or invalid token"},
+        403: {"description": "Admin role required"},
+    },
+)
 @limiter.limit("60/minute")
 async def list_users(
     request: Request,
@@ -120,14 +133,25 @@ async def list_users(
     db: AsyncSession = Depends(get_db),
     admin=Depends(require_admin),
 ):
+    from app.services import iap_subscription_service
     offset = (page - 1) * page_size
     total = await db.scalar(select(func.count()).select_from(User))
-    users = await db.scalars(select(User).offset(offset).limit(page_size))
+    users = (await db.scalars(select(User).offset(offset).limit(page_size))).all()
+    # One query for the whole page rather than one per user.
+    subs = await iap_subscription_service.get_subscriptions_for_users(
+        db, [u.id for u in users]
+    )
     return success({
         "total": total,
         "page": page,
         "page_size": page_size,
-        "items": [UserResponse.model_validate(u).model_dump() for u in users.all()],
+        "items": [
+            {
+                **UserResponse.model_validate(u).model_dump(),
+                "subscription": iap_subscription_service.admin_view(u.id, subs.get(u.id)),
+            }
+            for u in users
+        ],
     })
 
 

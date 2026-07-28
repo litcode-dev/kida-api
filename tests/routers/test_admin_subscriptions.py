@@ -275,6 +275,52 @@ async def test_activate_unknown_user_returns_404(client, db_session):
 
 
 @pytest.mark.asyncio
+async def test_user_list_includes_subscription(client, db_session):
+    admin = await _make_user(db_session, UserRole.admin)
+    subscriber = await _make_user(db_session)
+    await _add_sub(db_session, subscriber.id, "kida.premium.yearly")
+    await _make_user(db_session)  # never subscribed
+
+    resp = await client.get("/api/v1/admin/users?page_size=50", headers=_headers(admin))
+
+    assert resp.status_code == 200
+    items = {i["id"]: i for i in resp.json()["data"]["items"]}
+    assert items[str(subscriber.id)]["subscription"]["plan"] == "yearly"
+    assert items[str(subscriber.id)]["subscription"]["active"] is True
+    # Everyone gets the key, so the client never has to special-case its absence.
+    assert items[str(admin.id)]["subscription"]["active"] is False
+    assert items[str(admin.id)]["subscription"]["plan"] is None
+
+
+@pytest.mark.asyncio
+async def test_user_list_does_not_issue_a_query_per_user(client, db_session):
+    """The subscription lookup must stay one query no matter how many users."""
+    from sqlalchemy import event
+    from tests.conftest import test_engine
+
+    admin = await _make_user(db_session, UserRole.admin)
+    for _ in range(5):
+        user = await _make_user(db_session)
+        await _add_sub(db_session, user.id)
+
+    sub_queries = []
+
+    def count(conn, cursor, statement, parameters, context, executemany):
+        if "iap_subscriptions" in statement and statement.lstrip().upper().startswith("SELECT"):
+            sub_queries.append(statement)
+
+    event.listen(test_engine.sync_engine, "before_cursor_execute", count)
+    try:
+        resp = await client.get("/api/v1/admin/users?page_size=50", headers=_headers(admin))
+    finally:
+        event.remove(test_engine.sync_engine, "before_cursor_execute", count)
+
+    assert resp.status_code == 200
+    assert len(resp.json()["data"]["items"]) >= 6
+    assert len(sub_queries) == 1, f"expected 1 subscription query, got {len(sub_queries)}"
+
+
+@pytest.mark.asyncio
 async def test_activated_user_is_exempt_from_free_tier_caps(client, db_session):
     from app.services import free_tier_service
 

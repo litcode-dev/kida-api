@@ -1,5 +1,6 @@
 import hashlib
 import uuid
+from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
@@ -90,6 +91,23 @@ def admin_view(user_id: uuid.UUID, sub: IapSubscription | None) -> dict:
         "expires_at": sub.expires_at.isoformat() if sub and sub.expires_at else None,
         "updated_at": sub.updated_at.isoformat() if sub and sub.updated_at else None,
     }
+
+
+async def get_subscriptions_for_users(
+    db: AsyncSession, user_ids: Sequence[uuid.UUID]
+) -> dict[uuid.UUID, IapSubscription]:
+    """Entitlements for a batch of users, keyed by user id.
+
+    One query for the whole batch — listing screens use this instead of calling
+    get_subscription per row. Users without an entitlement are simply absent from
+    the mapping.
+    """
+    if not user_ids:
+        return {}
+    rows = await db.scalars(
+        select(IapSubscription).where(IapSubscription.user_id.in_(user_ids))
+    )
+    return {sub.user_id: sub for sub in rows.all()}
 
 
 async def verify_and_upsert(
