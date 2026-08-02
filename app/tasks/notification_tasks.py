@@ -33,6 +33,33 @@ def send_registration_email(user_id: str):
 
 
 @celery_app.task
+def send_verification_email(user_id: str, code: str, ttl_minutes: int):
+    log.info("verification_email.task_started", user_id=user_id)
+
+    async def _run():
+        from app.database import AsyncSessionLocal
+        from app.models.user import User
+        from app.services.email_service import send_email, verification_html, verification_text
+        import uuid
+
+        async with AsyncSessionLocal() as db:
+            user = await db.get(User, uuid.UUID(user_id))
+            if not user:
+                log.warning("verification_email.user_not_found", user_id=user_id)
+                return
+            log.info("verification_email.sending", user_id=user_id, email=user.email)
+            await send_email(
+                to=user.email,
+                subject="Verify your Kida email",
+                html=verification_html(user.full_name, code, ttl_minutes),
+                text=verification_text(user.full_name, code, ttl_minutes),
+            )
+            log.info("verification_email.done", user_id=user_id, email=user.email)
+
+    asyncio.run(_run())
+
+
+@celery_app.task
 def send_purchase_confirmation(user_id: str, purchase_id: str):
     async def _run():
         from app.database import AsyncSessionLocal

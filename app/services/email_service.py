@@ -146,6 +146,74 @@ def _text_footer() -> str:
 
 # ── Templates ─────────────────────────────────────────────────────────────────
 
+def verification_html(full_name: str, code: str, ttl_minutes: int) -> str:
+    year = datetime.now(timezone.utc).year
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#e8e3d9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#e8e3d9;">
+  <tr><td align="center" style="padding:32px 16px;">
+    <table width="520" cellpadding="0" cellspacing="0" style="max-width:520px;width:100%;">
+
+      <!-- HEADER -->
+      <tr><td style="background:#0a0a0a;padding:24px 32px 0 32px;border-radius:8px 8px 0 0;">
+        <table width="100%" cellpadding="0" cellspacing="0">
+          <tr>
+            <td style="color:#fff;font-size:11px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;">KIDA</td>
+            <td align="right" style="color:#fff;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;">VERIFY EMAIL</td>
+          </tr>
+        </table>
+      </td></tr>
+
+      <!-- HERO -->
+      <tr><td style="background:#0a0a0a;padding:32px 32px 8px 32px;">
+        <p style="margin:0 0 16px 0;color:#1FBF62;font-size:12px;font-weight:800;letter-spacing:0.15em;text-transform:uppercase;">ALMOST THERE.</p>
+        <p style="margin:0;font-size:52px;font-weight:800;line-height:1.05;color:#fff;letter-spacing:-0.02em;">Verify your</p>
+        <p style="margin:0;font-size:52px;font-weight:800;line-height:1.05;color:#1FBF62;letter-spacing:-0.02em;">email.</p>
+      </td></tr>
+
+      <!-- META STRIP -->
+      <tr><td style="background:#0a0a0a;padding:24px 32px 28px 32px;border-bottom:1px solid #1f1f1f;">
+        <p style="margin:0;color:#fff;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;">{year} &nbsp;&middot;&nbsp; ACCOUNT SECURITY</p>
+      </td></tr>
+
+      <!-- BODY -->
+      <tr><td style="background:#f2ede4;padding:36px 32px 28px 32px;">
+        <p style="margin:0 0 8px 0;font-size:17px;font-weight:700;color:#0a0a0a;">Hi {full_name},</p>
+        <p style="margin:0 0 24px 0;font-size:15px;line-height:1.6;color:#333;">
+          Use the code below to verify your email and finish setting up your Kida account.
+        </p>
+        <table width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 24px 0;">
+          <tr><td align="center" style="background:#0a0a0a;padding:24px;border-radius:6px;">
+            <p style="margin:0;font-size:40px;font-weight:800;letter-spacing:0.28em;color:#1FBF62;font-family:'Courier New',monospace;">{code}</p>
+          </td></tr>
+        </table>
+        <p style="margin:0;font-size:13px;line-height:1.6;color:#777;">
+          This code expires in {ttl_minutes} minutes. If you didn't create a Kida account, you can safely ignore this email.
+        </p>
+      </td></tr>
+
+      {_brand_footer()}
+
+    </table>
+  </td></tr>
+</table>
+</body>
+</html>"""
+
+
+def verification_text(full_name: str, code: str, ttl_minutes: int) -> str:
+    return (
+        f"Hi {full_name},\n\n"
+        f"Use the code below to verify your email and finish setting up your Kida account.\n\n"
+        f"Verification code: {code}\n\n"
+        f"This code expires in {ttl_minutes} minutes.\n"
+        f"If you didn't create a Kida account, you can safely ignore this email."
+        + _text_footer()
+    )
+
+
 def registration_html(full_name: str) -> str:
     year = datetime.now(timezone.utc).year
     return f"""<!DOCTYPE html>

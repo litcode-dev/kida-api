@@ -11,6 +11,7 @@ from app.exceptions import AppError
 from app.schemas.user import (
     UserRegister, UserLogin, UserResponse, TokenResponse,
     RefreshRequest, OAuthCallbackRequest, GoogleTokenRequest, AppleTokenRequest, DeleteAccountRequest,
+    VerifyEmailRequest, ResendVerificationRequest,
 )
 from app.schemas.common import success
 
@@ -19,9 +20,61 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 @router.post("/register")
 @limiter.limit("10/minute")
-async def register(request: Request, body: UserRegister, db: AsyncSession = Depends(get_db)):
-    user = await auth_service.register_user(db, body.email, body.password, body.full_name)
-    return success(UserResponse.model_validate(user).model_dump(), "Registration successful")
+async def register(
+    request: Request,
+    body: UserRegister,
+    db: AsyncSession = Depends(get_db),
+    redis: Redis = Depends(get_redis),
+):
+    user, code = await auth_service.register_user(db, redis, body.email, body.password, body.full_name)
+    from app.tasks.notification_tasks import send_verification_email
+    send_verification_email.delay(str(user.id), code, auth_service.VERIFY_CODE_TTL_MINUTES)
+    return success(
+        UserResponse.model_validate(user).model_dump(),
+        "Registration successful. Check your email for a verification code.",
+    )
+
+
+@router.post("/verify-email")
+@limiter.limit("10/minute")
+async def verify_email(
+    request: Request,
+    body: VerifyEmailRequest,
+    db: AsyncSession = Depends(get_db),
+    redis: Redis = Depends(get_redis),
+):
+    user = await auth_service.verify_email(db, redis, body.email, body.code)
+    access_token = auth_service.create_access_token(str(user.id), user.role.value)
+    refresh_token = auth_service.create_refresh_token()
+    subscribed = await auth_service.is_newsletter_subscriber(db, user.email)
+    await auth_service.store_refresh_token(redis, refresh_token, str(user.id))
+    return success(
+        TokenResponse(
+            access_token=access_token,
+            refresh_token=refresh_token,
+            full_name=user.full_name,
+            role=user.role,
+            avatar_url=user.avatar_url,
+            subscribed_to_newsletter=subscribed,
+        ).model_dump(),
+        "Email verified",
+    )
+
+
+@router.post("/resend-verification")
+@limiter.limit("5/minute")
+async def resend_verification(
+    request: Request,
+    body: ResendVerificationRequest,
+    db: AsyncSession = Depends(get_db),
+    redis: Redis = Depends(get_redis),
+):
+    result = await auth_service.resend_verification_code(db, redis, body.email)
+    if result is not None:
+        user_id, code = result
+        from app.tasks.notification_tasks import send_verification_email
+        send_verification_email.delay(user_id, code, auth_service.VERIFY_CODE_TTL_MINUTES)
+    return success(message="If your email is registered and unverified, a new verification code has been sent.")
 
 
 @router.post("/login")

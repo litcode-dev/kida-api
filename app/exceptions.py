@@ -30,6 +30,11 @@ class ConflictError(AppError):
         super().__init__(message, status_code=status.HTTP_409_CONFLICT)
 
 
+class EmailNotVerifiedError(AppError):
+    def __init__(self, message: str = "Email not verified"):
+        super().__init__(message, status_code=status.HTTP_403_FORBIDDEN)
+
+
 class PaymentError(AppError):
     def __init__(self, message: str = "Payment failed"):
         super().__init__(message, status_code=status.HTTP_402_PAYMENT_REQUIRED)
