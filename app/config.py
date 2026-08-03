@@ -114,6 +114,19 @@ class Settings(BaseSettings):
     app_store_app_id: str = ""  # Numeric Apple app ID that owns the in-app purchases
     app_store_review_screenshot_path: str = ""  # Shared review screenshot for new IAPs
 
+    # IAP — RevenueCat
+    # Secret REST API key (Project → API keys → "Secret" v1 key). Used to pull a
+    # subscriber's real entitlements from RevenueCat on demand.
+    revenuecat_api_key: str = ""
+    revenuecat_base_url: str = "https://api.revenuecat.com/v1"
+    # Entitlement identifier configured in the RevenueCat dashboard that maps to
+    # Kiɗa Premium (the app's monthly/yearly products both grant it).
+    revenuecat_entitlement_id: str = "premium"
+    # Shared secret you set as the webhook "Authorization header" value in the
+    # RevenueCat dashboard. Incoming webhooks must present it verbatim. Leaving it
+    # blank makes the webhook endpoint reject every request (fail closed).
+    revenuecat_webhook_auth_header: str = ""
+
     # IAP price sync — worker
     price_sync_ngn_per_usd: int = 1600  # USD→NGN rate for the pinned NG region price
     price_sync_interval_seconds: int = 600

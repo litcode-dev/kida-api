@@ -21,9 +21,10 @@ class IapSubscriptionStatus(str, enum.Enum):
 
 
 class IapSubscriptionSource(str, enum.Enum):
-    """Where the entitlement came from: a store purchase or an admin grant."""
+    """Where the entitlement came from: a store purchase, RevenueCat, or an admin grant."""
 
     store = "store"
+    revenuecat = "revenuecat"
     admin = "admin"
 
 
@@ -57,6 +58,10 @@ class IapSubscription(Base):
     platform: Mapped[IapPlatform | None] = mapped_column(SAEnum(IapPlatform), nullable=True)
     product_id: Mapped[str] = mapped_column(String(255), nullable=False)
     store_transaction_id: Mapped[str] = mapped_column(String(512), nullable=False, unique=True, index=True)
+    # RevenueCat's ``app_user_id`` for this subscriber (== our ``user_id`` when the
+    # app calls Purchases.logIn(user.id)). Kept for cross-referencing RevenueCat
+    # webhooks and dashboard lookups; null for store/admin-sourced rows.
+    app_user_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     status: Mapped[IapSubscriptionStatus] = mapped_column(
         SAEnum(IapSubscriptionStatus), nullable=False, default=IapSubscriptionStatus.active
     )

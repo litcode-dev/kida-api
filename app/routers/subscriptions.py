@@ -1,18 +1,25 @@
+import json
 import uuid
 from fastapi import APIRouter, Depends, Request, Header
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.middleware.auth_middleware import get_current_user
 from app.middleware.rate_limit import limiter
-from app.services import subscription_service, flutterwave_service, paystack_service, iap_subscription_service
+from app.services import (
+    subscription_service, flutterwave_service, paystack_service,
+    iap_subscription_service, revenuecat_service,
+)
 from app.schemas.subscription import (
     SubscriptionInitiateRequest, ExtraCreditsInitiateRequest, SubscriptionResponse,
     IapVerifyRequest, EntitlementResponse,
 )
 from app.schemas.common import success
 from app.models.purchase import PaymentProvider
-from app.exceptions import PaymentError
+from app.exceptions import AppError, PaymentError
 from app.config import get_settings
+import structlog
+
+logger = structlog.get_logger()
 
 router = APIRouter(prefix="/subscriptions", tags=["subscriptions"])
 
@@ -63,6 +70,45 @@ async def verify_subscription(
     """
     sub = await iap_subscription_service.verify_and_upsert(
         db, user.id, body.product_id, body.platform, body.receipt
+    )
+    return iap_subscription_service.entitlement(sub)
+
+
+@router.post("/verify/revenuecat", response_model=EntitlementResponse)
+@limiter.limit("20/minute")
+async def verify_revenuecat_subscription(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """Reconcile the current user's entitlement against RevenueCat.
+
+    Pulls the subscriber's real entitlements from RevenueCat (using ``user.id`` as
+    the ``app_user_id``) and stores them, so the returned expiry/status reflect
+    what Apple/Google actually report — not an assumed billing period. Unlike the
+    client-trusted ``/verify`` path, nothing here is taken from the client.
+
+    Idempotent, and safe to call any time the app wants to refresh entitlement
+    (e.g. on launch or after a purchase). Returns the resulting entitlement; an
+    inactive one when the user has never subscribed.
+    """
+    client = revenuecat_service.RevenueCatClient()
+    parsed = await client.fetch_entitlement(str(user.id))
+    if parsed is None:
+        # No RevenueCat premium entitlement; report whatever is already on file
+        # (e.g. an admin grant) without overwriting it.
+        sub = await iap_subscription_service.get_subscription(db, user.id)
+        return iap_subscription_service.entitlement(sub)
+
+    sub = await iap_subscription_service.apply_revenuecat_state(
+        db,
+        user.id,
+        product_id=parsed.product_id,
+        status=parsed.status,
+        expires_at=parsed.expires_at,
+        platform=parsed.platform,
+        app_user_id=parsed.app_user_id,
+        store_transaction_id=parsed.store_transaction_id,
     )
     return iap_subscription_service.entitlement(sub)
 
@@ -133,6 +179,57 @@ async def subscription_flutterwave_webhook(
     payload = await request.body()
     await subscription_service.handle_flutterwave_webhook(db, payload, verif_hash)
     return {"received": True}
+
+
+@router.post("/webhook/revenuecat")
+async def subscription_revenuecat_webhook(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    authorization: str = Header(None, alias="Authorization"),
+):
+    """Receive RevenueCat subscription lifecycle events.
+
+    Authenticated with the shared Authorization header configured in the
+    RevenueCat dashboard (fail-closed). Each event updates the subscriber's
+    single ``IapSubscription`` row with RevenueCat's real status/expiry.
+
+    Always returns 200 for an authenticated request whose body we could read —
+    including events we intentionally skip (TEST pings, unmappable/anonymous
+    app_user_ids) — so RevenueCat does not retry-storm on no-ops.
+    """
+    if not revenuecat_service.verify_webhook_auth(authorization):
+        raise AppError("Invalid RevenueCat webhook authorization", status_code=401)
+
+    raw = await request.body()
+    try:
+        payload = json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        raise AppError("Invalid RevenueCat webhook body", status_code=400)
+
+    parsed = revenuecat_service.parse_webhook_event(payload)
+    if parsed is None:
+        return {"received": True, "applied": False}
+
+    # app_user_id is our user UUID when the app called Purchases.logIn(user.id).
+    # Anonymous ($RCAnonymousID:...) or otherwise non-UUID ids can't be mapped.
+    try:
+        user_id = uuid.UUID(parsed.app_user_id)
+    except (ValueError, AttributeError, TypeError):
+        logger.info("revenuecat_webhook_unmappable_user", app_user_id=parsed.app_user_id)
+        return {"received": True, "applied": False}
+
+    await iap_subscription_service.apply_revenuecat_state(
+        db,
+        user_id,
+        product_id=parsed.product_id,
+        status=parsed.status,
+        expires_at=parsed.expires_at,
+        platform=parsed.platform,
+        app_user_id=parsed.app_user_id,
+        store_transaction_id=parsed.store_transaction_id,
+        raw_payload=payload,
+    )
+    return {"received": True, "applied": True}
 
 
 @router.post("/webhook/paystack")
