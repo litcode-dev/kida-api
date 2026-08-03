@@ -7,7 +7,7 @@ from app.middleware.auth_middleware import get_current_user, get_redis
 from app.middleware.rate_limit import limiter
 from app.services import auth_service
 from app.services import oauth_service
-from app.exceptions import AppError
+from app.exceptions import AppError, EmailNotVerifiedError
 from app.schemas.user import (
     UserRegister, UserLogin, UserResponse, TokenResponse,
     RefreshRequest, OAuthCallbackRequest, GoogleTokenRequest, AppleTokenRequest, DeleteAccountRequest,
@@ -85,7 +85,13 @@ async def login(
     db: AsyncSession = Depends(get_db),
     redis: Redis = Depends(get_redis),
 ):
-    user = await auth_service.authenticate_user(db, body.email, body.password)
+    try:
+        user = await auth_service.authenticate_user(db, body.email, body.password)
+    except EmailNotVerifiedError:
+        # Credentials were correct but the email is unverified — email a fresh
+        # code (subject to the resend cooldown) before surfacing the 403.
+        await auth_service.resend_verification_on_login(db, redis, body.email)
+        raise
     access_token = auth_service.create_access_token(str(user.id), user.role.value)
     refresh_token = auth_service.create_refresh_token()
     subscribed = await auth_service.is_newsletter_subscriber(db, user.email)
