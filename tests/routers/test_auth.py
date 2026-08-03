@@ -1,6 +1,6 @@
 import pytest
 
-from app.services.auth_service import VERIFY_PREFIX
+from app.services.auth_service import VERIFY_PREFIX, VERIFY_COOLDOWN_PREFIX
 
 
 async def _register(client, email="new@test.com", password="securepass", full_name="Test User"):
@@ -112,12 +112,61 @@ async def test_resend_verification(client, fake_redis):
 
 
 @pytest.mark.asyncio
-async def test_resend_verification_cooldown(client):
-    await _register(client, email="user@test.com", password="pass1234", full_name="User")
+async def test_resend_verification_cooldown(client, fake_redis):
+    reg = await _register(client, email="user@test.com", password="pass1234", full_name="User")
+    user_id = reg.json()["data"]["id"]
+    # Registration starts the cooldown; expire it so the first resend succeeds.
+    fake_redis.store.pop(f"{VERIFY_COOLDOWN_PREFIX}{user_id}", None)
     first = await client.post("/api/v1/auth/resend-verification", json={"email": "user@test.com"})
     assert first.status_code == 200
     second = await client.post("/api/v1/auth/resend-verification", json={"email": "user@test.com"})
     assert second.status_code == 429
+
+
+@pytest.mark.asyncio
+async def test_login_unverified_resends_code(client, fake_redis, monkeypatch):
+    from app.tasks import notification_tasks
+
+    reg = await _register(client, email="user@test.com", password="pass1234", full_name="User")
+    user_id = reg.json()["data"]["id"]
+    original = _stored_code(fake_redis, user_id)
+
+    # Capture the email task and clear the registration cooldown so the login
+    # attempt is allowed to issue a fresh code.
+    calls = []
+    monkeypatch.setattr(
+        notification_tasks.send_verification_email, "delay",
+        lambda *a, **kw: calls.append(a),
+    )
+    fake_redis.store.pop(f"{VERIFY_COOLDOWN_PREFIX}{user_id}", None)
+
+    resp = await client.post("/api/v1/auth/login", json={
+        "email": "user@test.com", "password": "pass1234"
+    })
+    assert resp.status_code == 403
+    # A fresh code was issued and emailed.
+    assert len(calls) == 1
+    assert calls[0][0] == user_id
+    new_code = _stored_code(fake_redis, user_id)
+    assert calls[0][1] == new_code
+
+
+@pytest.mark.asyncio
+async def test_login_unverified_respects_cooldown(client, fake_redis, monkeypatch):
+    from app.tasks import notification_tasks
+
+    await _register(client, email="user@test.com", password="pass1234", full_name="User")
+    calls = []
+    monkeypatch.setattr(
+        notification_tasks.send_verification_email, "delay",
+        lambda *a, **kw: calls.append(a),
+    )
+    # Registration cooldown is still active — login must not send another code.
+    resp = await client.post("/api/v1/auth/login", json={
+        "email": "user@test.com", "password": "pass1234"
+    })
+    assert resp.status_code == 403
+    assert calls == []
 
 
 @pytest.mark.asyncio

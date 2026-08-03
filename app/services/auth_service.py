@@ -86,6 +86,14 @@ async def issue_verification_code(redis: Redis, user_id: str) -> str:
     return code
 
 
+async def _cooldown_active(redis: Redis, user_id: str) -> bool:
+    return bool(await redis.get(f"{VERIFY_COOLDOWN_PREFIX}{user_id}"))
+
+
+async def _start_cooldown(redis: Redis, user_id: str) -> None:
+    await redis.setex(f"{VERIFY_COOLDOWN_PREFIX}{user_id}", VERIFY_RESEND_COOLDOWN_SECONDS, "1")
+
+
 async def register_user(
     db: AsyncSession, redis: Redis, email: str, password: str, full_name: str
 ) -> tuple[User, str]:
@@ -107,6 +115,10 @@ async def register_user(
     await db.commit()
     await db.refresh(user)
     code = await issue_verification_code(redis, str(user.id))
+    # The registration email counts as the first send, so start the resend
+    # cooldown now — this also stops an immediate login retry from firing a
+    # duplicate code.
+    await _start_cooldown(redis, str(user.id))
     log.info("verification_code.issued", user_id=str(user.id), email=user.email)
     return user, code
 
@@ -152,14 +164,33 @@ async def resend_verification_code(
     if not user or user.is_verified:
         return None
 
-    cooldown_key = f"{VERIFY_COOLDOWN_PREFIX}{user.id}"
-    if await redis.get(cooldown_key):
+    if await _cooldown_active(redis, str(user.id)):
         raise AppError("Please wait before requesting another verification code", status_code=429)
 
     code = await issue_verification_code(redis, str(user.id))
-    await redis.setex(cooldown_key, VERIFY_RESEND_COOLDOWN_SECONDS, "1")
+    await _start_cooldown(redis, str(user.id))
     log.info("verification_code.resent", user_id=str(user.id), email=user.email)
     return str(user.id), code
+
+
+async def resend_verification_on_login(db: AsyncSession, redis: Redis, email: str) -> None:
+    """Re-issue and email a verification code when an unverified account attempts
+    to log in with correct credentials.
+
+    Reaching this point means the password already matched (see authenticate_user),
+    so only the account owner can trigger it. Honours the resend cooldown, so a
+    login loop cannot email-bomb the address, and stays silent either way.
+    """
+    user = await db.scalar(select(User).where(User.email == email))
+    if not user or user.is_verified:
+        return
+    if await _cooldown_active(redis, str(user.id)):
+        return
+    code = await issue_verification_code(redis, str(user.id))
+    await _start_cooldown(redis, str(user.id))
+    from app.tasks.notification_tasks import send_verification_email
+    send_verification_email.delay(str(user.id), code, VERIFY_CODE_TTL_MINUTES)
+    log.info("verification_code.resent_on_login", user_id=str(user.id), email=user.email)
 
 
 async def authenticate_user(db: AsyncSession, email: str, password: str) -> User:
