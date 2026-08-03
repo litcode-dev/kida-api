@@ -49,6 +49,9 @@ async def test_login_blocked_until_verified(client):
         "email": "user@test.com", "password": "pass1234"
     })
     assert resp.status_code == 403
+    body = resp.json()
+    assert body["status"] == "error"
+    assert body["data"] == {"is_verified": False}
 
 
 @pytest.mark.asyncio
