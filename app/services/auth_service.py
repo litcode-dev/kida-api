@@ -1,4 +1,5 @@
 import asyncio
+import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 import jwt
@@ -11,13 +12,17 @@ from sqlalchemy.exc import IntegrityError
 from app.config import get_settings
 from app.models.user import User, UserRole
 from app.models.newsletter import NewsletterSubscriber
-from app.exceptions import UnauthorizedError, ConflictError
+from app.exceptions import UnauthorizedError, ConflictError, EmailNotVerifiedError, AppError
 
 settings = get_settings()
 log = structlog.get_logger()
 
 ALGORITHM = "HS256"
 REFRESH_PREFIX = "refresh:"
+VERIFY_PREFIX = "email_verify:"
+VERIFY_COOLDOWN_PREFIX = "email_verify_cooldown:"
+VERIFY_CODE_TTL_MINUTES = 15
+VERIFY_RESEND_COOLDOWN_SECONDS = 60
 
 
 async def hash_password(password: str) -> str:
@@ -70,7 +75,24 @@ async def revoke_refresh_token(redis: Redis, token: str) -> None:
     await redis.delete(f"{REFRESH_PREFIX}{token}")
 
 
-async def register_user(db: AsyncSession, email: str, password: str, full_name: str) -> User:
+def _generate_verification_code() -> str:
+    return f"{secrets.randbelow(1_000_000):06d}"
+
+
+async def issue_verification_code(redis: Redis, user_id: str) -> str:
+    """Generate a fresh 6-digit code and store it in Redis with a TTL."""
+    code = _generate_verification_code()
+    await redis.setex(f"{VERIFY_PREFIX}{user_id}", VERIFY_CODE_TTL_MINUTES * 60, code)
+    return code
+
+
+async def register_user(
+    db: AsyncSession, redis: Redis, email: str, password: str, full_name: str
+) -> tuple[User, str]:
+    """Create an unverified account and return it along with a verification code.
+
+    The account cannot log in until the email is verified (see verify_email).
+    """
     existing = await db.scalar(select(User).where(User.email == email))
     if existing:
         raise ConflictError("Email already registered")
@@ -79,13 +101,65 @@ async def register_user(db: AsyncSession, email: str, password: str, full_name: 
         password_hash=await hash_password(password),
         full_name=full_name,
         role=UserRole.user,
+        is_verified=False,
     )
     db.add(user)
     await db.commit()
     await db.refresh(user)
+    code = await issue_verification_code(redis, str(user.id))
+    log.info("verification_code.issued", user_id=str(user.id), email=user.email)
+    return user, code
+
+
+async def verify_email(db: AsyncSession, redis: Redis, email: str, code: str) -> User:
+    """Confirm a registration code and mark the account verified."""
+    user = await db.scalar(select(User).where(User.email == email))
+    if not user:
+        raise AppError("Invalid or expired verification code", status_code=400)
+    if user.is_verified:
+        return user
+
+    key = f"{VERIFY_PREFIX}{user.id}"
+    stored = await redis.get(key)
+    if stored is None:
+        raise AppError("Invalid or expired verification code", status_code=400)
+    stored = stored.decode() if isinstance(stored, bytes) else stored
+    if not secrets.compare_digest(stored, code):
+        raise AppError("Invalid or expired verification code", status_code=400)
+
+    user.is_verified = True
+    await db.commit()
+    await db.refresh(user)
+    await redis.delete(key)
+    await redis.delete(f"{VERIFY_COOLDOWN_PREFIX}{user.id}")
+
     from app.tasks.notification_tasks import send_registration_email
     send_registration_email.delay(str(user.id))
+    log.info("email.verified", user_id=str(user.id), email=user.email)
     return user
+
+
+async def resend_verification_code(
+    db: AsyncSession, redis: Redis, email: str
+) -> tuple[str, str] | None:
+    """Issue a new verification code for an unverified account.
+
+    Returns ``(user_id, code)`` when a fresh code was issued, or None when there
+    is nothing to do (unknown email or already verified) so the caller can
+    respond generically without revealing whether the email exists.
+    """
+    user = await db.scalar(select(User).where(User.email == email))
+    if not user or user.is_verified:
+        return None
+
+    cooldown_key = f"{VERIFY_COOLDOWN_PREFIX}{user.id}"
+    if await redis.get(cooldown_key):
+        raise AppError("Please wait before requesting another verification code", status_code=429)
+
+    code = await issue_verification_code(redis, str(user.id))
+    await redis.setex(cooldown_key, VERIFY_RESEND_COOLDOWN_SECONDS, "1")
+    log.info("verification_code.resent", user_id=str(user.id), email=user.email)
+    return str(user.id), code
 
 
 async def authenticate_user(db: AsyncSession, email: str, password: str) -> User:
@@ -95,6 +169,8 @@ async def authenticate_user(db: AsyncSession, email: str, password: str) -> User
     if user.is_suspended:
         msg = f"Account suspended: {user.suspension_reason}" if user.suspension_reason else "Account suspended"
         raise UnauthorizedError(msg)
+    if not user.is_verified:
+        raise EmailNotVerifiedError("Please verify your email before logging in")
     return user
 
 
@@ -141,13 +217,16 @@ async def find_or_create_oauth_user(
             raise UnauthorizedError(msg)
         user.oauth_provider = provider
         user.oauth_provider_id = provider_id
+        # The provider confirmed this email, so linking it verifies the account.
+        user.is_verified = True
         if avatar_url:
             user.avatar_url = avatar_url
         await db.commit()
         await db.refresh(user)
         return user
 
-    # Third: create new OAuth-only user
+    # Third: create new OAuth-only user. The provider has already confirmed the
+    # email address, so the account is verified from the start.
     user = User(
         email=email,
         full_name=full_name,
@@ -156,6 +235,7 @@ async def find_or_create_oauth_user(
         avatar_url=avatar_url,
         oauth_provider=provider,
         oauth_provider_id=provider_id,
+        is_verified=True,
     )
     db.add(user)
     try:

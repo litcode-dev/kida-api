@@ -31,8 +31,26 @@ class UserResponse(BaseModel):
     created_at: datetime
     is_suspended: bool = False
     suspension_reason: str | None = None
+    is_verified: bool = False
 
     model_config = {"from_attributes": True}
+
+
+class VerifyEmailRequest(BaseModel):
+    email: EmailStr
+    code: str
+
+    @field_validator("code")
+    @classmethod
+    def code_format(cls, v: str) -> str:
+        v = v.strip()
+        if not (v.isdigit() and len(v) == 6):
+            raise ValueError("Code must be 6 digits")
+        return v
+
+
+class ResendVerificationRequest(BaseModel):
+    email: EmailStr
 
 
 class SuspendRequest(BaseModel):

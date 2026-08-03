@@ -39,3 +39,4 @@ class User(Base):
     ai_extra_credits: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     is_suspended: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     suspension_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    is_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
