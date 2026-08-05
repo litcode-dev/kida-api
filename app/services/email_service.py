@@ -250,7 +250,7 @@ def registration_html(full_name: str) -> str:
       <tr><td style="background:#f2ede4;padding:36px 32px 28px 32px;">
         <p style="margin:0 0 8px 0;font-size:17px;font-weight:700;color:#0a0a0a;">Hi {full_name},</p>
         <p style="margin:0 0 28px 0;font-size:15px;line-height:1.6;color:#333;">
-          Your Kida account is ready. Browse premium loops and stem packs built for serious producers — no subscriptions, just the sounds you need.
+          Your Kida account is ready. Browse premium loops and stem packs built for serious producers. No subscriptions, just the sounds you need.
         </p>
         <a href="https://kida.litcode.com.ng"
            style="display:inline-block;padding:14px 28px;background:#0a0a0a;color:#fff;
@@ -289,8 +289,8 @@ def registration_text(full_name: str) -> str:
     return (
         f"Hi {full_name},\n\n"
         f"Your Kida account is ready.\n\n"
-        f"Browse premium loops and stem packs built for serious musicians — "
-        f"you can start with no subscriptions, just the sounds you need.\n\n"
+        f"Browse premium loops and stem packs built for serious musicians. "
+        f"You can start with no subscriptions, just the sounds you need.\n\n"
         f"Get started: https://kida.litcode.com.ng"
         + _text_footer()
     )
@@ -333,7 +333,7 @@ def account_deleted_html(full_name: str) -> str:
         <p style="margin:0 0 8px 0;font-size:17px;font-weight:700;color:#0a0a0a;">Hi {full_name},</p>
         <p style="margin:0 0 28px 0;font-size:15px;line-height:1.6;color:#333;">
           Your Kida account has been permanently deleted. All your data has been removed from our systems.
-          We're sorry to see you go — if you ever want to come back, you're always welcome.
+          We're sorry to see you go. If you ever want to come back, you're always welcome.
         </p>
         <a href="https://kida.litcode.com.ng"
            style="display:inline-block;padding:14px 28px;background:#0a0a0a;color:#fff;
@@ -811,7 +811,7 @@ def account_unsuspended_html(full_name: str) -> str:
         <p style="margin:0 0 8px 0;font-size:17px;font-weight:700;color:#0a0a0a;">Hi {full_name},</p>
         <p style="margin:0 0 28px 0;font-size:15px;line-height:1.6;color:#333;">
           Your Kida account has been reinstated. You can now log in and access all your content again.
-          Welcome back — we're glad to have you.
+          Welcome back. We're glad to have you.
         </p>
         <a href="https://kida.litcode.com.ng"
            style="display:inline-block;padding:14px 28px;background:#0a0a0a;color:#fff;
