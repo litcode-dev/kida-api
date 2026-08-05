@@ -2,6 +2,7 @@ import hashlib
 import uuid
 from datetime import datetime, timedelta, timezone
 
+import structlog
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,6 +15,8 @@ from app.models.iap_subscription import (
     IapSubscriptionStatus,
     PremiumPlan,
 )
+
+logger = structlog.get_logger()
 
 # Store product IDs for Kiɗa Premium (identical on both stores).
 PLAN_PRODUCT_IDS = {
@@ -143,6 +146,80 @@ async def verify_and_upsert(
         # store_transaction_id is unique — the receipt belongs to another account.
         await db.rollback()
         raise AppError("This purchase is already linked to another account", status_code=400)
+
+    await db.refresh(sub)
+    return sub
+
+
+async def apply_revenuecat_state(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    *,
+    product_id: str | None,
+    status: IapSubscriptionStatus,
+    expires_at: datetime | None,
+    platform: IapPlatform | None = None,
+    app_user_id: str | None = None,
+    store_transaction_id: str | None = None,
+    raw_payload: dict | None = None,
+) -> IapSubscription | None:
+    """Record a subscription entitlement sourced from RevenueCat.
+
+    Unlike ``verify_and_upsert`` (which trusts a client-reported receipt and
+    *assumes* the billing period), RevenueCat is a trusted source, so the caller
+    passes the real ``status``/``expires_at`` derived from RevenueCat's response.
+    Used by both the webhook handler and the on-demand REST reconcile endpoint.
+
+    Idempotent: updates the user's single entitlement row in place (one row per
+    user), so replayed webhooks and repeated reconciles converge on the same
+    state rather than duplicating.
+
+    Honors an admin lock: if an admin has deactivated the user (``admin_locked``),
+    the RevenueCat update is ignored and the locked row is returned unchanged, so
+    a store event cannot silently restore an entitlement an admin revoked — the
+    same guarantee ``verify_and_upsert`` gives for client receipts.
+    """
+    sub = await get_subscription(db, user_id)
+    if sub is not None and sub.admin_locked:
+        logger.info("revenuecat_update_skipped_admin_locked", user_id=str(user_id))
+        return sub
+
+    if sub is None:
+        sub = IapSubscription(
+            user_id=user_id,
+            # store_transaction_id is unique and non-null; fall back to a synthetic
+            # RevenueCat-scoped id when the event carries no store transaction.
+            store_transaction_id=store_transaction_id
+            or f"revenuecat:{app_user_id or user_id}",
+        )
+        db.add(sub)
+    elif store_transaction_id:
+        sub.store_transaction_id = store_transaction_id
+
+    if platform is not None:
+        sub.platform = platform
+    if product_id:
+        sub.product_id = product_id
+    elif not sub.product_id:
+        # A row must carry a product id; default to monthly if RevenueCat omitted
+        # one (rare, e.g. some cancellation events).
+        sub.product_id = PLAN_PRODUCT_IDS[PremiumPlan.monthly]
+
+    sub.status = status
+    sub.source = IapSubscriptionSource.revenuecat
+    sub.expires_at = expires_at
+    sub.app_user_id = app_user_id or sub.app_user_id
+    if raw_payload is not None:
+        sub.raw_payload = raw_payload
+
+    try:
+        await db.commit()
+    except IntegrityError:
+        # The store transaction id already belongs to another account's row.
+        await db.rollback()
+        raise AppError(
+            "This purchase is already linked to another account", status_code=400
+        )
 
     await db.refresh(sub)
     return sub
