@@ -62,8 +62,8 @@ def _fake_drone(user_id: uuid.UUID) -> Drone:
 
 @pytest.mark.asyncio
 async def test_upload_drone_invalidates_list_cache(client, db_session):
-    user = await _create_user(db_session, role=UserRole.producer)
-    token = create_access_token({"sub": str(user.id), "role": user.role.value})
+    user = await _create_user(db_session, role=UserRole.admin)
+    token = create_access_token(str(user.id), user.role.value)
     fake_drone = _fake_drone(user.id)
 
     with patch("app.routers.admin.drone_service.create_drone", new=AsyncMock(return_value=fake_drone)), \
@@ -81,8 +81,8 @@ async def test_upload_drone_invalidates_list_cache(client, db_session):
 
 @pytest.mark.asyncio
 async def test_bulk_upload_drones_invalidates_list_cache(client, db_session):
-    user = await _create_user(db_session, role=UserRole.producer)
-    token = create_access_token({"sub": str(user.id), "role": user.role.value})
+    user = await _create_user(db_session, role=UserRole.admin)
+    token = create_access_token(str(user.id), user.role.value)
     fake_drone = _fake_drone(user.id)
 
     with patch("app.routers.admin.drone_service.bulk_create_drones", new=AsyncMock(return_value=(fake_drone, []))), \
@@ -102,7 +102,7 @@ async def test_bulk_upload_drones_invalidates_list_cache(client, db_session):
 async def test_update_drone_invalidates_list_cache(client, db_session):
     user = await _create_user(db_session, role=UserRole.admin)
     pad = await _create_drone(db_session, user.id)
-    token = create_access_token({"sub": str(user.id), "role": user.role.value})
+    token = create_access_token(str(user.id), user.role.value)
 
     with patch("app.routers.admin.cache_service.delete_pattern", new=AsyncMock()) as mock_invalidate:
         resp = await client.put(
@@ -119,7 +119,7 @@ async def test_update_drone_invalidates_list_cache(client, db_session):
 async def test_delete_drone_invalidates_list_cache(client, db_session):
     user = await _create_user(db_session, role=UserRole.admin)
     pad = await _create_drone(db_session, user.id)
-    token = create_access_token({"sub": str(user.id), "role": user.role.value})
+    token = create_access_token(str(user.id), user.role.value)
 
     with patch("app.routers.admin.cache_service.delete_pattern", new=AsyncMock()) as mock_invalidate:
         resp = await client.delete(

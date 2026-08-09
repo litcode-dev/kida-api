@@ -51,7 +51,7 @@ async def _create_loop(db, user_id):
         id=uuid.uuid4(),
         title="Test Loop",
         slug=f"test-loop-{uuid.uuid4().hex[:8]}",
-        genre=Genre.hiphop,
+        genre=Genre.afrobeat,
         bpm=90,
         duration=4,
         tempo_feel=TempoFeel.mid,
@@ -95,7 +95,7 @@ async def _create_drum_kit(db, user_id):
 async def test_update_drone_metadata_via_multipart(client, db_session):
     user = await _create_user(db_session, role=UserRole.admin)
     pad = await _create_drone(db_session, user.id, title="Old Title")
-    token = create_access_token({"sub": str(user.id), "role": user.role.value})
+    token = create_access_token(str(user.id), user.role.value)
 
     with patch("app.routers.admin.cache_service.delete_pattern", new=AsyncMock()):
         resp = await client.put(
@@ -112,7 +112,7 @@ async def test_update_drone_metadata_via_multipart(client, db_session):
 async def test_update_drone_with_thumbnail_uploads_to_s3(client, db_session):
     user = await _create_user(db_session, role=UserRole.admin)
     pad = await _create_drone(db_session, user.id)
-    token = create_access_token({"sub": str(user.id), "role": user.role.value})
+    token = create_access_token(str(user.id), user.role.value)
 
     with patch("app.services.drone_service.s3_service.upload_bytes", new=AsyncMock()) as mock_upload, \
          patch("app.services.drone_service.s3_service.delete_object", new=AsyncMock()), \
@@ -131,9 +131,9 @@ async def test_update_drone_with_thumbnail_uploads_to_s3(client, db_session):
 
 @pytest.mark.asyncio
 async def test_replace_drone_pad_audio_sets_processing_and_queues_celery(client, db_session):
-    user = await _create_user(db_session, role=UserRole.producer)
+    user = await _create_user(db_session, role=UserRole.admin)
     pad = await _create_drone(db_session, user.id)
-    token = create_access_token({"sub": str(user.id), "role": user.role.value})
+    token = create_access_token(str(user.id), user.role.value)
 
     mock_task = MagicMock()
     with patch("app.services.drone_service.validate_wav_upload", new=AsyncMock(return_value=b"fakewav")), \
@@ -154,9 +154,9 @@ async def test_replace_drone_pad_audio_sets_processing_and_queues_celery(client,
 
 @pytest.mark.asyncio
 async def test_replace_drone_pad_audio_returns_404_if_pad_not_in_drone(client, db_session):
-    user = await _create_user(db_session, role=UserRole.producer)
+    user = await _create_user(db_session, role=UserRole.admin)
     pad = await _create_drone(db_session, user.id)
-    token = create_access_token({"sub": str(user.id), "role": user.role.value})
+    token = create_access_token(str(user.id), user.role.value)
     wrong_drone_id = uuid.uuid4()
 
     with patch("app.services.drone_service.validate_wav_upload", new=AsyncMock(return_value=b"fakewav")), \
@@ -177,7 +177,7 @@ async def test_replace_drone_pad_audio_returns_404_if_pad_not_in_drone(client, d
 async def test_update_loop_metadata_via_multipart(client, db_session):
     user = await _create_user(db_session, role=UserRole.admin)
     loop = await _create_loop(db_session, user.id)
-    token = create_access_token({"sub": str(user.id), "role": user.role.value})
+    token = create_access_token(str(user.id), user.role.value)
 
     resp = await client.put(
         f"/api/v1/admin/loops/{loop.id}",
@@ -193,7 +193,7 @@ async def test_update_loop_metadata_via_multipart(client, db_session):
 async def test_update_loop_with_file_sets_processing_and_queues_celery(client, db_session):
     user = await _create_user(db_session, role=UserRole.admin)
     loop = await _create_loop(db_session, user.id)
-    token = create_access_token({"sub": str(user.id), "role": user.role.value})
+    token = create_access_token(str(user.id), user.role.value)
 
     mock_task = MagicMock()
     with patch("app.services.loop_service.validate_wav_upload", new=AsyncMock(return_value=b"fakewav")), \
@@ -214,7 +214,7 @@ async def test_update_loop_with_file_sets_processing_and_queues_celery(client, d
 async def test_update_loop_with_thumbnail_uploads_to_s3(client, db_session):
     user = await _create_user(db_session, role=UserRole.admin)
     loop = await _create_loop(db_session, user.id)
-    token = create_access_token({"sub": str(user.id), "role": user.role.value})
+    token = create_access_token(str(user.id), user.role.value)
 
     with patch("app.services.loop_service.s3_service.upload_bytes", new=AsyncMock()) as mock_upload, \
          patch("app.services.loop_service.s3_service.delete_object", new=AsyncMock()):
@@ -234,7 +234,7 @@ async def test_update_loop_with_thumbnail_uploads_to_s3(client, db_session):
 async def test_update_drum_kit_metadata(client, db_session):
     user = await _create_user(db_session, role=UserRole.admin)
     kit, _ = await _create_drum_kit(db_session, user.id)
-    token = create_access_token({"sub": str(user.id), "role": user.role.value})
+    token = create_access_token(str(user.id), user.role.value)
 
     resp = await client.put(
         f"/api/v1/admin/drum-kits/{kit.id}",
@@ -250,7 +250,7 @@ async def test_update_drum_kit_metadata(client, db_session):
 async def test_update_drum_kit_with_thumbnail_uploads_to_s3(client, db_session):
     user = await _create_user(db_session, role=UserRole.admin)
     kit, _ = await _create_drum_kit(db_session, user.id)
-    token = create_access_token({"sub": str(user.id), "role": user.role.value})
+    token = create_access_token(str(user.id), user.role.value)
 
     with patch("app.services.drum_kit_service.s3_service.upload_bytes", new=AsyncMock()) as mock_upload, \
          patch("app.services.drum_kit_service.s3_service.delete_object", new=AsyncMock()):
@@ -268,9 +268,9 @@ async def test_update_drum_kit_with_thumbnail_uploads_to_s3(client, db_session):
 
 @pytest.mark.asyncio
 async def test_replace_drum_sample_audio_sets_processing_and_queues_celery(client, db_session):
-    user = await _create_user(db_session, role=UserRole.producer)
+    user = await _create_user(db_session, role=UserRole.admin)
     kit, sample = await _create_drum_kit(db_session, user.id)
-    token = create_access_token({"sub": str(user.id), "role": user.role.value})
+    token = create_access_token(str(user.id), user.role.value)
 
     mock_task = MagicMock()
     with patch("app.services.drum_kit_service.validate_wav_upload", new=AsyncMock(return_value=b"fakewav")), \
@@ -290,9 +290,9 @@ async def test_replace_drum_sample_audio_sets_processing_and_queues_celery(clien
 
 @pytest.mark.asyncio
 async def test_replace_drum_sample_audio_returns_404_if_sample_not_in_kit(client, db_session):
-    user = await _create_user(db_session, role=UserRole.producer)
+    user = await _create_user(db_session, role=UserRole.admin)
     kit, sample = await _create_drum_kit(db_session, user.id)
-    token = create_access_token({"sub": str(user.id), "role": user.role.value})
+    token = create_access_token(str(user.id), user.role.value)
     wrong_kit_id = uuid.uuid4()
 
     with patch("app.services.drum_kit_service.validate_wav_upload", new=AsyncMock(return_value=b"fakewav")), \

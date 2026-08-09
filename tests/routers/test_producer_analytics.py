@@ -225,7 +225,7 @@ async def test_analytics_endpoint_requires_producer(client):
 @pytest.mark.asyncio
 async def test_analytics_endpoint_returns_envelope(client, db_session):
     producer = await _make_producer(db_session)
-    token = create_access_token({"sub": str(producer.id)})
+    token = create_access_token(str(producer.id), producer.role.value)
     resp = await client.get(
         "/api/v1/producer/analytics",
         headers={"Authorization": f"Bearer {token}"},
@@ -244,7 +244,7 @@ async def test_analytics_endpoint_returns_envelope(client, db_session):
 @pytest.mark.asyncio
 async def test_analytics_endpoint_period_param(client, db_session):
     producer = await _make_producer(db_session)
-    token = create_access_token({"sub": str(producer.id)})
+    token = create_access_token(str(producer.id), producer.role.value)
     resp = await client.get(
         "/api/v1/producer/analytics?period=30d",
         headers={"Authorization": f"Bearer {token}"},
@@ -258,7 +258,7 @@ async def test_analytics_endpoint_period_param(client, db_session):
 @pytest.mark.asyncio
 async def test_analytics_endpoint_invalid_period(client, db_session):
     producer = await _make_producer(db_session)
-    token = create_access_token({"sub": str(producer.id)})
+    token = create_access_token(str(producer.id), producer.role.value)
     resp = await client.get(
         "/api/v1/producer/analytics?period=999d",
         headers={"Authorization": f"Bearer {token}"},
@@ -269,7 +269,7 @@ async def test_analytics_endpoint_invalid_period(client, db_session):
 @pytest.mark.asyncio
 async def test_analytics_endpoint_from_without_to(client, db_session):
     producer = await _make_producer(db_session)
-    token = create_access_token({"sub": str(producer.id)})
+    token = create_access_token(str(producer.id), producer.role.value)
     resp = await client.get(
         "/api/v1/producer/analytics?from_date=2026-01-01",
         headers={"Authorization": f"Bearer {token}"},

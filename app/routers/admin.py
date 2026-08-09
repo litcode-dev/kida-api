@@ -771,7 +771,7 @@ async def upload_drone(
         _structlog.get_logger().warning("cache_invalidation_failed", endpoint="upload_drone", error=str(e))
     for pad in drone.pads:
         process_drone_upload.delay(str(pad.id))
-    send_new_content_emails.delay(drone.name, "drone_pad")
+    send_new_content_emails.delay(drone.title, "drone_pad")
     return success(DroneResponse.model_validate(drone).model_dump(), "Drone pad upload queued")
 
 
@@ -818,7 +818,7 @@ async def bulk_upload_drones(
         _structlog.get_logger().warning("cache_invalidation_failed", endpoint="bulk_upload_drones", error=str(e))
     for pad in pads:
         process_drone_upload.delay(str(pad.id))
-    send_new_content_emails.delay(drone.name, "drone_pad")
+    send_new_content_emails.delay(drone.title, "drone_pad")
 
     return success(
         DroneResponse.model_validate(drone).model_dump(),

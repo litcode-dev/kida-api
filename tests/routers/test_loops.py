@@ -28,18 +28,30 @@ async def _create_loop(db, user_id, is_free=True):
     return loop
 
 
+def _headers(user):
+    token = create_access_token(str(user.id), user.role.value)
+    return {"Authorization": f"Bearer {token}"}
+
+
 @pytest.mark.asyncio
-async def test_list_loops_public(client, db_session):
+async def test_list_loops_requires_auth(client):
+    resp = await client.get("/api/v1/loops")
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_list_loops_for_authenticated_user(client, db_session):
     user = await _create_user(db_session)
     await _create_loop(db_session, user.id)
-    resp = await client.get("/api/v1/loops")
+    resp = await client.get("/api/v1/loops", headers=_headers(user))
     assert resp.status_code == 200
     assert resp.json()["data"]["total"] >= 1
 
 
 @pytest.mark.asyncio
-async def test_get_loop_not_found(client):
-    resp = await client.get(f"/api/v1/loops/{uuid.uuid4()}")
+async def test_get_loop_not_found(client, db_session):
+    user = await _create_user(db_session)
+    resp = await client.get(f"/api/v1/loops/{uuid.uuid4()}", headers=_headers(user))
     assert resp.status_code == 404
 
 
@@ -63,11 +75,6 @@ def _patch_s3():
         "app.services.s3_service.get_download_url",
         new=AsyncMock(return_value="https://signed.example/file"),
     )
-
-
-def _headers(user):
-    token = create_access_token(str(user.id), user.role.value)
-    return {"Authorization": f"Bearer {token}"}
 
 
 async def _create_ready_loop(db, user_id, is_free=True):

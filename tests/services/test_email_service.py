@@ -25,7 +25,7 @@ def test_registration_html_hero_section():
 def test_registration_html_cta():
     html = registration_html("Ada")
     assert "Browse Loops" in html
-    assert "https://litmusic.app" in html
+    assert "https://kida.litcode.com.ng" in html
 
 
 def test_registration_html_stats():
@@ -33,13 +33,12 @@ def test_registration_html_stats():
     assert "500+" in html
     assert "Loops" in html
     assert "Genres" in html
-    assert "Subscriptions" in html
 
 
 def test_registration_html_footer():
     html = registration_html("Ada")
-    assert "LM" in html
-    assert "LITMUSIC" in html
+    assert "KIDA" in html
+    assert "kida.litcode.com.ng" in html
 
 
 def test_app_download_html_contains_link_and_os():

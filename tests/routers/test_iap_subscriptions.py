@@ -20,7 +20,7 @@ async def _create_user(db):
 
 
 def _auth_headers(user):
-    return {"Authorization": f"Bearer {create_access_token({'sub': str(user.id)})}"}
+    return {"Authorization": f"Bearer {create_access_token(str(user.id), user.role.value)}"}
 
 
 async def _add_sub(db, user_id, status, expires_at):

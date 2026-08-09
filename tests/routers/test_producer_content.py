@@ -1,4 +1,10 @@
 # tests/routers/test_producer_content.py
+#
+# Content management lives on /producer/* and is mirrored on /admin/*.
+# The mirrors were removed once and deliberately restored (see
+# "restore producer content endpoints to admin router (dual-access)"),
+# so both prefixes must stay routed. An unauthenticated call returns 403,
+# never 404/405 — those would mean the route itself is gone.
 import pytest
 import uuid
 from app.models.user import User, UserRole
@@ -28,9 +34,9 @@ async def test_producer_loops_route_exists(client):
 
 
 @pytest.mark.asyncio
-async def test_admin_loops_removed(client):
+async def test_admin_loops_still_available(client):
     resp = await client.post("/api/v1/admin/loops")
-    assert resp.status_code == 404, "POST /admin/loops should be gone"
+    assert resp.status_code != 404, "admin mirror should still be routed (dual-access)"
 
 
 @pytest.mark.asyncio
@@ -41,10 +47,10 @@ async def test_producer_loop_status_route_exists(client):
 
 
 @pytest.mark.asyncio
-async def test_admin_loop_status_removed(client):
+async def test_admin_loop_status_still_available(client):
     fake_id = uuid.uuid4()
     resp = await client.get(f"/api/v1/admin/loops/{fake_id}/status")
-    assert resp.status_code == 404
+    assert resp.status_code != 404, "admin mirror should still be routed (dual-access)"
 
 
 @pytest.mark.asyncio
@@ -61,10 +67,10 @@ async def test_producer_loop_update_accepts_producer_token(client, db_session):
 
 
 @pytest.mark.asyncio
-async def test_admin_loop_update_removed(client):
+async def test_admin_loop_update_still_available(client):
     fake_id = uuid.uuid4()
     resp = await client.put(f"/api/v1/admin/loops/{fake_id}")
-    assert resp.status_code in {404, 405}
+    assert resp.status_code not in {404, 405}, "admin mirror should still be routed (dual-access)"
 
 
 # ── stem-packs ────────────────────────────────────────────────────────────────
@@ -76,9 +82,9 @@ async def test_producer_stem_packs_route_exists(client):
 
 
 @pytest.mark.asyncio
-async def test_admin_stem_packs_removed(client):
+async def test_admin_stem_packs_still_available(client):
     resp = await client.post("/api/v1/admin/stem-packs")
-    assert resp.status_code == 404
+    assert resp.status_code != 404, "admin mirror should still be routed (dual-access)"
 
 
 @pytest.mark.asyncio
@@ -95,10 +101,10 @@ async def test_producer_stem_pack_update_accepts_producer_token(client, db_sessi
 
 
 @pytest.mark.asyncio
-async def test_admin_stem_pack_update_removed(client):
+async def test_admin_stem_pack_update_still_available(client):
     fake_id = uuid.uuid4()
     resp = await client.put(f"/api/v1/admin/stem-packs/{fake_id}")
-    assert resp.status_code in {404, 405}
+    assert resp.status_code not in {404, 405}, "admin mirror should still be routed (dual-access)"
 
 
 @pytest.mark.asyncio
@@ -109,10 +115,10 @@ async def test_producer_stem_add_route_exists(client):
 
 
 @pytest.mark.asyncio
-async def test_admin_stem_add_removed(client):
+async def test_admin_stem_add_still_available(client):
     fake_id = uuid.uuid4()
     resp = await client.post(f"/api/v1/admin/stem-packs/{fake_id}/stems")
-    assert resp.status_code == 404, "POST /admin/stem-packs/{id}/stems should be gone"
+    assert resp.status_code != 404, "admin mirror should still be routed (dual-access)"
 
 
 # ── drones ────────────────────────────────────────────────────────────────────
@@ -124,9 +130,9 @@ async def test_producer_drone_categories_post_exists(client):
 
 
 @pytest.mark.asyncio
-async def test_admin_drone_categories_post_removed(client):
+async def test_admin_drone_categories_post_still_available(client):
     resp = await client.post("/api/v1/admin/drones/categories")
-    assert resp.status_code in {404, 405}
+    assert resp.status_code not in {404, 405}, "admin mirror should still be routed (dual-access)"
 
 
 @pytest.mark.asyncio
@@ -136,9 +142,9 @@ async def test_producer_drone_categories_get_exists(client):
 
 
 @pytest.mark.asyncio
-async def test_admin_drone_categories_get_removed(client):
+async def test_admin_drone_categories_get_still_available(client):
     resp = await client.get("/api/v1/admin/drones/categories")
-    assert resp.status_code in {404, 405}
+    assert resp.status_code not in {404, 405}, "admin mirror should still be routed (dual-access)"
 
 
 @pytest.mark.asyncio
@@ -148,9 +154,9 @@ async def test_producer_drones_post_exists(client):
 
 
 @pytest.mark.asyncio
-async def test_admin_drones_post_removed(client):
+async def test_admin_drones_post_still_available(client):
     resp = await client.post("/api/v1/admin/drones")
-    assert resp.status_code in {404, 405}
+    assert resp.status_code not in {404, 405}, "admin mirror should still be routed (dual-access)"
 
 
 @pytest.mark.asyncio
@@ -160,9 +166,9 @@ async def test_producer_drones_bulk_exists(client):
 
 
 @pytest.mark.asyncio
-async def test_admin_drones_bulk_removed(client):
+async def test_admin_drones_bulk_still_available(client):
     resp = await client.post("/api/v1/admin/drones/bulk")
-    assert resp.status_code in {404, 405}
+    assert resp.status_code not in {404, 405}, "admin mirror should still be routed (dual-access)"
 
 
 @pytest.mark.asyncio
@@ -178,10 +184,10 @@ async def test_producer_drone_update_accepts_producer_token(client, db_session):
 
 
 @pytest.mark.asyncio
-async def test_admin_drone_update_removed(client):
+async def test_admin_drone_update_still_available(client):
     fake_id = uuid.uuid4()
     resp = await client.put(f"/api/v1/admin/drones/{fake_id}")
-    assert resp.status_code in {404, 405}
+    assert resp.status_code not in {404, 405}, "admin mirror should still be routed (dual-access)"
 
 
 @pytest.mark.asyncio
@@ -191,9 +197,9 @@ async def test_producer_drone_bulk_status_exists(client):
 
 
 @pytest.mark.asyncio
-async def test_admin_drone_bulk_status_removed(client):
+async def test_admin_drone_bulk_status_still_available(client):
     resp = await client.get("/api/v1/admin/drones/bulk/status", params={"ids": str(uuid.uuid4())})
-    assert resp.status_code in {404, 405}
+    assert resp.status_code not in {404, 405}, "admin mirror should still be routed (dual-access)"
 
 
 @pytest.mark.asyncio
@@ -205,11 +211,11 @@ async def test_producer_drone_pad_patch_exists(client):
 
 
 @pytest.mark.asyncio
-async def test_admin_drone_pad_patch_removed(client):
+async def test_admin_drone_pad_patch_still_available(client):
     fake_drone = uuid.uuid4()
     fake_pad = uuid.uuid4()
     resp = await client.patch(f"/api/v1/admin/drones/{fake_drone}/pads/{fake_pad}")
-    assert resp.status_code in {404, 405}
+    assert resp.status_code not in {404, 405}, "admin mirror should still be routed (dual-access)"
 
 
 # ── drum kits ─────────────────────────────────────────────────────────────────
@@ -221,9 +227,9 @@ async def test_producer_drum_kits_post_exists(client):
 
 
 @pytest.mark.asyncio
-async def test_admin_drum_kits_post_removed(client):
+async def test_admin_drum_kits_post_still_available(client):
     resp = await client.post("/api/v1/admin/drum-kits")
-    assert resp.status_code in {404, 405}
+    assert resp.status_code not in {404, 405}, "admin mirror should still be routed (dual-access)"
 
 
 @pytest.mark.asyncio
@@ -233,9 +239,9 @@ async def test_producer_drum_kits_get_exists(client):
 
 
 @pytest.mark.asyncio
-async def test_admin_drum_kits_get_removed(client):
+async def test_admin_drum_kits_get_still_available(client):
     resp = await client.get("/api/v1/admin/drum-kits")
-    assert resp.status_code in {404, 405}
+    assert resp.status_code not in {404, 405}, "admin mirror should still be routed (dual-access)"
 
 
 @pytest.mark.asyncio
@@ -251,10 +257,10 @@ async def test_producer_drum_kit_update_accepts_producer_token(client, db_sessio
 
 
 @pytest.mark.asyncio
-async def test_admin_drum_kit_update_removed(client):
+async def test_admin_drum_kit_update_still_available(client):
     fake_id = uuid.uuid4()
     resp = await client.put(f"/api/v1/admin/drum-kits/{fake_id}")
-    assert resp.status_code in {404, 405}
+    assert resp.status_code not in {404, 405}, "admin mirror should still be routed (dual-access)"
 
 
 @pytest.mark.asyncio
@@ -266,8 +272,8 @@ async def test_producer_drum_kit_sample_patch_exists(client):
 
 
 @pytest.mark.asyncio
-async def test_admin_drum_kit_sample_patch_removed(client):
+async def test_admin_drum_kit_sample_patch_still_available(client):
     fake_kit = uuid.uuid4()
     fake_sample = uuid.uuid4()
     resp = await client.patch(f"/api/v1/admin/drum-kits/{fake_kit}/samples/{fake_sample}")
-    assert resp.status_code in {404, 405}
+    assert resp.status_code not in {404, 405}, "admin mirror should still be routed (dual-access)"

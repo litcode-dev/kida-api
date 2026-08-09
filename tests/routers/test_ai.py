@@ -34,7 +34,7 @@ async def _create_active_sub(db, user_id, quota_used=0):
 
 
 def _auth_headers(user):
-    token = create_access_token({"sub": str(user.id)})
+    token = create_access_token(str(user.id), user.role.value)
     return {"Authorization": f"Bearer {token}"}
 
 
