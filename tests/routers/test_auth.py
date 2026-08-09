@@ -190,3 +190,43 @@ async def test_login_wrong_password(client, fake_redis):
 async def test_me_requires_auth(client):
     resp = await client.get("/api/v1/auth/me")
     assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_verify_email_notifies_admin_inbox(client, fake_redis, monkeypatch):
+    from app.tasks import notification_tasks
+
+    reg = await _register(client, email="user@test.com", password="pass1234", full_name="User")
+    user_id = reg.json()["data"]["id"]
+    code = _stored_code(fake_redis, user_id)
+
+    calls = []
+    monkeypatch.setattr(
+        notification_tasks.send_new_user_admin_notification, "delay",
+        lambda *a, **kw: calls.append(a),
+    )
+
+    verify = await client.post("/api/v1/auth/verify-email", json={
+        "email": "user@test.com", "code": code,
+    })
+    assert verify.status_code == 200
+    assert calls == [(user_id,)]
+
+
+@pytest.mark.asyncio
+async def test_failed_verification_does_not_notify_admin_inbox(client, monkeypatch):
+    from app.tasks import notification_tasks
+
+    await _register(client, email="user@test.com", password="pass1234", full_name="User")
+
+    calls = []
+    monkeypatch.setattr(
+        notification_tasks.send_new_user_admin_notification, "delay",
+        lambda *a, **kw: calls.append(a),
+    )
+
+    resp = await client.post("/api/v1/auth/verify-email", json={
+        "email": "user@test.com", "code": "000000",
+    })
+    assert resp.status_code == 400
+    assert calls == []
