@@ -463,14 +463,21 @@ def account_deleted_admin_html(
     user_id: str,
     joined_at: datetime | None,
     deleted_at: datetime,
+    actor: str = "user",
 ) -> str:
     """Internal account-deletion notification — the counterpart to new_user_admin_html.
 
     The account is already gone by the time this is built, so every value is
-    passed in rather than looked up.
+    passed in rather than looked up. ``actor`` distinguishes a self-deletion from
+    an admin removal.
     """
     when = deleted_at.strftime("%b %d, %Y at %H:%M UTC")
     joined = joined_at.strftime("%b %d, %Y") if joined_at else "unknown"
+    headline = (
+        f"{full_name} was deleted by an admin."
+        if actor == "admin"
+        else f"{full_name} deleted their account."
+    )
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
@@ -492,7 +499,7 @@ def account_deleted_admin_html(
       <!-- BODY -->
       <tr><td style="background:#f2ede4;padding:32px;">
         <p style="margin:0 0 24px 0;font-size:17px;font-weight:700;color:#0a0a0a;">
-          {full_name} deleted their account.
+          {headline}
         </p>
         <table width="100%" cellpadding="0" cellspacing="0" style="font-size:14px;color:#333;">
           <tr>
@@ -514,6 +521,10 @@ def account_deleted_admin_html(
           <tr>
             <td style="padding:8px 0;color:#888;font-size:11px;letter-spacing:0.1em;text-transform:uppercase;">Deleted</td>
             <td style="padding:8px 0;">{when}</td>
+          </tr>
+          <tr>
+            <td style="padding:8px 0;color:#888;font-size:11px;letter-spacing:0.1em;text-transform:uppercase;">Deleted by</td>
+            <td style="padding:8px 0;">{actor}</td>
           </tr>
           <tr>
             <td style="padding:8px 0;color:#888;font-size:11px;letter-spacing:0.1em;text-transform:uppercase;">User ID</td>
@@ -547,16 +558,23 @@ def account_deleted_admin_text(
     user_id: str,
     joined_at: datetime | None,
     deleted_at: datetime,
+    actor: str = "user",
 ) -> str:
     when = deleted_at.strftime("%b %d, %Y at %H:%M UTC")
     joined = joined_at.strftime("%b %d, %Y") if joined_at else "unknown"
+    headline = (
+        f"{full_name}'s Kida account was deleted by an admin."
+        if actor == "admin"
+        else f"{full_name} deleted their Kida account."
+    )
     return (
-        f"{full_name} deleted their Kida account.\n\n"
+        f"{headline}\n\n"
         f"Name:          {full_name}\n"
         f"Email:         {email}\n"
         f"Signed up via: {provider}\n"
         f"Joined:        {joined}\n"
         f"Deleted:       {when}\n"
+        f"Deleted by:    {actor}\n"
         f"User ID:       {user_id}\n\n"
         f"The account and all its data have been removed. This record is the only\n"
         f"trace left — the user row no longer exists.\n\n"

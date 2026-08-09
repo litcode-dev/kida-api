@@ -263,12 +263,13 @@ async def test_delete_account_notifies_admin_inbox(client, fake_redis, monkeypat
     assert resp.status_code == 200
     assert len(calls) == 1
     # Details are captured before the row is deleted and passed through by value.
-    sent_user_id, full_name, email, provider, joined_at = calls[0]
+    sent_user_id, full_name, email, provider, joined_at, actor = calls[0]
     assert sent_user_id == user_id
     assert full_name == "Leaving User"
     assert email == "gone@test.com"
     assert provider == "email"
     assert joined_at is not None
+    assert actor == "user"
 
 
 def test_account_deleted_admin_task_needs_no_database(monkeypatch):

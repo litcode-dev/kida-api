@@ -116,13 +116,16 @@ def send_account_deleted_admin_notification(
     email: str,
     provider: str,
     joined_at: str | None,
+    actor: str = "user",
 ):
-    """Tell the team inbox that a user deleted their account.
+    """Tell the team inbox that an account was deleted.
 
     Unlike the signup notification, nothing can be looked up here — the user row
     is gone by the time this runs, so the caller passes every detail through.
     ``joined_at`` is an ISO-8601 string because Celery serializes args as JSON.
-    Silently skipped when ADMIN_NOTIFICATION_EMAIL is blank.
+    ``actor`` says whether the user or an admin removed the account. It defaults
+    to "user" so tasks queued by an older worker before this argument existed
+    still run. Silently skipped when ADMIN_NOTIFICATION_EMAIL is blank.
     """
     log.info("account_deleted_admin_email.task_started", user_id=user_id)
 
@@ -145,8 +148,9 @@ def send_account_deleted_admin_notification(
             user_id=user_id,
             joined_at=datetime.fromisoformat(joined_at) if joined_at else None,
             deleted_at=datetime.now(timezone.utc),
+            actor=actor,
         )
-        log.info("account_deleted_admin_email.sending", user_id=user_id, to=recipient)
+        log.info("account_deleted_admin_email.sending", user_id=user_id, to=recipient, actor=actor)
         await send_email(
             to=recipient,
             subject=f"Kida account deleted — {email}",

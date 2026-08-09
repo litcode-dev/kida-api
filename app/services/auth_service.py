@@ -297,12 +297,25 @@ async def find_or_create_oauth_user(
         return user
 
 
-async def delete_user(db: AsyncSession, user: User, redis: Redis, refresh_token: str | None) -> None:
+async def delete_user(
+    db: AsyncSession,
+    user: User,
+    redis: Redis,
+    refresh_token: str | None,
+    actor: str = "user",
+) -> None:
+    """Permanently delete an account and everything that references it.
+
+    ``actor`` is "user" for self-deletion via DELETE /auth/me and "admin" when
+    an admin removes the account; it only changes the wording of the internal
+    notification, not what gets deleted.
+    """
     from app.models.ai_generation import AIGeneration
     from app.models.download import Download
     from app.models.like import Like
     from app.models.purchase import Purchase
     from app.models.subscription import Subscription
+    from app.models.iap_subscription import IapSubscription
     from app.models.loop import Loop
     from app.models.stem_pack import StemPack, Stem
     from app.models.drum_kit import DrumKit
@@ -324,6 +337,10 @@ async def delete_user(db: AsyncSession, user: User, redis: Redis, refresh_token:
     await db.execute(delete(Like).where(Like.user_id == uid))
     await db.execute(delete(Purchase).where(Purchase.user_id == uid))
     await db.execute(delete(Subscription).where(Subscription.user_id == uid))
+    # iap_subscriptions has no ON DELETE CASCADE, so a user who ever held a
+    # Kiɗa Premium entitlement (store, RevenueCat or admin grant) would
+    # otherwise fail the users delete below with a foreign-key violation.
+    await db.execute(delete(IapSubscription).where(IapSubscription.user_id == uid))
 
     # Producer content created by the user — delete children before parents
     loop_ids = (await db.scalars(select(Loop.id).where(Loop.created_by == uid))).all()
@@ -347,19 +364,32 @@ async def delete_user(db: AsyncSession, user: User, redis: Redis, refresh_token:
         await db.execute(delete(DrumKit).where(DrumKit.id.in_(drum_kit_ids)))
 
     drone_cat_ids = (await db.scalars(select(DronePadCategory.id).where(DronePadCategory.created_by == uid))).all()
+
+    # Drones carry their own created_by and can live under a category someone
+    # else owns, so collect by both routes — filtering on the category alone
+    # leaves those drones behind and the users delete then fails on
+    # drones_created_by_fkey.
+    drone_criteria = Drone.created_by == uid
     if drone_cat_ids:
-        drone_ids = (await db.scalars(select(Drone.id).where(Drone.category_id.in_(drone_cat_ids)))).all()
-        if drone_ids:
-            drone_pad_ids = (await db.scalars(select(DronePad.id).where(DronePad.drone_id.in_(drone_ids)))).all()
-            if drone_pad_ids:
-                await db.execute(delete(Download).where(Download.drone_pad_id.in_(drone_pad_ids)))
-                await db.execute(delete(Purchase).where(Purchase.drone_pad_id.in_(drone_pad_ids)))
-                await db.execute(delete(DronePad).where(DronePad.id.in_(drone_pad_ids)))
-            await db.execute(delete(Drone).where(Drone.id.in_(drone_ids)))
+        drone_criteria = drone_criteria | Drone.category_id.in_(drone_cat_ids)
+    drone_ids = (await db.scalars(select(Drone.id).where(drone_criteria))).all()
+
+    if drone_ids:
+        drone_pad_ids = (await db.scalars(select(DronePad.id).where(DronePad.drone_id.in_(drone_ids)))).all()
+        if drone_pad_ids:
+            await db.execute(delete(Download).where(Download.drone_pad_id.in_(drone_pad_ids)))
+            await db.execute(delete(Purchase).where(Purchase.drone_pad_id.in_(drone_pad_ids)))
+            await db.execute(delete(DronePad).where(DronePad.id.in_(drone_pad_ids)))
+        await db.execute(delete(Drone).where(Drone.id.in_(drone_ids)))
+    if drone_cat_ids:
         await db.execute(delete(DronePadCategory).where(DronePadCategory.id.in_(drone_cat_ids)))
 
     await db.execute(delete(User).where(User.id == uid))
     await db.commit()
+
+    # The suspension flag is mirrored in Redis by the admin suspend endpoint and
+    # is not covered by the database delete.
+    await redis.delete(f"suspended:{uid}")
 
     from app.services.email_service import send_email, account_deleted_html, account_deleted_text
     await send_email(
@@ -376,8 +406,9 @@ async def delete_user(db: AsyncSession, user: User, redis: Redis, refresh_token:
         user_email,
         user_provider,
         user_joined_at.isoformat() if user_joined_at else None,
+        actor,
     )
-    log.info("account_deleted", user_id=str(uid), email=user_email)
+    log.info("account_deleted", user_id=str(uid), email=user_email, actor=actor)
 
 
 async def get_user_by_id(db: AsyncSession, user_id: str) -> User:

@@ -28,12 +28,18 @@ from app.models.loop import Genre, TempoFeel
 from app.models.drone_pad import MusicalKey
 from app.exceptions import NotFoundError, AppError, ForbiddenError
 from redis.asyncio import Redis
-from app.services import loop_service, stem_pack_service, drone_service, drum_kit_service, cache_service
+from app.services import (
+    auth_service, loop_service, stem_pack_service, drone_service, drum_kit_service, cache_service,
+)
 from app.services.admin_analytics_service import get_platform_analytics
 from app.tasks.notification_tasks import send_new_content_emails
 from app.tasks.upload_tasks import process_drone_upload, process_drum_sample_upload, process_loop_upload
 import uuid
 from datetime import date
+
+import structlog
+
+log = structlog.get_logger()
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -226,6 +232,42 @@ async def unsuspend_user(
         text=account_unsuspended_text(user.full_name),
     )
     return success(UserResponse.model_validate(user).model_dump(), "User unsuspended")
+
+
+@router.delete(
+    "/users/{user_id}",
+    summary="Delete a user",
+    description=(
+        "Permanently deletes a user's account and all associated data: purchases, "
+        "downloads, likes, AI generations, subscriptions and any producer content "
+        "they created. The user is emailed a confirmation. This action is "
+        "irreversible — use suspend instead to block access reversibly.\n\n"
+        "Admins cannot be deleted; demote the account first."
+    ),
+    responses={
+        403: {"description": "Target is an admin"},
+        404: {"description": "User not found"},
+    },
+)
+@limiter.limit("10/minute")
+async def delete_user(
+    request: Request,
+    user_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    redis: Redis = Depends(get_redis),
+    admin=Depends(require_admin),
+):
+    user = await db.get(User, user_id)
+    if not user:
+        raise NotFoundError("User not found")
+    # Covers self-deletion too, since the caller is an admin by definition.
+    if user.role == UserRole.admin:
+        raise ForbiddenError("Cannot delete an admin")
+
+    email = user.email
+    await auth_service.delete_user(db, user, redis, None, actor="admin")
+    log.info("admin.user_deleted", admin_id=str(admin.id), user_id=str(user_id), email=email)
+    return success(message="User deleted")
 
 
 # --- Subscription administration ---
