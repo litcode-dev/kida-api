@@ -28,7 +28,7 @@ from app.schemas.subscription import (
     AdminSubscriptionActivateRequest,
     AdminSubscriptionDeactivateRequest,
 )
-from app.models.user import User, UserRole
+from app.models.user import outranks, User, UserRole
 from app.models.loop import Genre, TempoFeel
 from app.models.drone_pad import MusicalKey
 from app.exceptions import NotFoundError, AppError, ForbiddenError
@@ -251,7 +251,22 @@ async def list_users(
     })
 
 
-@router.put("/users/{user_id}/role")
+@router.put(
+    "/users/{user_id}/role",
+    summary="Change a user's role",
+    description=(
+        "Admins can move accounts between `user` and `producer`. Granting or "
+        "revoking `admin` or `super_admin`, and changing the role of anyone who "
+        "already holds one, requires a super admin.\n\n"
+        "A super admin cannot change their own role or another super admin's — "
+        "that would let the top role be removed by accident, or by a compromised "
+        "session, with no way back."
+    ),
+    responses={
+        403: {"description": "Caller does not outrank the target, or the role is above them"},
+        404: {"description": "User not found"},
+    },
+)
 @limiter.limit("30/minute")
 async def change_user_role(
     request: Request,
@@ -263,9 +278,22 @@ async def change_user_role(
     user = await db.get(User, user_id)
     if not user:
         raise NotFoundError("User not found")
+    if user.id == admin.id:
+        raise ForbiddenError("Cannot change your own role")
+    # Both ends matter: you must outrank who they are now, and the role you are
+    # handing out — otherwise an admin could promote someone to super admin and
+    # inherit that power through them.
+    if not outranks(admin.role, user.role):
+        raise ForbiddenError("Cannot change the role of an account at or above your own")
+    if not outranks(admin.role, role):
+        raise ForbiddenError("Cannot grant a role at or above your own")
     user.role = role
     await db.commit()
     await db.refresh(user)
+    log.info(
+        "admin.role_changed",
+        admin_id=str(admin.id), user_id=str(user_id), new_role=role.value,
+    )
     return success(UserResponse.model_validate(user).model_dump(), "Role updated")
 
 
@@ -304,8 +332,10 @@ async def suspend_user(
     user = await db.get(User, user_id)
     if not user:
         raise NotFoundError("User not found")
-    if user.role == UserRole.admin:
-        raise ForbiddenError("Cannot suspend an admin")
+    # A super admin can suspend an admin; nobody can suspend an equal or higher
+    # role, which also blocks suspending yourself.
+    if not outranks(admin.role, user.role):
+        raise ForbiddenError("Cannot suspend an account at or above your own role")
     user.is_suspended = True
     user.suspension_reason = body.reason
     await db.commit()
@@ -356,10 +386,12 @@ async def unsuspend_user(
         "downloads, likes, AI generations, subscriptions and any producer content "
         "they created. The user is emailed a confirmation. This action is "
         "irreversible — use suspend instead to block access reversibly.\n\n"
-        "Admins cannot be deleted; demote the account first."
+        "An admin can only delete accounts below their own role: a super admin "
+        "can delete an admin, an admin cannot, and nobody can delete a super "
+        "admin or themselves."
     ),
     responses={
-        403: {"description": "Target is an admin"},
+        403: {"description": "Caller does not outrank the target"},
         404: {"description": "User not found"},
     },
 )
@@ -374,9 +406,9 @@ async def delete_user(
     user = await db.get(User, user_id)
     if not user:
         raise NotFoundError("User not found")
-    # Covers self-deletion too, since the caller is an admin by definition.
-    if user.role == UserRole.admin:
-        raise ForbiddenError("Cannot delete an admin")
+    # Rank comparison covers self-deletion too — nobody outranks themselves.
+    if not outranks(admin.role, user.role):
+        raise ForbiddenError("Cannot delete an account at or above your own role")
 
     email = user.email
     await auth_service.delete_user(db, user, redis, None, actor="admin")

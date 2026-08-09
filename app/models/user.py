@@ -13,6 +13,25 @@ class UserRole(str, enum.Enum):
     user = "user"
     producer = "producer"
     admin = "admin"
+    super_admin = "super_admin"
+
+
+# Privilege order. A role outranks another only if its rank is strictly higher —
+# two super admins cannot act on each other, which is what stops the top role
+# from being self-destructing.
+ROLE_RANK = {
+    UserRole.user: 0,
+    UserRole.producer: 1,
+    UserRole.admin: 2,
+    UserRole.super_admin: 3,
+}
+
+# Roles that reach the /admin endpoints.
+ADMIN_ROLES = (UserRole.admin, UserRole.super_admin)
+
+
+def outranks(actor: UserRole, target: UserRole) -> bool:
+    return ROLE_RANK[actor] > ROLE_RANK[target]
 
 
 class User(Base):

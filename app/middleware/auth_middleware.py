@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from redis.asyncio import Redis
 from app.database import get_db
 from app.services.auth_service import decode_access_token, get_user_by_id
-from app.models.user import User, UserRole
+from app.models.user import ADMIN_ROLES, User, UserRole
 from app.exceptions import UnauthorizedError, ForbiddenError
 
 bearer = HTTPBearer()
@@ -44,12 +44,20 @@ async def get_current_user(
 
 
 async def require_admin(user: User = Depends(get_current_user)) -> User:
-    if user.role != UserRole.admin:
+    """Any admin-level role. A super admin can do everything an admin can."""
+    if user.role not in ADMIN_ROLES:
         raise ForbiddenError("Admin access required")
     return user
 
 
+async def require_super_admin(user: User = Depends(get_current_user)) -> User:
+    """The elevated actions: anything that touches another admin."""
+    if user.role != UserRole.super_admin:
+        raise ForbiddenError("Super admin access required")
+    return user
+
+
 async def require_producer(user: User = Depends(get_current_user)) -> User:
-    if user.role not in (UserRole.producer, UserRole.admin):
+    if user.role not in (UserRole.producer, *ADMIN_ROLES):
         raise ForbiddenError("Producer or admin access required")
     return user
