@@ -19,6 +19,11 @@ from app.schemas.drone_pad import (
 )
 from app.schemas.drum_kit import DrumKitCreate, DrumKitFilter, DrumKitResponse, DrumKitUpdate
 from app.schemas.producer_analytics import AnalyticsPeriod, AnalyticsParams
+from app.schemas.broadcast import (
+    BroadcastAudience,
+    BroadcastPreviewRequest,
+    BroadcastRequest,
+)
 from app.schemas.subscription import (
     AdminSubscriptionActivateRequest,
     AdminSubscriptionDeactivateRequest,
@@ -29,10 +34,10 @@ from app.models.drone_pad import MusicalKey
 from app.exceptions import NotFoundError, AppError, ForbiddenError
 from redis.asyncio import Redis
 from app.services import (
-    auth_service, loop_service, stem_pack_service, drone_service, drum_kit_service, cache_service,
+    auth_service, broadcast_service, loop_service, stem_pack_service, drone_service, drum_kit_service, cache_service,
 )
 from app.services.admin_analytics_service import get_platform_analytics
-from app.tasks.notification_tasks import send_new_content_emails
+from app.tasks.notification_tasks import send_broadcast_email, send_new_content_emails
 from app.tasks.upload_tasks import process_drone_upload, process_drum_sample_upload, process_loop_upload
 import uuid
 from datetime import date
@@ -74,6 +79,115 @@ async def test_email(request: Request, body: EmailTestRequest, _: User = Depends
         text=registration_text("there"),
     )
     return success(message="Test email dispatched", data={"to": body.email})
+
+
+@router.get(
+    "/email/broadcast/recipients",
+    summary="Count broadcast recipients",
+    description=(
+        "How many addresses a broadcast would reach for the given audience, without "
+        "sending anything.\n\n"
+        "- `users` — registered accounts\n"
+        "- `subscribers` — active newsletter subscribers\n"
+        "- `all` — both, deduplicated (default)\n\n"
+        "Addresses that unsubscribed from the newsletter are excluded from every "
+        "audience, including `users`."
+    ),
+    responses={403: {"description": "Admin role required"}},
+)
+@limiter.limit("30/minute")
+async def broadcast_recipient_count(
+    request: Request,
+    audience: BroadcastAudience = BroadcastAudience.all,
+    db: AsyncSession = Depends(get_db),
+    admin=Depends(require_admin),
+):
+    total = await broadcast_service.count_recipients(db, audience)
+    return success({"audience": audience.value, "recipients": total})
+
+
+@router.post(
+    "/email/broadcast/preview",
+    summary="Preview a broadcast",
+    description=(
+        "Renders the broadcast and sends it to a single address so it can be checked "
+        "before going out. Also returns the recipient count the real send would reach. "
+        "Nothing is sent to the audience."
+    ),
+    responses={
+        403: {"description": "Admin role required"},
+        422: {"description": "Invalid payload"},
+    },
+)
+@limiter.limit("10/minute")
+async def preview_broadcast(
+    request: Request,
+    body: BroadcastPreviewRequest,
+    db: AsyncSession = Depends(get_db),
+    admin=Depends(require_admin),
+):
+    from app.services.email_service import send_email, broadcast_html, broadcast_text
+
+    await send_email(
+        to=body.to,
+        subject=f"[Preview] {body.subject}",
+        html=broadcast_html(body.subject, body.body, body.heading, body.cta_label, body.cta_url),
+        text=broadcast_text(body.subject, body.body, body.heading, body.cta_label, body.cta_url),
+    )
+    total = await broadcast_service.count_recipients(db, body.audience)
+    return success(
+        {"to": body.to, "audience": body.audience.value, "would_reach": total},
+        "Preview sent",
+    )
+
+
+@router.post(
+    "/email/broadcast",
+    summary="Send an email to all users",
+    description=(
+        "Queues an announcement to every address in the chosen audience. Sending "
+        "happens in the background — the response reports how many recipients were "
+        "resolved at request time, not how many were delivered; check worker logs "
+        "for `broadcast_email.done`.\n\n"
+        "Addresses that unsubscribed from the newsletter are always excluded. "
+        "Preview first with `/admin/email/broadcast/preview` — a broadcast cannot be "
+        "recalled once queued."
+    ),
+    responses={
+        403: {"description": "Admin role required"},
+        422: {"description": "Invalid payload"},
+    },
+)
+@limiter.limit("3/minute")
+async def send_broadcast(
+    request: Request,
+    body: BroadcastRequest,
+    db: AsyncSession = Depends(get_db),
+    admin=Depends(require_admin),
+):
+    total = await broadcast_service.count_recipients(db, body.audience)
+    if total == 0:
+        raise AppError("No recipients for this audience", status_code=422)
+
+    send_broadcast_email.delay(
+        body.subject,
+        body.body,
+        body.audience.value,
+        body.heading,
+        body.cta_label,
+        body.cta_url,
+    )
+    log.info(
+        "admin.broadcast_queued",
+        admin_id=str(admin.id),
+        audience=body.audience.value,
+        recipients=total,
+        subject=body.subject,
+    )
+    return success(
+        {"audience": body.audience.value, "recipients": total},
+        f"Broadcast queued to {total} recipient(s)",
+    )
 
 
 # --- Loop endpoints ---

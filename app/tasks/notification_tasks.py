@@ -324,3 +324,54 @@ def send_app_download_email(request_id: str):
             log.info("app_download_email.done", request_id=request_id, email=req.email)
 
     asyncio.run(_run())
+
+
+@celery_app.task
+def send_broadcast_email(
+    subject: str,
+    body: str,
+    audience: str,
+    heading: str | None = None,
+    cta_label: str | None = None,
+    cta_url: str | None = None,
+):
+    """Send an admin-authored announcement to a resolved audience.
+
+    Recipients are resolved inside the task rather than passed in, so a large
+    audience does not have to travel through the broker and the list reflects
+    the moment of sending.
+
+    send_email swallows and logs per-address failures, so one bad address cannot
+    abort the run; the summary log line reports how many were attempted.
+    """
+    log.info("broadcast_email.task_started", audience=audience, subject=subject)
+
+    async def _run():
+        from app.database import AsyncSessionLocal
+        from app.schemas.broadcast import BroadcastAudience
+        from app.services import broadcast_service
+        from app.services.email_service import send_email, broadcast_html, broadcast_text
+
+        async with AsyncSessionLocal() as db:
+            recipients = await broadcast_service.resolve_recipients(
+                db, BroadcastAudience(audience)
+            )
+
+        if not recipients:
+            log.info("broadcast_email.no_recipients", audience=audience)
+            return
+
+        html = broadcast_html(subject, body, heading, cta_label, cta_url)
+        text = broadcast_text(subject, body, heading, cta_label, cta_url)
+
+        for email in recipients:
+            await send_email(to=email, subject=subject, html=html, text=text)
+
+        log.info(
+            "broadcast_email.done",
+            audience=audience,
+            subject=subject,
+            recipients=len(recipients),
+        )
+
+    asyncio.run(_run())

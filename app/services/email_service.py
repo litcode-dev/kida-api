@@ -1059,3 +1059,93 @@ def account_unsuspended_text(full_name: str) -> str:
         f"Welcome back: https://kida.litcode.com.ng"
         + _text_footer()
     )
+
+
+def _broadcast_paragraphs(body: str) -> str:
+    """Render an admin-authored plain-text body as HTML paragraphs.
+
+    The body is escaped — it is operator input, but it lands in a lot of
+    inboxes, so a stray "<" should not be able to break the markup.
+    """
+    from html import escape
+
+    blocks = [b.strip() for b in body.split("\n\n") if b.strip()]
+    return "".join(
+        '<p style="margin:0 0 16px 0;font-size:15px;line-height:1.6;color:#333;">'
+        f'{escape(block).replace(chr(10), "<br>")}'
+        "</p>"
+        for block in blocks
+    )
+
+
+def broadcast_html(
+    subject: str,
+    body: str,
+    heading: str | None = None,
+    cta_label: str | None = None,
+    cta_url: str | None = None,
+) -> str:
+    """An admin-authored announcement in the Kida shell."""
+    from html import escape
+
+    year = datetime.now(timezone.utc).year
+    hero = escape(heading or subject)
+    cta = ""
+    if cta_label and cta_url:
+        cta = (
+            f'<a href="{escape(cta_url, quote=True)}" '
+            'style="display:inline-block;margin-top:12px;padding:14px 28px;background:#0a0a0a;'
+            'color:#fff;font-size:14px;font-weight:700;text-decoration:none;border-radius:4px;'
+            f'letter-spacing:0.02em;">{escape(cta_label)} &rarr;</a>'
+        )
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#e8e3d9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#e8e3d9;">
+  <tr><td align="center" style="padding:32px 16px;">
+    <table width="520" cellpadding="0" cellspacing="0" style="max-width:520px;width:100%;">
+
+      <!-- HEADER -->
+      <tr><td style="background:#0a0a0a;padding:24px 32px 0 32px;border-radius:8px 8px 0 0;">
+        <table width="100%" cellpadding="0" cellspacing="0">
+          <tr>
+            <td style="color:#fff;font-size:11px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;">KIDA</td>
+            <td align="right" style="color:#fff;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;">NEWS</td>
+          </tr>
+        </table>
+      </td></tr>
+
+      <!-- HERO -->
+      <tr><td style="background:#0a0a0a;padding:32px 32px 28px 32px;border-bottom:1px solid #1f1f1f;">
+        <p style="margin:0;font-size:34px;font-weight:800;line-height:1.15;color:#fff;letter-spacing:-0.02em;">{hero}</p>
+        <p style="margin:16px 0 0 0;color:#fff;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;">{year} &nbsp;&middot;&nbsp; PREMIUM LOOPS &nbsp;&middot;&nbsp; STEM PACKS</p>
+      </td></tr>
+
+      <!-- BODY -->
+      <tr><td style="background:#f2ede4;padding:36px 32px 32px 32px;">
+        {_broadcast_paragraphs(body)}
+        {cta}
+      </td></tr>
+
+      {_brand_footer()}
+
+    </table>
+  </td></tr>
+</table>
+</body>
+</html>"""
+
+
+def broadcast_text(
+    subject: str,
+    body: str,
+    heading: str | None = None,
+    cta_label: str | None = None,
+    cta_url: str | None = None,
+) -> str:
+    parts = [heading or subject, "", body]
+    if cta_label and cta_url:
+        parts += ["", f"{cta_label}: {cta_url}"]
+    return "\n".join(parts) + _text_footer()
