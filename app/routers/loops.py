@@ -52,6 +52,9 @@ async def get_loop(loop_id: uuid.UUID, db: AsyncSession = Depends(get_db), user=
 @router.get("/{loop_id}/preview")
 async def stream_preview(loop_id: uuid.UUID, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
     loop = await loop_service.get_loop(db, loop_id)
+    # Same reprocessing window as the download path — preview_s3_key is NULL
+    # until the Celery job republishes the mp3.
+    loop_service.assert_loop_ready(loop)
     url = await s3_service.generate_presigned_url(loop.preview_s3_key, expiry_seconds=300)
     async def _stream():
         async with httpx.AsyncClient() as client:
@@ -78,6 +81,9 @@ async def download_loop(
 
     loop = await loop_service.get_loop(db, loop_id)
     await loop_service.check_download_entitlement(db, user, loop)
+    # Before enforce_loop_cap: a free-tier slot is a lifetime grant, so it must
+    # not be consumed for a loop that cannot actually be downloaded.
+    loop_service.assert_loop_ready(loop)
     await free_tier_service.enforce_loop_cap(db, user, loop)
 
     download_url = await s3_service.get_download_url(loop.file_s3_key, expiry_seconds=900)

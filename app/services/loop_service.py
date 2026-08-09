@@ -6,7 +6,7 @@ from app.models.loop import Loop
 from app.models.purchase import Purchase
 from app.models.user import User
 from app.schemas.loop import LoopCreate, LoopUpdate, LoopFilter
-from app.exceptions import NotFoundError, EntitlementError
+from app.exceptions import AppError, NotFoundError, EntitlementError
 from app.services import price_sync_service, s3_service
 from app.utils.audio_validator import validate_wav_upload
 from fastapi import UploadFile
@@ -113,6 +113,23 @@ async def increment_play_count(db: AsyncSession, loop_id: uuid.UUID) -> None:
     await db.commit()
 
 
+def assert_loop_ready(loop: Loop) -> None:
+    """Refuse to serve a loop whose audio is not on S3 yet.
+
+    Replacing a loop's audio (see update_loop) clears file_s3_key/preview_s3_key
+    and flips status to "processing" until the Celery job re-encrypts the upload.
+    Without this guard the download endpoint happily signs a URL for a NULL key —
+    the client gets a 200 pointing at ".../None" with null aes_key/aes_iv, which
+    fails on the device long after the request looked successful.
+    """
+    if loop.status != "ready" or not loop.file_s3_key:
+        raise AppError(
+            "This loop is still being processed and cannot be downloaded yet",
+            status_code=409,
+            data={"status": loop.status},
+        )
+
+
 async def check_download_entitlement(
     db: AsyncSession, user: User, loop: Loop
 ) -> None:
@@ -165,6 +182,12 @@ async def update_loop(
     new_desired = update_fields.pop("desired_price_usd", None)
     for field, value in update_fields.items():
         setattr(loop, field, value)
+
+    # create_loop keeps is_paid as the inverse of is_free; the update path has to
+    # do the same or a loop switched to free keeps reporting is_paid=true (and
+    # vice versa), which clients use to decide whether to gate the download.
+    if "is_free" in update_fields:
+        loop.is_paid = not loop.is_free
 
     if new_desired is not None and new_desired != loop.desired_price_usd:
         loop.desired_price_usd = new_desired
