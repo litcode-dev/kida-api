@@ -230,3 +230,91 @@ async def test_failed_verification_does_not_notify_admin_inbox(client, monkeypat
     })
     assert resp.status_code == 400
     assert calls == []
+
+
+async def _verified_login(client, fake_redis, email="gone@test.com", password="pass1234",
+                          full_name="Leaving User"):
+    """Register, verify and log in, returning (user_id, access_token)."""
+    reg = await _register(client, email=email, password=password, full_name=full_name)
+    user_id = reg.json()["data"]["id"]
+    code = _stored_code(fake_redis, user_id)
+    verify = await client.post("/api/v1/auth/verify-email", json={"email": email, "code": code})
+    return user_id, verify.json()["data"]["access_token"]
+
+
+@pytest.mark.asyncio
+async def test_delete_account_notifies_admin_inbox(client, fake_redis, monkeypatch):
+    from app.tasks import notification_tasks
+
+    user_id, token = await _verified_login(client, fake_redis)
+
+    calls = []
+    monkeypatch.setattr(
+        notification_tasks.send_account_deleted_admin_notification, "delay",
+        lambda *a, **kw: calls.append(a),
+    )
+
+    resp = await client.request(
+        "DELETE",
+        "/api/v1/auth/me",
+        headers={"Authorization": f"Bearer {token}"},
+        json={},
+    )
+    assert resp.status_code == 200
+    assert len(calls) == 1
+    # Details are captured before the row is deleted and passed through by value.
+    sent_user_id, full_name, email, provider, joined_at = calls[0]
+    assert sent_user_id == user_id
+    assert full_name == "Leaving User"
+    assert email == "gone@test.com"
+    assert provider == "email"
+    assert joined_at is not None
+
+
+def test_account_deleted_admin_task_needs_no_database(monkeypatch):
+    """The task must run purely from its arguments — the user row is already gone."""
+    from app.tasks import notification_tasks
+
+    sent = []
+
+    async def _capture(**kw):
+        sent.append(kw)
+
+    monkeypatch.setattr("app.services.email_service.send_email", _capture)
+
+    notification_tasks.send_account_deleted_admin_notification(
+        "0f8fad5b-d9cb-469f-a165-70867728950e",
+        "Ghost User",
+        "ghost@test.com",
+        "google",
+        "2026-01-15T09:00:00+00:00",
+    )
+
+    assert len(sent) == 1
+    assert sent[0]["to"] == "kida.audio@gmail.com"
+    assert "ghost@test.com" in sent[0]["subject"]
+    assert "ghost@test.com" in sent[0]["text"]
+    assert "Ghost User" in sent[0]["text"]
+    assert "google" in sent[0]["text"]
+    assert "Jan 15, 2026" in sent[0]["text"]
+
+
+def test_account_deleted_admin_task_skipped_without_recipient(monkeypatch):
+    from app.config import get_settings
+    from app.tasks import notification_tasks
+
+    sent = []
+
+    async def _capture(**kw):
+        sent.append(kw)
+
+    monkeypatch.setattr("app.services.email_service.send_email", _capture)
+    get_settings.cache_clear()
+    monkeypatch.setenv("ADMIN_NOTIFICATION_EMAIL", "")
+    try:
+        notification_tasks.send_account_deleted_admin_notification(
+            "abc", "Ghost", "ghost@test.com", "email", None,
+        )
+        assert sent == []
+    finally:
+        get_settings.cache_clear()

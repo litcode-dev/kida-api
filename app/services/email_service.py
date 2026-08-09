@@ -456,6 +456,115 @@ def account_deleted_text(full_name: str) -> str:
     )
 
 
+def account_deleted_admin_html(
+    full_name: str,
+    email: str,
+    provider: str,
+    user_id: str,
+    joined_at: datetime | None,
+    deleted_at: datetime,
+) -> str:
+    """Internal account-deletion notification — the counterpart to new_user_admin_html.
+
+    The account is already gone by the time this is built, so every value is
+    passed in rather than looked up.
+    """
+    when = deleted_at.strftime("%b %d, %Y at %H:%M UTC")
+    joined = joined_at.strftime("%b %d, %Y") if joined_at else "unknown"
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#e8e3d9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#e8e3d9;">
+  <tr><td align="center" style="padding:32px 16px;">
+    <table width="520" cellpadding="0" cellspacing="0" style="max-width:520px;width:100%;">
+
+      <!-- HEADER -->
+      <tr><td style="background:#0a0a0a;padding:24px 32px;border-radius:8px 8px 0 0;">
+        <table width="100%" cellpadding="0" cellspacing="0">
+          <tr>
+            <td style="color:#fff;font-size:11px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;">KIDA</td>
+            <td align="right" style="color:#fff;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;">ACCOUNT DELETED</td>
+          </tr>
+        </table>
+      </td></tr>
+
+      <!-- BODY -->
+      <tr><td style="background:#f2ede4;padding:32px;">
+        <p style="margin:0 0 24px 0;font-size:17px;font-weight:700;color:#0a0a0a;">
+          {full_name} deleted their account.
+        </p>
+        <table width="100%" cellpadding="0" cellspacing="0" style="font-size:14px;color:#333;">
+          <tr>
+            <td style="padding:8px 0;width:110px;color:#888;font-size:11px;letter-spacing:0.1em;text-transform:uppercase;">Name</td>
+            <td style="padding:8px 0;">{full_name}</td>
+          </tr>
+          <tr>
+            <td style="padding:8px 0;color:#888;font-size:11px;letter-spacing:0.1em;text-transform:uppercase;">Email</td>
+            <td style="padding:8px 0;">{email}</td>
+          </tr>
+          <tr>
+            <td style="padding:8px 0;color:#888;font-size:11px;letter-spacing:0.1em;text-transform:uppercase;">Signed up via</td>
+            <td style="padding:8px 0;">{provider}</td>
+          </tr>
+          <tr>
+            <td style="padding:8px 0;color:#888;font-size:11px;letter-spacing:0.1em;text-transform:uppercase;">Joined</td>
+            <td style="padding:8px 0;">{joined}</td>
+          </tr>
+          <tr>
+            <td style="padding:8px 0;color:#888;font-size:11px;letter-spacing:0.1em;text-transform:uppercase;">Deleted</td>
+            <td style="padding:8px 0;">{when}</td>
+          </tr>
+          <tr>
+            <td style="padding:8px 0;color:#888;font-size:11px;letter-spacing:0.1em;text-transform:uppercase;">User ID</td>
+            <td style="padding:8px 0;font-family:monospace;font-size:12px;color:#666;">{user_id}</td>
+          </tr>
+        </table>
+        <p style="margin:24px 0 0 0;font-size:13px;line-height:1.6;color:#666;">
+          The account and all its data have been removed. This record is the only
+          trace left — the user row no longer exists.
+        </p>
+      </td></tr>
+
+      <!-- FOOTER -->
+      <tr><td style="background:#0a0a0a;padding:20px 32px;border-radius:0 0 8px 8px;">
+        <p style="margin:0;font-size:11px;color:#aaa;">
+          Automated notification from the Kida API. Not a customer email.
+        </p>
+      </td></tr>
+
+    </table>
+  </td></tr>
+</table>
+</body>
+</html>"""
+
+
+def account_deleted_admin_text(
+    full_name: str,
+    email: str,
+    provider: str,
+    user_id: str,
+    joined_at: datetime | None,
+    deleted_at: datetime,
+) -> str:
+    when = deleted_at.strftime("%b %d, %Y at %H:%M UTC")
+    joined = joined_at.strftime("%b %d, %Y") if joined_at else "unknown"
+    return (
+        f"{full_name} deleted their Kida account.\n\n"
+        f"Name:          {full_name}\n"
+        f"Email:         {email}\n"
+        f"Signed up via: {provider}\n"
+        f"Joined:        {joined}\n"
+        f"Deleted:       {when}\n"
+        f"User ID:       {user_id}\n\n"
+        f"The account and all its data have been removed. This record is the only\n"
+        f"trace left — the user row no longer exists.\n\n"
+        f"---\n"
+        f"Automated notification from the Kida API. Not a customer email."
+    )
+
+
 def purchase_html(full_name: str, product_title: str, product_type: str, amount: str) -> str:
     return f"""<!DOCTYPE html>
 <html lang="en">

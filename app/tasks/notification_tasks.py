@@ -110,6 +110,55 @@ def send_new_user_admin_notification(user_id: str):
 
 
 @celery_app.task
+def send_account_deleted_admin_notification(
+    user_id: str,
+    full_name: str,
+    email: str,
+    provider: str,
+    joined_at: str | None,
+):
+    """Tell the team inbox that a user deleted their account.
+
+    Unlike the signup notification, nothing can be looked up here — the user row
+    is gone by the time this runs, so the caller passes every detail through.
+    ``joined_at`` is an ISO-8601 string because Celery serializes args as JSON.
+    Silently skipped when ADMIN_NOTIFICATION_EMAIL is blank.
+    """
+    log.info("account_deleted_admin_email.task_started", user_id=user_id)
+
+    async def _run():
+        from datetime import datetime, timezone
+        from app.config import get_settings
+        from app.services.email_service import (
+            send_email, account_deleted_admin_html, account_deleted_admin_text,
+        )
+
+        recipient = get_settings().admin_notification_email
+        if not recipient:
+            log.info("account_deleted_admin_email.skipped", reason="no recipient configured")
+            return
+
+        fields = dict(
+            full_name=full_name,
+            email=email,
+            provider=provider,
+            user_id=user_id,
+            joined_at=datetime.fromisoformat(joined_at) if joined_at else None,
+            deleted_at=datetime.now(timezone.utc),
+        )
+        log.info("account_deleted_admin_email.sending", user_id=user_id, to=recipient)
+        await send_email(
+            to=recipient,
+            subject=f"Kida account deleted — {email}",
+            html=account_deleted_admin_html(**fields),
+            text=account_deleted_admin_text(**fields),
+        )
+        log.info("account_deleted_admin_email.done", user_id=user_id, to=recipient)
+
+    asyncio.run(_run())
+
+
+@celery_app.task
 def send_purchase_confirmation(user_id: str, purchase_id: str):
     async def _run():
         from app.database import AsyncSessionLocal
