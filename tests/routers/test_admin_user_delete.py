@@ -18,6 +18,16 @@ from app.models.user import User, UserRole
 from app.services.auth_service import create_access_token, hash_password
 
 
+@pytest.fixture(autouse=True)
+def _no_s3(monkeypatch):
+    """Deleting an account now sweeps its S3 objects; nothing here asserts on
+    that, so keep the storage call out of the tests entirely."""
+    async def _noop(key):
+        return None
+
+    monkeypatch.setattr("app.services.s3_service.delete_object", _noop)
+
+
 async def _make_user(db, role=UserRole.user):
     user = User(
         id=uuid.uuid4(),

@@ -7,7 +7,7 @@ import bcrypt
 import structlog
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, func
 from sqlalchemy.exc import IntegrityError
 from app.config import get_settings
 from app.models.user import User, UserRole
@@ -458,6 +458,81 @@ async def purge_expired_accounts(db: AsyncSession, redis: Redis) -> list[str]:
     return purged
 
 
+async def _loop_s3_keys(db: AsyncSession, loop_ids) -> list[str]:
+    from app.models.loop import Loop
+    from app.services import s3_service
+
+    rows = await db.execute(
+        select(Loop.id, Loop.file_s3_key, Loop.preview_s3_key, Loop.thumbnail_s3_key)
+        .where(Loop.id.in_(loop_ids))
+    )
+    keys: list[str] = []
+    for loop_id, *stored in rows:
+        keys += [k for k in stored if k]
+        # The raw upload is deleted by the processing job on success, but a loop
+        # stuck mid-processing still has one.
+        keys.append(s3_service.s3_key_for_raw_loop(str(loop_id)))
+    return keys
+
+
+async def _stem_s3_keys(db: AsyncSession, stem_pack_ids) -> list[str]:
+    from app.models.stem_pack import Stem
+
+    rows = await db.execute(
+        select(Stem.file_s3_key, Stem.preview_s3_key)
+        .where(Stem.stem_pack_id.in_(stem_pack_ids))
+    )
+    return [k for row in rows for k in row if k]
+
+
+async def _drum_kit_s3_keys(db: AsyncSession, drum_kit_ids) -> list[str]:
+    from app.models.drum_kit import DrumKit, DrumSample
+    from app.services import s3_service
+
+    keys = [
+        k for k in await db.scalars(
+            select(DrumKit.thumbnail_s3_key).where(DrumKit.id.in_(drum_kit_ids))
+        ) if k
+    ]
+    rows = await db.execute(
+        select(DrumSample.id, DrumSample.file_s3_key, DrumSample.preview_s3_key)
+        .where(DrumSample.drum_kit_id.in_(drum_kit_ids))
+    )
+    for sample_id, *stored in rows:
+        keys += [k for k in stored if k]
+        keys.append(s3_service.s3_key_for_raw_drum_sample(str(sample_id)))
+    return keys
+
+
+async def _drone_s3_keys(db: AsyncSession, drone_ids) -> list[str]:
+    from app.models.drone_pad import DronePad
+    from app.services import s3_service
+
+    rows = await db.execute(
+        select(DronePad.file_s3_key, DronePad.preview_s3_key, DronePad.thumbnail_s3_key)
+        .where(DronePad.drone_id.in_(drone_ids))
+    )
+    keys = [k for row in rows for k in row if k]
+    keys += [s3_service.s3_key_for_raw_drone(str(drone_id)) for drone_id in drone_ids]
+    return keys
+
+
+async def _delete_s3_objects(keys: list[str], user_id: str) -> None:
+    """Best-effort removal of a purged user's files.
+
+    Runs after the database transaction has committed, so a storage failure
+    leaves an orphaned object rather than a half-deleted account. Failures are
+    logged with the key so they can be swept up later.
+    """
+    from app.services import s3_service
+
+    for key in dict.fromkeys(k for k in keys if k):  # dedupe, keep order
+        try:
+            await s3_service.delete_object(key)
+        except Exception as exc:  # noqa: BLE001 - one object must not stop the rest
+            log.error("account_purge.s3_delete_failed", user_id=user_id, key=key, error=str(exc))
+
+
 async def delete_user(
     db: AsyncSession,
     user: User,
@@ -479,8 +554,9 @@ async def delete_user(
     from app.models.iap_subscription import IapSubscription
     from app.models.loop import Loop
     from app.models.stem_pack import StemPack, Stem
-    from app.models.drum_kit import DrumKit
+    from app.models.drum_kit import DrumKit, DrumSample
     from app.models.drone_pad import DronePadCategory, Drone, DronePad
+    from app.models.app_download_request import AppDownloadRequest
 
     if refresh_token:
         await revoke_refresh_token(redis, refresh_token)
@@ -503,9 +579,29 @@ async def delete_user(
     # otherwise fail the users delete below with a foreign-key violation.
     await db.execute(delete(IapSubscription).where(IapSubscription.user_id == uid))
 
+    # The address itself is personal data and lives outside the users table too.
+    # Both are keyed on the email rather than a user id, and neither is matched
+    # case-sensitively when it is written, so compare lowercased.
+    await db.execute(
+        delete(NewsletterSubscriber).where(
+            func.lower(NewsletterSubscriber.email) == user_email.lower()
+        )
+    )
+    await db.execute(
+        delete(AppDownloadRequest).where(
+            func.lower(AppDownloadRequest.email) == user_email.lower()
+        )
+    )
+
+    # S3 objects are collected while the rows still exist and deleted after the
+    # transaction commits — an object delete cannot be rolled back, so it must
+    # not run before the database says the account is really gone.
+    s3_keys: list[str] = []
+
     # Producer content created by the user — delete children before parents
     loop_ids = (await db.scalars(select(Loop.id).where(Loop.created_by == uid))).all()
     if loop_ids:
+        s3_keys += await _loop_s3_keys(db, loop_ids)
         await db.execute(delete(Download).where(Download.loop_id.in_(loop_ids)))
         await db.execute(delete(Like).where(Like.loop_id.in_(loop_ids)))
         await db.execute(delete(Purchase).where(Purchase.loop_id.in_(loop_ids)))
@@ -513,6 +609,7 @@ async def delete_user(
 
     stem_pack_ids = (await db.scalars(select(StemPack.id).where(StemPack.created_by == uid))).all()
     if stem_pack_ids:
+        s3_keys += await _stem_s3_keys(db, stem_pack_ids)
         await db.execute(delete(Stem).where(Stem.stem_pack_id.in_(stem_pack_ids)))
         await db.execute(delete(Purchase).where(Purchase.stem_pack_id.in_(stem_pack_ids)))
         await db.execute(delete(Like).where(Like.stem_pack_id.in_(stem_pack_ids)))
@@ -520,6 +617,8 @@ async def delete_user(
 
     drum_kit_ids = (await db.scalars(select(DrumKit.id).where(DrumKit.created_by == uid))).all()
     if drum_kit_ids:
+        s3_keys += await _drum_kit_s3_keys(db, drum_kit_ids)
+        await db.execute(delete(DrumSample).where(DrumSample.drum_kit_id.in_(drum_kit_ids)))
         await db.execute(delete(Download).where(Download.drum_kit_id.in_(drum_kit_ids)))
         await db.execute(delete(Purchase).where(Purchase.drum_kit_id.in_(drum_kit_ids)))
         await db.execute(delete(DrumKit).where(DrumKit.id.in_(drum_kit_ids)))
@@ -536,6 +635,7 @@ async def delete_user(
     drone_ids = (await db.scalars(select(Drone.id).where(drone_criteria))).all()
 
     if drone_ids:
+        s3_keys += await _drone_s3_keys(db, drone_ids)
         drone_pad_ids = (await db.scalars(select(DronePad.id).where(DronePad.drone_id.in_(drone_ids)))).all()
         if drone_pad_ids:
             await db.execute(delete(Download).where(Download.drone_pad_id.in_(drone_pad_ids)))
@@ -551,6 +651,9 @@ async def delete_user(
     # The suspension flag is mirrored in Redis by the admin suspend endpoint and
     # is not covered by the database delete.
     await redis.delete(f"suspended:{uid}")
+
+    # Only now that the rows are really gone.
+    await _delete_s3_objects(s3_keys, str(uid))
 
     from app.services.email_service import send_email, account_deleted_html, account_deleted_text
     await send_email(
