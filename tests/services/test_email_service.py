@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from app.services.email_service import (
     registration_html, app_download_html, app_download_text,
     new_user_admin_html, new_user_admin_text,
+    account_deleted_admin_html, account_deleted_admin_text,
 )
 
 _SIGNED_UP_AT = datetime(2026, 6, 22, 14, 30, tzinfo=timezone.utc)
@@ -96,3 +97,51 @@ def test_new_user_admin_text_contains_signup_details():
     assert "email" in txt
     assert "0f8fad5b-d9cb-469f-a165-70867728950e" in txt
     assert "Jun 22, 2026 at 14:30 UTC" in txt
+
+
+_JOINED_AT = datetime(2026, 1, 15, 9, 0, tzinfo=timezone.utc)
+_DELETED_AT = datetime(2026, 8, 9, 11, 5, tzinfo=timezone.utc)
+
+
+def test_account_deleted_admin_html_contains_details():
+    html = account_deleted_admin_html(
+        full_name="Ada Lovelace",
+        email="ada@test.com",
+        provider="apple",
+        user_id="0f8fad5b-d9cb-469f-a165-70867728950e",
+        joined_at=_JOINED_AT,
+        deleted_at=_DELETED_AT,
+    )
+    assert "Ada Lovelace deleted their account." in html
+    assert "ada@test.com" in html
+    assert "apple" in html
+    assert "0f8fad5b-d9cb-469f-a165-70867728950e" in html
+    assert "Jan 15, 2026" in html
+    assert "Aug 09, 2026 at 11:05 UTC" in html
+    assert "ACCOUNT DELETED" in html
+    assert "Unsubscribe" not in html
+
+
+def test_account_deleted_admin_handles_unknown_join_date():
+    kwargs = dict(
+        full_name="Ada", email="ada@test.com", provider="email",
+        user_id="abc", joined_at=None, deleted_at=_DELETED_AT,
+    )
+    assert "unknown" in account_deleted_admin_html(**kwargs)
+    assert "unknown" in account_deleted_admin_text(**kwargs)
+
+
+def test_account_deleted_admin_text_contains_details():
+    txt = account_deleted_admin_text(
+        full_name="Ada Lovelace",
+        email="ada@test.com",
+        provider="google",
+        user_id="0f8fad5b-d9cb-469f-a165-70867728950e",
+        joined_at=_JOINED_AT,
+        deleted_at=_DELETED_AT,
+    )
+    assert "Ada Lovelace deleted their Kida account." in txt
+    assert "ada@test.com" in txt
+    assert "google" in txt
+    assert "Jan 15, 2026" in txt
+    assert "Aug 09, 2026 at 11:05 UTC" in txt

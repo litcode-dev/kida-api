@@ -311,9 +311,12 @@ async def delete_user(db: AsyncSession, user: User, redis: Redis, refresh_token:
     if refresh_token:
         await revoke_refresh_token(redis, refresh_token)
 
+    # Read everything the notifications need before the row is deleted.
     user_email = user.email
     user_full_name = user.full_name
     uid = user.id
+    user_provider = user.oauth_provider or "email"
+    user_joined_at = user.created_at
 
     # Transactional records owned by the user
     await db.execute(delete(AIGeneration).where(AIGeneration.user_id == uid))
@@ -365,6 +368,16 @@ async def delete_user(db: AsyncSession, user: User, redis: Redis, refresh_token:
         html=account_deleted_html(user_full_name),
         text=account_deleted_text(user_full_name),
     )
+
+    from app.tasks.notification_tasks import send_account_deleted_admin_notification
+    send_account_deleted_admin_notification.delay(
+        str(uid),
+        user_full_name,
+        user_email,
+        user_provider,
+        user_joined_at.isoformat() if user_joined_at else None,
+    )
+    log.info("account_deleted", user_id=str(uid), email=user_email)
 
 
 async def get_user_by_id(db: AsyncSession, user_id: str) -> User:
