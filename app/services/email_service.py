@@ -1149,3 +1149,111 @@ def broadcast_text(
     if cta_label and cta_url:
         parts += ["", f"{cta_label}: {cta_url}"]
     return "\n".join(parts) + _text_footer()
+
+
+def _simple_notice_html(tag: str, hero_top: str, hero_accent: str, paragraphs: str) -> str:
+    """Shared shell for the short account-status notices."""
+    year = datetime.now(timezone.utc).year
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#e8e3d9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#e8e3d9;">
+  <tr><td align="center" style="padding:32px 16px;">
+    <table width="520" cellpadding="0" cellspacing="0" style="max-width:520px;width:100%;">
+
+      <!-- HEADER -->
+      <tr><td style="background:#0a0a0a;padding:24px 32px 0 32px;border-radius:8px 8px 0 0;">
+        <table width="100%" cellpadding="0" cellspacing="0">
+          <tr>
+            <td style="color:#fff;font-size:11px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;">KIDA</td>
+            <td align="right" style="color:#fff;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;">{tag}</td>
+          </tr>
+        </table>
+      </td></tr>
+
+      <!-- HERO -->
+      <tr><td style="background:#0a0a0a;padding:32px 32px 28px 32px;border-bottom:1px solid #1f1f1f;">
+        <p style="margin:0;font-size:40px;font-weight:800;line-height:1.08;color:#fff;letter-spacing:-0.02em;">{hero_top}</p>
+        <p style="margin:0;font-size:40px;font-weight:800;line-height:1.08;color:#1FBF62;letter-spacing:-0.02em;">{hero_accent}</p>
+        <p style="margin:16px 0 0 0;color:#fff;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;">{year} &nbsp;&middot;&nbsp; KIDA ACCOUNT</p>
+      </td></tr>
+
+      <!-- BODY -->
+      <tr><td style="background:#f2ede4;padding:36px 32px 32px 32px;">
+        {paragraphs}
+      </td></tr>
+
+      {_brand_footer()}
+
+    </table>
+  </td></tr>
+</table>
+</body>
+</html>"""
+
+
+def account_deletion_scheduled_html(full_name: str, purge_due_at: datetime) -> str:
+    due = purge_due_at.strftime("%b %d, %Y")
+    paragraphs = (
+        f'<p style="margin:0 0 8px 0;font-size:17px;font-weight:700;color:#0a0a0a;">Hi {full_name},</p>'
+        '<p style="margin:0 0 20px 0;font-size:15px;line-height:1.6;color:#333;">'
+        "Your Kida account has been scheduled for deletion and is no longer usable. "
+        f"On <strong>{due}</strong> it and all your data will be permanently removed."
+        "</p>"
+        '<p style="margin:0 0 20px 0;font-size:15px;line-height:1.6;color:#333;">'
+        "Changed your mind? Sign in again with the same email and password before that "
+        "date and your account comes back exactly as you left it. After that date it "
+        "cannot be recovered."
+        "</p>"
+        '<a href="https://kida.litcode.com.ng" '
+        'style="display:inline-block;padding:14px 28px;background:#0a0a0a;color:#fff;'
+        'font-size:14px;font-weight:700;text-decoration:none;border-radius:4px;'
+        'letter-spacing:0.02em;">Sign back in &rarr;</a>'
+    )
+    return _simple_notice_html("ACCOUNT DELETION", "Scheduled for", "deletion.", paragraphs)
+
+
+def account_deletion_scheduled_text(full_name: str, purge_due_at: datetime) -> str:
+    due = purge_due_at.strftime("%b %d, %Y")
+    return (
+        f"Hi {full_name},\n\n"
+        f"Your Kida account has been scheduled for deletion and is no longer usable.\n"
+        f"On {due} it and all your data will be permanently removed.\n\n"
+        f"Changed your mind? Sign in again with the same email and password before that\n"
+        f"date and your account comes back exactly as you left it. After that date it\n"
+        f"cannot be recovered.\n\n"
+        f"Sign back in: https://kida.litcode.com.ng"
+        + _text_footer()
+    )
+
+
+def account_restored_html(full_name: str) -> str:
+    paragraphs = (
+        f'<p style="margin:0 0 8px 0;font-size:17px;font-weight:700;color:#0a0a0a;">Hi {full_name},</p>'
+        '<p style="margin:0 0 20px 0;font-size:15px;line-height:1.6;color:#333;">'
+        "Good to have you back. The deletion scheduled for your Kida account has been "
+        "cancelled and everything is exactly where you left it — your purchases, "
+        "downloads and library are untouched."
+        "</p>"
+        '<p style="margin:0 0 20px 0;font-size:15px;line-height:1.6;color:#333;">'
+        "If this was not you, change your password straight away."
+        "</p>"
+        '<a href="https://kida.litcode.com.ng" '
+        'style="display:inline-block;padding:14px 28px;background:#0a0a0a;color:#fff;'
+        'font-size:14px;font-weight:700;text-decoration:none;border-radius:4px;'
+        'letter-spacing:0.02em;">Browse Loops &rarr;</a>'
+    )
+    return _simple_notice_html("ACCOUNT RESTORED", "Welcome", "back.", paragraphs)
+
+
+def account_restored_text(full_name: str) -> str:
+    return (
+        f"Hi {full_name},\n\n"
+        f"Good to have you back. The deletion scheduled for your Kida account has been\n"
+        f"cancelled and everything is exactly where you left it — your purchases,\n"
+        f"downloads and library are untouched.\n\n"
+        f"If this was not you, change your password straight away.\n\n"
+        f"Browse: https://kida.litcode.com.ng"
+        + _text_footer()
+    )

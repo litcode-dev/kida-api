@@ -120,6 +120,9 @@ async def refresh(
     if user.is_suspended:
         from app.exceptions import UnauthorizedError
         raise UnauthorizedError("Account suspended")
+    if user.deleted_at is not None:
+        from app.exceptions import UnauthorizedError
+        raise UnauthorizedError("Account pending deletion")
     await auth_service.revoke_refresh_token(redis, body.refresh_token)
     new_refresh = auth_service.create_refresh_token()
     await auth_service.store_refresh_token(redis, new_refresh, user_id)
@@ -148,9 +151,14 @@ async def me(user=Depends(get_current_user)):
     "/me",
     summary="Delete account",
     description=(
-        "Permanently deletes the authenticated user's account and all associated data. "
-        "Pass `refresh_token` in the body to also revoke the current session. "
-        "This action is irreversible."
+        "Schedules the authenticated user's account for deletion. Access stops "
+        "immediately — the session is signed out and the account cannot be used — "
+        "but nothing is erased yet.\n\n"
+        "The account and all associated data are permanently removed once the grace "
+        "window closes; `purge_due_at` in the response says when. Until then the user "
+        "can undo this by signing in again with the same credentials, which restores "
+        "the account as it was. Pass `refresh_token` in the body to revoke the current "
+        "session as well."
     ),
     responses={401: {"description": "Missing or invalid token"}},
 )
@@ -160,8 +168,15 @@ async def delete_account(
     redis: Redis = Depends(get_redis),
     user=Depends(get_current_user),
 ):
-    await auth_service.delete_user(db, user, redis, body.refresh_token)
-    return success(message="Account deleted")
+    due = await auth_service.soft_delete_user(db, user, redis, body.refresh_token)
+    return success(
+        {
+            "purge_due_at": due.isoformat(),
+            "grace_days": auth_service.deletion_grace_days(),
+            "restorable": True,
+        },
+        "Account scheduled for deletion. Sign in again before the grace period ends to restore it.",
+    )
 
 
 @router.get("/oauth/google")

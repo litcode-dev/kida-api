@@ -63,6 +63,11 @@ class Settings(BaseSettings):
     onesignal_app_id: str
     onesignal_api_key: str
 
+    # Account deletion
+    # Days a self-deleted account stays restorable before the purge job removes
+    # it for good. Must stay in step with the deletion copy shown in-app.
+    account_deletion_grace_days: int = 30
+
     # JWT
     access_token_expire_minutes: int = 15
     refresh_token_expire_days: int = 30

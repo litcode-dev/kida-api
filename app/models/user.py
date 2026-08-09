@@ -39,4 +39,10 @@ class User(Base):
     ai_extra_credits: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     is_suspended: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     suspension_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # Set when the user asks to delete their account. The row survives until the
+    # grace window closes and the purge job removes it for real; until then the
+    # account is unusable but restorable by logging back in.
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
     is_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)

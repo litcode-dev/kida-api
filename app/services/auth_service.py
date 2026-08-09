@@ -102,6 +102,23 @@ async def register_user(
     The account cannot log in until the email is verified (see verify_email).
     """
     existing = await db.scalar(select(User).where(User.email == email))
+    if existing is not None and within_deletion_grace(existing.deleted_at):
+        # The address belongs to an account waiting to be purged. Treat this as
+        # the owner coming back rather than a duplicate: reset the credentials
+        # and re-issue a code, but leave deleted_at set — verify_email restores
+        # the account only once the code proves they still hold the inbox.
+        existing.password_hash = await hash_password(password)
+        existing.full_name = full_name
+        existing.is_verified = False
+        await db.commit()
+        await db.refresh(existing)
+        code = await issue_verification_code(redis, str(existing.id))
+        await _start_cooldown(redis, str(existing.id))
+        log.info(
+            "verification_code.issued_for_returning_user",
+            user_id=str(existing.id), email=existing.email,
+        )
+        return existing, code
     if existing:
         raise ConflictError("Email already registered")
     user = User(
@@ -140,10 +157,18 @@ async def verify_email(db: AsyncSession, redis: Redis, email: str, code: str) ->
         raise AppError("Invalid or expired verification code", status_code=400)
 
     user.is_verified = True
+    # A returning user re-registered against an account still inside its grace
+    # window; the code they just entered proves the inbox is theirs, so the
+    # pending deletion is taken back here rather than at registration.
+    was_pending_deletion = user.deleted_at is not None
+    if was_pending_deletion:
+        user.deleted_at = None
     await db.commit()
     await db.refresh(user)
     await redis.delete(key)
     await redis.delete(f"{VERIFY_COOLDOWN_PREFIX}{user.id}")
+    if was_pending_deletion:
+        log.info("account_restored_on_verify", user_id=str(user.id), email=user.email)
 
     from app.tasks.notification_tasks import (
         send_registration_email, send_new_user_admin_notification,
@@ -203,6 +228,13 @@ async def authenticate_user(db: AsyncSession, email: str, password: str) -> User
     if user.is_suspended:
         msg = f"Account suspended: {user.suspension_reason}" if user.suspension_reason else "Account suspended"
         raise UnauthorizedError(msg)
+    if user.deleted_at is not None:
+        # Signing back in during the grace window is how a user takes their
+        # deletion back. Past the window the account is owed deletion, so the
+        # password must stop working even if the purge job has not run yet.
+        if not within_deletion_grace(user.deleted_at):
+            raise UnauthorizedError("Invalid credentials")
+        await restore_user(db, user)
     if not user.is_verified:
         raise EmailNotVerifiedError("Please verify your email before logging in")
     return user
@@ -216,6 +248,20 @@ async def is_newsletter_subscriber(db: AsyncSession, email: str) -> bool:
         )
     )
     return row is not None
+
+
+async def _restore_if_returning(db: AsyncSession, user: User) -> None:
+    """Undo a pending deletion for an OAuth user signing back in.
+
+    The provider has just confirmed the address, so this is the same "changed
+    my mind" signal a password login gives. Past the grace window the account
+    is owed deletion and the sign-in is refused instead.
+    """
+    if user.deleted_at is None:
+        return
+    if not within_deletion_grace(user.deleted_at):
+        raise UnauthorizedError("Invalid credentials")
+    await restore_user(db, user)
 
 
 async def find_or_create_oauth_user(
@@ -237,6 +283,7 @@ async def find_or_create_oauth_user(
         if user.is_suspended:
             msg = f"Account suspended: {user.suspension_reason}" if user.suspension_reason else "Account suspended"
             raise UnauthorizedError(msg)
+        await _restore_if_returning(db, user)
         if avatar_url and user.avatar_url != avatar_url:
             user.avatar_url = avatar_url
             await db.commit()
@@ -249,6 +296,7 @@ async def find_or_create_oauth_user(
         if user.is_suspended:
             msg = f"Account suspended: {user.suspension_reason}" if user.suspension_reason else "Account suspended"
             raise UnauthorizedError(msg)
+        await _restore_if_returning(db, user)
         user.oauth_provider = provider
         user.oauth_provider_id = provider_id
         # The provider confirmed this email, so linking it verifies the account.
@@ -295,6 +343,105 @@ async def find_or_create_oauth_user(
             await db.commit()
             await db.refresh(user)
         return user
+
+
+def deletion_grace_days() -> int:
+    return get_settings().account_deletion_grace_days
+
+
+def purge_due_at(deleted_at: datetime) -> datetime:
+    """When a soft-deleted account becomes eligible for permanent removal."""
+    if deleted_at.tzinfo is None:
+        deleted_at = deleted_at.replace(tzinfo=timezone.utc)
+    return deleted_at + timedelta(days=deletion_grace_days())
+
+
+def within_deletion_grace(deleted_at: datetime | None) -> bool:
+    """True while a soft-deleted account can still be restored."""
+    if deleted_at is None:
+        return False
+    return datetime.now(timezone.utc) < purge_due_at(deleted_at)
+
+
+async def soft_delete_user(
+    db: AsyncSession, user: User, redis: Redis, refresh_token: str | None
+) -> datetime:
+    """Mark an account for deletion and return the date it will be purged.
+
+    Nothing is removed yet — the row is kept so the user can change their mind
+    by signing back in (see authenticate_user). Access is cut off immediately:
+    the session's refresh token is revoked and get_current_user rejects the
+    account, so an unexpired access token cannot outlive the request.
+    """
+    now = datetime.now(timezone.utc)
+    user.deleted_at = now
+    await db.commit()
+    await db.refresh(user)
+
+    if refresh_token:
+        await revoke_refresh_token(redis, refresh_token)
+
+    due = purge_due_at(now)
+    from app.services.email_service import (
+        send_email, account_deletion_scheduled_html, account_deletion_scheduled_text,
+    )
+    await send_email(
+        to=user.email,
+        subject="Your Kida account is scheduled for deletion",
+        html=account_deletion_scheduled_html(user.full_name, due),
+        text=account_deletion_scheduled_text(user.full_name, due),
+    )
+    log.info(
+        "account_deletion_scheduled",
+        user_id=str(user.id), email=user.email, purge_due_at=due.isoformat(),
+    )
+    return due
+
+
+async def restore_user(db: AsyncSession, user: User) -> User:
+    """Take back a pending deletion, putting the account straight back into use."""
+    user.deleted_at = None
+    await db.commit()
+    await db.refresh(user)
+    log.info("account_restored", user_id=str(user.id), email=user.email)
+
+    from app.services.email_service import (
+        send_email, account_restored_html, account_restored_text,
+    )
+    await send_email(
+        to=user.email,
+        subject="Your Kida account is back",
+        html=account_restored_html(user.full_name),
+        text=account_restored_text(user.full_name),
+    )
+    return user
+
+
+async def purge_expired_accounts(db: AsyncSession, redis: Redis) -> list[str]:
+    """Hard-delete every account whose grace window has closed.
+
+    Returns the ids purged. Each account is deleted independently so one
+    failure cannot strand the rest.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(days=deletion_grace_days())
+    users = (
+        await db.scalars(
+            select(User).where(User.deleted_at.is_not(None), User.deleted_at <= cutoff)
+        )
+    ).all()
+
+    purged: list[str] = []
+    for user in users:
+        uid = str(user.id)
+        try:
+            await delete_user(db, user, redis, None, actor="user")
+            purged.append(uid)
+        except Exception as exc:  # noqa: BLE001 - one bad row must not stop the sweep
+            await db.rollback()
+            log.error("account_purge_failed", user_id=uid, error=str(exc))
+    if purged:
+        log.info("accounts_purged", count=len(purged))
+    return purged
 
 
 async def delete_user(

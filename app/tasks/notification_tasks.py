@@ -233,7 +233,10 @@ def send_new_content_emails(title: str, content_type: str):
         text = new_content_text(title, content_type)
 
         async with AsyncSessionLocal() as db:
-            user_emails = set(await db.scalars(select(User.email)))
+            # Accounts pending deletion are excluded — they asked to leave.
+            user_emails = set(
+                await db.scalars(select(User.email).where(User.deleted_at.is_(None)))
+            )
             subscriber_emails = set(await db.scalars(
                 select(NewsletterSubscriber.email).where(NewsletterSubscriber.is_active == True)
             ))
@@ -373,5 +376,32 @@ def send_broadcast_email(
             subject=subject,
             recipients=len(recipients),
         )
+
+    asyncio.run(_run())
+
+
+@celery_app.task
+def purge_expired_deleted_accounts():
+    """Permanently remove accounts whose deletion grace window has closed.
+
+    Runs on the beat schedule. Soft-deleted accounts stay restorable until
+    ACCOUNT_DELETION_GRACE_DAYS have passed; this is what finally erases them.
+    """
+    log.info("account_purge.task_started")
+
+    async def _run():
+        from redis.asyncio import Redis
+        from app.config import get_settings
+        from app.database import AsyncSessionLocal
+        from app.services import auth_service
+
+        redis = Redis.from_url(get_settings().redis_url, decode_responses=True)
+        try:
+            async with AsyncSessionLocal() as db:
+                purged = await auth_service.purge_expired_accounts(db, redis)
+        finally:
+            await redis.aclose()
+
+        log.info("account_purge.done", purged=len(purged))
 
     asyncio.run(_run())

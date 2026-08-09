@@ -24,6 +24,10 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.download_tasks.cleanup_expired_downloads",
         "schedule": 3600.0,
     },
+    "purge-expired-deleted-accounts-daily": {
+        "task": "app.tasks.notification_tasks.purge_expired_deleted_accounts",
+        "schedule": 86400.0,
+    },
     "reconcile-store-prices": {
         "task": "app.tasks.price_sync_tasks.reconcile_store_prices",
         "schedule": float(settings.price_sync_interval_seconds),

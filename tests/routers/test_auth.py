@@ -1,3 +1,5 @@
+import uuid
+
 import pytest
 
 from app.services.auth_service import VERIFY_PREFIX, VERIFY_COOLDOWN_PREFIX
@@ -243,7 +245,11 @@ async def _verified_login(client, fake_redis, email="gone@test.com", password="p
 
 
 @pytest.mark.asyncio
-async def test_delete_account_notifies_admin_inbox(client, fake_redis, monkeypatch):
+async def test_delete_account_defers_the_admin_notification_until_purge(
+    client, fake_redis, monkeypatch
+):
+    """DELETE /auth/me only schedules deletion, so the team inbox is told when the
+    account is actually purged — not while it can still be restored."""
     from app.tasks import notification_tasks
 
     user_id, token = await _verified_login(client, fake_redis)
@@ -261,8 +267,39 @@ async def test_delete_account_notifies_admin_inbox(client, fake_redis, monkeypat
         json={},
     )
     assert resp.status_code == 200
+    assert resp.json()["data"]["restorable"] is True
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_purging_a_deleted_account_notifies_the_admin_inbox(
+    client, db_session, fake_redis, monkeypatch
+):
+    from datetime import datetime, timedelta, timezone
+
+    from app.models.user import User
+    from app.services import auth_service
+    from app.tasks import notification_tasks
+
+    user_id, token = await _verified_login(client, fake_redis)
+
+    calls = []
+    monkeypatch.setattr(
+        notification_tasks.send_account_deleted_admin_notification, "delay",
+        lambda *a, **kw: calls.append(a),
+    )
+
+    await client.request(
+        "DELETE", "/api/v1/auth/me",
+        headers={"Authorization": f"Bearer {token}"}, json={},
+    )
+
+    user = await db_session.get(User, uuid.UUID(user_id))
+    user.deleted_at = datetime.now(timezone.utc) - timedelta(days=31)
+    await db_session.commit()
+    await auth_service.purge_expired_accounts(db_session, fake_redis)
+
     assert len(calls) == 1
-    # Details are captured before the row is deleted and passed through by value.
     sent_user_id, full_name, email, provider, joined_at, actor = calls[0]
     assert sent_user_id == user_id
     assert full_name == "Leaving User"
