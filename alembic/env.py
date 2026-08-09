@@ -52,6 +52,11 @@ def do_run_migrations(connection):
         connection=connection,
         target_metadata=target_metadata,
         on_version_apply=on_version_apply,
+        # One transaction per migration rather than one for the whole run.
+        # Postgres refuses to use an enum label in the transaction that added it,
+        # so "ALTER TYPE ... ADD VALUE" and any migration relying on the new
+        # label could not otherwise be applied in the same upgrade.
+        transaction_per_migration=True,
     )
     with context.begin_transaction():
         context.run_migrations()
