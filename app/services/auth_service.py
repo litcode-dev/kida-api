@@ -167,14 +167,28 @@ async def verify_email(db: AsyncSession, redis: Redis, email: str, code: str) ->
     await db.refresh(user)
     await redis.delete(key)
     await redis.delete(f"{VERIFY_COOLDOWN_PREFIX}{user.id}")
-    if was_pending_deletion:
-        log.info("account_restored_on_verify", user_id=str(user.id), email=user.email)
 
-    from app.tasks.notification_tasks import (
-        send_registration_email, send_new_user_admin_notification,
-    )
-    send_registration_email.delay(str(user.id))
-    send_new_user_admin_notification.delay(str(user.id))
+    if was_pending_deletion:
+        # A returning user, not a new one: send the same "welcome back" mail the
+        # login route sends, and keep them out of the new-signup notification —
+        # the account already existed.
+        log.info("account_restored_on_verify", user_id=str(user.id), email=user.email)
+        from app.services.email_service import (
+            send_email, account_restored_html, account_restored_text,
+        )
+        await send_email(
+            to=user.email,
+            subject="Your Kida account is back",
+            html=account_restored_html(user.full_name),
+            text=account_restored_text(user.full_name),
+        )
+    else:
+        from app.tasks.notification_tasks import (
+            send_registration_email, send_new_user_admin_notification,
+        )
+        send_registration_email.delay(str(user.id))
+        send_new_user_admin_notification.delay(str(user.id))
+
     log.info("email.verified", user_id=str(user.id), email=user.email)
     return user
 

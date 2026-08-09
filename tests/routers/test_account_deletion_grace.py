@@ -371,3 +371,157 @@ def test_purge_due_at_handles_a_naive_timestamp():
     """Postgres can hand back a naive datetime depending on the driver."""
     naive = datetime(2026, 8, 9, 12, 0)
     assert auth_service.purge_due_at(naive) == datetime(2026, 9, 8, 12, 0, tzinfo=timezone.utc)
+
+
+# ── The welcome-back email ───────────────────────────────────────────────────
+#
+# Every way of coming back inside the window has to tell the user, both because
+# it confirms the deletion is off and because it is the signal that something
+# is wrong if they did not do it.
+
+@pytest.mark.asyncio
+async def test_login_restore_emails_the_user(client, db_session):
+    user = await _make_user(db_session)
+    await _delete_account(client, user)
+
+    sent = []
+
+    async def _capture(**kw):
+        sent.append(kw)
+
+    with patch("app.services.email_service.send_email", new=_capture):
+        resp = await _login(client)
+
+    assert resp.status_code == 200
+    assert [s["to"] for s in sent] == ["leaver@test.com"]
+    assert sent[0]["subject"] == "Your Kida account is back"
+    assert "Leaver" in sent[0]["text"]
+    assert "cancelled" in sent[0]["text"]
+    # It doubles as a break-in warning.
+    assert "change your password" in sent[0]["text"].lower()
+
+
+@pytest.mark.asyncio
+async def test_oauth_restore_emails_the_user(db_session):
+    user = await _make_user(db_session, email="oauth@test.com")
+    user.oauth_provider = "google"
+    user.oauth_provider_id = "google-123"
+    user.deleted_at = datetime.now(timezone.utc)
+    await db_session.commit()
+
+    sent = []
+
+    async def _capture(**kw):
+        sent.append(kw)
+
+    with patch("app.services.email_service.send_email", new=_capture):
+        await auth_service.find_or_create_oauth_user(
+            db_session, email="oauth@test.com", full_name="OAuth User",
+            provider="google", provider_id="google-123",
+        )
+
+    assert [s["subject"] for s in sent] == ["Your Kida account is back"]
+
+
+@pytest.mark.asyncio
+async def test_re_registration_restore_emails_the_user(client, db_session, fake_redis):
+    user = await _make_user(db_session)
+    await _delete_account(client, user)
+    await client.post("/api/v1/auth/register", json={
+        "email": "leaver@test.com", "password": "brand-new-pass", "full_name": "Back Again",
+    })
+    code = fake_redis.store[f"{VERIFY_PREFIX}{user.id}"]
+
+    sent = []
+
+    async def _capture(**kw):
+        sent.append(kw)
+
+    with patch("app.services.email_service.send_email", new=_capture):
+        resp = await client.post("/api/v1/auth/verify-email", json={
+            "email": "leaver@test.com", "code": code,
+        })
+
+    assert resp.status_code == 200
+    assert [s["subject"] for s in sent] == ["Your Kida account is back"]
+
+
+@pytest.mark.asyncio
+async def test_returning_user_is_not_treated_as_a_new_signup(
+    client, db_session, fake_redis, monkeypatch
+):
+    """No "Welcome to Kida" and no new-signup notification — the account existed."""
+    from app.tasks import notification_tasks
+
+    user = await _make_user(db_session)
+    await _delete_account(client, user)
+    await client.post("/api/v1/auth/register", json={
+        "email": "leaver@test.com", "password": "brand-new-pass", "full_name": "Back Again",
+    })
+    code = fake_redis.store[f"{VERIFY_PREFIX}{user.id}"]
+
+    queued = []
+    monkeypatch.setattr(
+        notification_tasks.send_registration_email, "delay",
+        lambda *a, **kw: queued.append("welcome"),
+    )
+    monkeypatch.setattr(
+        notification_tasks.send_new_user_admin_notification, "delay",
+        lambda *a, **kw: queued.append("new_signup_admin"),
+    )
+
+    with patch("app.services.email_service.send_email", new=AsyncMock()):
+        await client.post("/api/v1/auth/verify-email", json={
+            "email": "leaver@test.com", "code": code,
+        })
+
+    assert queued == []
+
+
+@pytest.mark.asyncio
+async def test_a_genuinely_new_signup_still_gets_the_welcome(
+    client, fake_redis, monkeypatch
+):
+    """The returning-user branch must not swallow the normal signup path."""
+    from app.tasks import notification_tasks
+
+    reg = await client.post("/api/v1/auth/register", json={
+        "email": "brand-new@test.com", "password": "pass1234", "full_name": "New Person",
+    })
+    user_id = reg.json()["data"]["id"]
+    code = fake_redis.store[f"{VERIFY_PREFIX}{user_id}"]
+
+    queued = []
+    monkeypatch.setattr(
+        notification_tasks.send_registration_email, "delay",
+        lambda *a, **kw: queued.append("welcome"),
+    )
+    monkeypatch.setattr(
+        notification_tasks.send_new_user_admin_notification, "delay",
+        lambda *a, **kw: queued.append("new_signup_admin"),
+    )
+
+    await client.post("/api/v1/auth/verify-email", json={
+        "email": "brand-new@test.com", "code": code,
+    })
+
+    assert queued == ["welcome", "new_signup_admin"]
+
+
+@pytest.mark.asyncio
+async def test_a_failed_return_sends_nothing(client, db_session):
+    """Wrong password, or past the window — no mail either way."""
+    user = await _make_user(db_session)
+    await _delete_account(client, user)
+
+    sent = []
+
+    async def _capture(**kw):
+        sent.append(kw)
+
+    with patch("app.services.email_service.send_email", new=_capture):
+        assert (await _login(client, password="wrong-password")).status_code == 401
+        await _age_deletion(db_session, user, days=31)
+        assert (await _login(client)).status_code == 401
+
+    assert sent == []
