@@ -145,8 +145,11 @@ async def verify_email(db: AsyncSession, redis: Redis, email: str, code: str) ->
     await redis.delete(key)
     await redis.delete(f"{VERIFY_COOLDOWN_PREFIX}{user.id}")
 
-    from app.tasks.notification_tasks import send_registration_email
+    from app.tasks.notification_tasks import (
+        send_registration_email, send_new_user_admin_notification,
+    )
     send_registration_email.delay(str(user.id))
+    send_new_user_admin_notification.delay(str(user.id))
     log.info("email.verified", user_id=str(user.id), email=user.email)
     return user
 
@@ -272,8 +275,11 @@ async def find_or_create_oauth_user(
     try:
         await db.commit()
         await db.refresh(user)
-        from app.tasks.notification_tasks import send_registration_email
+        from app.tasks.notification_tasks import (
+            send_registration_email, send_new_user_admin_notification,
+        )
         send_registration_email.delay(str(user.id))
+        send_new_user_admin_notification.delay(str(user.id))
         log.info("registration_email.queued", user_id=str(user.id), email=user.email)
         return user
     except IntegrityError:

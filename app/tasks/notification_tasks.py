@@ -60,6 +60,56 @@ def send_verification_email(user_id: str, code: str, ttl_minutes: int):
 
 
 @celery_app.task
+def send_new_user_admin_notification(user_id: str):
+    """Tell the team inbox that a new account was created.
+
+    Dispatched from the same two points as the user's welcome email: after email
+    verification for password signups, and on first-time OAuth account creation.
+    Silently skipped when ADMIN_NOTIFICATION_EMAIL is blank.
+    """
+    log.info("new_user_admin_email.task_started", user_id=user_id)
+
+    async def _run():
+        from app.config import get_settings
+        from app.database import AsyncSessionLocal
+        from app.models.user import User
+        from app.services.email_service import (
+            send_email, new_user_admin_html, new_user_admin_text,
+        )
+        import uuid
+
+        recipient = get_settings().admin_notification_email
+        if not recipient:
+            log.info("new_user_admin_email.skipped", reason="no recipient configured")
+            return
+
+        async with AsyncSessionLocal() as db:
+            user = await db.get(User, uuid.UUID(user_id))
+            if not user:
+                log.warning("new_user_admin_email.user_not_found", user_id=user_id)
+                return
+
+            provider = user.oauth_provider or "email"
+            fields = dict(
+                full_name=user.full_name,
+                email=user.email,
+                provider=provider,
+                user_id=str(user.id),
+                signed_up_at=user.created_at,
+            )
+            log.info("new_user_admin_email.sending", user_id=user_id, to=recipient)
+            await send_email(
+                to=recipient,
+                subject=f"New Kida signup — {user.email}",
+                html=new_user_admin_html(**fields),
+                text=new_user_admin_text(**fields),
+            )
+            log.info("new_user_admin_email.done", user_id=user_id, to=recipient)
+
+    asyncio.run(_run())
+
+
+@celery_app.task
 def send_purchase_confirmation(user_id: str, purchase_id: str):
     async def _run():
         from app.database import AsyncSessionLocal

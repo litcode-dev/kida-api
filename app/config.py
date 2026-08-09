@@ -55,6 +55,9 @@ class Settings(BaseSettings):
     smtp_user: str = ""
     smtp_password: str = ""
     smtp_from: str = "noreply@kida.litcode.com.ng"
+    # Internal inbox notified when a new account is created. Blank disables the
+    # notification without a code change.
+    admin_notification_email: str = "kida.audio@gmail.com"
 
     # OneSignal
     onesignal_app_id: str

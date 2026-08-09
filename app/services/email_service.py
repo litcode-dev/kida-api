@@ -296,6 +296,100 @@ def registration_text(full_name: str) -> str:
     )
 
 
+def new_user_admin_html(
+    full_name: str,
+    email: str,
+    provider: str,
+    user_id: str,
+    signed_up_at: datetime,
+) -> str:
+    """Internal signup notification — plain and information-dense on purpose.
+
+    Goes to the team inbox, not a customer, so it skips the marketing hero and
+    the unsubscribe footer the customer-facing templates carry.
+    """
+    when = signed_up_at.strftime("%b %d, %Y at %H:%M UTC")
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#e8e3d9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#e8e3d9;">
+  <tr><td align="center" style="padding:32px 16px;">
+    <table width="520" cellpadding="0" cellspacing="0" style="max-width:520px;width:100%;">
+
+      <!-- HEADER -->
+      <tr><td style="background:#0a0a0a;padding:24px 32px;border-radius:8px 8px 0 0;">
+        <table width="100%" cellpadding="0" cellspacing="0">
+          <tr>
+            <td style="color:#fff;font-size:11px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;">KIDA</td>
+            <td align="right" style="color:#fff;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;">NEW SIGNUP</td>
+          </tr>
+        </table>
+      </td></tr>
+
+      <!-- BODY -->
+      <tr><td style="background:#f2ede4;padding:32px;">
+        <p style="margin:0 0 24px 0;font-size:17px;font-weight:700;color:#0a0a0a;">
+          {full_name} just created an account.
+        </p>
+        <table width="100%" cellpadding="0" cellspacing="0" style="font-size:14px;color:#333;">
+          <tr>
+            <td style="padding:8px 0;width:110px;color:#888;font-size:11px;letter-spacing:0.1em;text-transform:uppercase;">Name</td>
+            <td style="padding:8px 0;">{full_name}</td>
+          </tr>
+          <tr>
+            <td style="padding:8px 0;color:#888;font-size:11px;letter-spacing:0.1em;text-transform:uppercase;">Email</td>
+            <td style="padding:8px 0;"><a href="mailto:{email}" style="color:#1FBF62;text-decoration:none;">{email}</a></td>
+          </tr>
+          <tr>
+            <td style="padding:8px 0;color:#888;font-size:11px;letter-spacing:0.1em;text-transform:uppercase;">Signed up via</td>
+            <td style="padding:8px 0;">{provider}</td>
+          </tr>
+          <tr>
+            <td style="padding:8px 0;color:#888;font-size:11px;letter-spacing:0.1em;text-transform:uppercase;">When</td>
+            <td style="padding:8px 0;">{when}</td>
+          </tr>
+          <tr>
+            <td style="padding:8px 0;color:#888;font-size:11px;letter-spacing:0.1em;text-transform:uppercase;">User ID</td>
+            <td style="padding:8px 0;font-family:monospace;font-size:12px;color:#666;">{user_id}</td>
+          </tr>
+        </table>
+      </td></tr>
+
+      <!-- FOOTER -->
+      <tr><td style="background:#0a0a0a;padding:20px 32px;border-radius:0 0 8px 8px;">
+        <p style="margin:0;font-size:11px;color:#aaa;">
+          Automated notification from the Kida API. Not a customer email.
+        </p>
+      </td></tr>
+
+    </table>
+  </td></tr>
+</table>
+</body>
+</html>"""
+
+
+def new_user_admin_text(
+    full_name: str,
+    email: str,
+    provider: str,
+    user_id: str,
+    signed_up_at: datetime,
+) -> str:
+    when = signed_up_at.strftime("%b %d, %Y at %H:%M UTC")
+    return (
+        f"{full_name} just created a Kida account.\n\n"
+        f"Name:          {full_name}\n"
+        f"Email:         {email}\n"
+        f"Signed up via: {provider}\n"
+        f"When:          {when}\n"
+        f"User ID:       {user_id}\n\n"
+        f"---\n"
+        f"Automated notification from the Kida API. Not a customer email."
+    )
+
+
 def account_deleted_html(full_name: str) -> str:
     year = datetime.now(timezone.utc).year
     return f"""<!DOCTYPE html>
