@@ -10,6 +10,9 @@ the device. Drone groups count once however many of their pads are fetched.
 
 Periods are calendar months in UTC and reset at the first of the month; nothing
 has to be swept, the period key simply changes.
+
+Any of the three limits can be set to "unlimited" in the environment, which
+turns that type off entirely — no check and no usage recorded.
 """
 import hashlib
 import uuid
@@ -34,7 +37,8 @@ def next_period_start(now: datetime | None = None) -> datetime:
     return datetime(year, month, 1, tzinfo=timezone.utc)
 
 
-def limit_for(item_type: MonthlyQuotaType) -> int:
+def limit_for(item_type: MonthlyQuotaType) -> int | None:
+    """The month's allowance for a type, or None when it is uncapped."""
     settings = get_settings()
     return {
         MonthlyQuotaType.loop: settings.monthly_loop_downloads,
@@ -72,8 +76,10 @@ async def quota_summary(db: AsyncSession, user_id: uuid.UUID) -> dict:
         spent = await used(db, user_id, item_type, period)
         items[item_type.value] = {
             "used": spent,
+            # null for both when uncapped — there is no number to show.
             "limit": limit,
-            "remaining": max(limit - spent, 0),
+            "remaining": None if limit is None else max(limit - spent, 0),
+            "unlimited": limit is None,
         }
     return {
         "period": period,
@@ -98,6 +104,12 @@ async def enforce(
     is held to the end of that transaction, which serialises concurrent first
     downloads for the same user and type.
     """
+    limit = limit_for(item_type)
+    if limit is None:
+        # Uncapped: nothing to count, so nothing is recorded either. Usage only
+        # starts accruing again if a limit is put back.
+        return
+
     period = current_period()
 
     existing = await db.scalar(
@@ -125,7 +137,6 @@ async def enforce(
     if existing:
         return
 
-    limit = limit_for(item_type)
     if await used(db, user_id, item_type, period) >= limit:
         raise MonthlyDownloadLimitError(
             item_type.value, limit, next_period_start().isoformat()

@@ -354,9 +354,15 @@ async def test_quota_endpoint_reports_the_allowance(client, db_session):
     assert resp.status_code == 200
     data = resp.json()["data"]
     assert data["period"] == monthly_quota_service.current_period()
-    assert data["items"]["loop"] == {"used": 3, "limit": 20, "remaining": 17}
-    assert data["items"]["drone"] == {"used": 0, "limit": 5, "remaining": 5}
-    assert data["items"]["drum_kit"] == {"used": 0, "limit": 5, "remaining": 5}
+    assert data["items"]["loop"] == {
+        "used": 3, "limit": 20, "remaining": 17, "unlimited": False,
+    }
+    assert data["items"]["drone"] == {
+        "used": 0, "limit": 5, "remaining": 5, "unlimited": False,
+    }
+    assert data["items"]["drum_kit"] == {
+        "used": 0, "limit": 5, "remaining": 5, "unlimited": False,
+    }
     assert data["resets_at"]
 
 
@@ -373,7 +379,9 @@ async def test_remaining_never_goes_negative(client, db_session):
 
     resp = await client.get("/api/v1/downloads/quota", headers=_headers(user))
 
-    assert resp.json()["data"]["items"]["drone"] == {"used": 9, "limit": 5, "remaining": 0}
+    assert resp.json()["data"]["items"]["drone"] == {
+        "used": 9, "limit": 5, "remaining": 0, "unlimited": False,
+    }
 
 
 # ── Bookkeeping ──────────────────────────────────────────────────────────────
@@ -398,3 +406,100 @@ async def test_usage_rows_go_when_the_account_does(client, db_session, fake_redi
         select(func.count()).select_from(MonthlyDownloadUsage)
         .where(MonthlyDownloadUsage.user_id == user.id)
     ) == 0
+
+
+# ── "unlimited" turns a cap off ──────────────────────────────────────────────
+
+@pytest.fixture
+def unlimited_loops(monkeypatch):
+    """Set MONTHLY_LOOP_DOWNLOADS=unlimited for one test."""
+    get_settings.cache_clear()
+    monkeypatch.setenv("MONTHLY_LOOP_DOWNLOADS", "unlimited")
+    yield
+    get_settings.cache_clear()
+
+
+def test_unlimited_parses_to_no_cap(monkeypatch):
+    from app.config import Settings
+
+    for token in ("unlimited", "UNLIMITED", " Unlimited ", "none", "off"):
+        monkeypatch.setenv("MONTHLY_LOOP_DOWNLOADS", token)
+        assert Settings().monthly_loop_downloads is None
+
+
+def test_zero_means_zero_not_unlimited(monkeypatch):
+    """0 must block downloads, not uncap them."""
+    from app.config import Settings
+
+    monkeypatch.setenv("MONTHLY_LOOP_DOWNLOADS", "0")
+    assert Settings().monthly_loop_downloads == 0
+
+
+def test_blank_and_nonsense_values_are_rejected(monkeypatch):
+    """A stray "MONTHLY_LOOP_DOWNLOADS=" must fail loudly, not uncap silently."""
+    from pydantic import ValidationError
+    from app.config import Settings
+
+    for bad in ("", "   ", "-1", "lots"):
+        monkeypatch.setenv("MONTHLY_LOOP_DOWNLOADS", bad)
+        with pytest.raises(ValidationError):
+            Settings()
+
+
+@pytest.mark.asyncio
+async def test_unlimited_lets_downloads_past_the_old_cap(
+    client, db_session, unlimited_loops
+):
+    user = await _make_user(db_session)
+    await _subscribe(db_session, user.id)
+    await _spend(db_session, user.id, MonthlyQuotaType.loop, 20)
+    loop = await _make_loop(db_session, user.id)
+
+    with _patch_s3():
+        resp = await client.get(f"/api/v1/loops/{loop.id}/download", headers=_headers(user))
+
+    assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_unlimited_records_no_usage(client, db_session, unlimited_loops):
+    """Nothing to count, so nothing is written."""
+    user = await _make_user(db_session)
+    await _subscribe(db_session, user.id)
+    loop = await _make_loop(db_session, user.id)
+
+    with _patch_s3():
+        assert (await client.get(
+            f"/api/v1/loops/{loop.id}/download", headers=_headers(user)
+        )).status_code == 200
+
+    assert await monthly_quota_service.used(db_session, user.id, MonthlyQuotaType.loop) == 0
+
+
+@pytest.mark.asyncio
+async def test_unlimited_is_reported_by_the_quota_endpoint(
+    client, db_session, unlimited_loops
+):
+    user = await _make_user(db_session)
+
+    resp = await client.get("/api/v1/downloads/quota", headers=_headers(user))
+
+    loop_quota = resp.json()["data"]["items"]["loop"]
+    assert loop_quota == {"used": 0, "limit": None, "remaining": None, "unlimited": True}
+    # The other two keep their caps.
+    assert resp.json()["data"]["items"]["drone"]["unlimited"] is False
+
+
+@pytest.mark.asyncio
+async def test_unlimited_on_one_type_does_not_uncap_the_others(
+    client, db_session, unlimited_loops
+):
+    user = await _make_user(db_session)
+    await _subscribe(db_session, user.id)
+    await _spend(db_session, user.id, MonthlyQuotaType.drum_kit, 5)
+    kit = await _make_kit(db_session, user.id)
+
+    with _patch_s3():
+        resp = await client.get(f"/api/v1/drum-kits/{kit.id}/download", headers=_headers(user))
+
+    assert resp.status_code == 429

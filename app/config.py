@@ -1,3 +1,4 @@
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
 
@@ -92,9 +93,36 @@ class Settings(BaseSettings):
 
     # Monthly download allowance, counted per distinct item per calendar month
     # (UTC). Applies to every account, on top of the free-tier caps below.
-    monthly_loop_downloads: int = 20
-    monthly_drone_downloads: int = 5
-    monthly_drum_kit_downloads: int = 5
+    #
+    # Each accepts either a whole number or "unlimited" (also "none" / "off"),
+    # which parses to None and removes the cap for that type. 0 means zero
+    # downloads allowed, not unlimited. A blank value is rejected rather than
+    # read as unlimited — a stray "MONTHLY_LOOP_DOWNLOADS=" should fail loudly,
+    # not silently uncap downloads.
+    monthly_loop_downloads: int | None = 20
+    monthly_drone_downloads: int | None = 5
+    monthly_drum_kit_downloads: int | None = 5
+
+    @field_validator(
+        "monthly_loop_downloads", "monthly_drone_downloads", "monthly_drum_kit_downloads",
+        mode="before",
+    )
+    @classmethod
+    def parse_allowance(cls, v):
+        if isinstance(v, str):
+            token = v.strip().lower()
+            if token in ("unlimited", "none", "off"):
+                return None
+            if token == "":
+                raise ValueError(
+                    "must be a whole number or 'unlimited' — leave the variable "
+                    "unset to use the default"
+                )
+            v = token
+        parsed = int(v)
+        if parsed < 0:
+            raise ValueError("must be zero or greater, or 'unlimited'")
+        return parsed
 
     # Free-tier download caps (lifetime grants per account for FREE content;
     # subscribers and per-item purchasers are exempt). Tunable without a deploy.
