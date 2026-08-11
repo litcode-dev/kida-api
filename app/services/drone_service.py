@@ -318,7 +318,7 @@ async def get_drone_downloads(
     await free_tier_service.enforce_drone_download(db, user, drone, key)
     # One slot per drone group, however many of its pads are taken.
     await monthly_quota_service.enforce(
-        db, user.id, MonthlyQuotaType.drone, str(drone.id)
+        db, user, MonthlyQuotaType.drone, str(drone.id)
     )
     return await _download_items_for_pads(db, user, pads)
 
@@ -354,7 +354,7 @@ async def get_title_downloads(
         try:
             await free_tier_service.enforce_drone_download(db, user, drone, key)
             await monthly_quota_service.enforce(
-                db, user.id, MonthlyQuotaType.drone, str(drone.id)
+                db, user, MonthlyQuotaType.drone, str(drone.id)
             )
         except (FreeTierLimitError, MonthlyDownloadLimitError) as exc:
             # Serve whatever the allowance still covers; only refuse outright

@@ -136,6 +136,9 @@ class Settings(BaseSettings):
     subscription_monthly_price: int = 200000   # ₦2,000 in kobo
     ai_extra_credits_price: int = 50000        # ₦500 in kobo
     ai_extra_credits_quantity: int = 5         # slots per extra purchase
+    # Extra downloads sold once a user's monthly allowance is spent.
+    download_extra_credits_price: int = 50000  # ₦500 in kobo
+    download_extra_credits_quantity: int = 10  # downloads per purchase
 
     # IAP — Apple
     apple_shared_secret: str = ""  # App-specific shared secret from App Store Connect

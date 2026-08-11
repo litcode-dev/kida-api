@@ -168,7 +168,7 @@ async def download_drum_kit(
 
     await free_tier_service.enforce_drum_kit_cap(db, user, kit)
     await monthly_quota_service.enforce(
-        db, user.id, MonthlyQuotaType.drum_kit, str(kit.id)
+        db, user, MonthlyQuotaType.drum_kit, str(kit.id)
     )
 
     dl = Download(

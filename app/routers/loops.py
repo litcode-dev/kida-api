@@ -89,7 +89,7 @@ async def download_loop(
     loop_service.assert_loop_ready(loop)
     await free_tier_service.enforce_loop_cap(db, user, loop)
     await monthly_quota_service.enforce(
-        db, user.id, MonthlyQuotaType.loop, str(loop.id)
+        db, user, MonthlyQuotaType.loop, str(loop.id)
     )
 
     download_url = await s3_service.get_download_url(loop.file_s3_key, expiry_seconds=900)

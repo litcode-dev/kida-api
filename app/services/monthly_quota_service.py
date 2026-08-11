@@ -13,6 +13,11 @@ has to be swept, the period key simply changes.
 
 Any of the three limits can be set to "unlimited" in the environment, which
 turns that type off entirely — no check and no usage recorded.
+
+Past the allowance a user may spend a purchased download credit instead of being
+refused (see User.download_extra_credits). Credits are pre-paid because a card
+cannot be charged inside a download request; they are shared across all three
+types, so one purchase covers whichever runs out.
 """
 import hashlib
 import uuid
@@ -24,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.exceptions import MonthlyDownloadLimitError
 from app.models.monthly_download_usage import MonthlyDownloadUsage, MonthlyQuotaType
+from app.models.user import User
 
 
 def current_period(now: datetime | None = None) -> str:
@@ -81,34 +87,43 @@ async def quota_summary(db: AsyncSession, user_id: uuid.UUID) -> dict:
             "remaining": None if limit is None else max(limit - spent, 0),
             "unlimited": limit is None,
         }
+    credits = await db.scalar(
+        select(User.download_extra_credits).where(User.id == user_id)
+    )
     return {
         "period": period,
         "resets_at": next_period_start().isoformat(),
         "items": items,
+        # Spent one per download once a type's allowance is gone.
+        "extra_credits": credits or 0,
     }
 
 
 async def enforce(
     db: AsyncSession,
-    user_id: uuid.UUID,
+    user: User,
     item_type: MonthlyQuotaType,
     item_id: str,
-) -> None:
-    """Consume one slot for this item, raising MonthlyDownloadLimitError at the cap.
+) -> bool:
+    """Consume one slot for this item. Returns True if a paid credit was spent.
+
+    Past the month's allowance a purchased download credit is spent instead of
+    refusing; MonthlyDownloadLimitError is raised only when there are none left.
 
     Idempotent within the period: an item already taken this month always
-    succeeds without spending another slot.
+    succeeds without spending another slot or credit.
 
     The row is flushed, not committed — it commits with the caller's transaction,
-    so a failure while issuing signed URLs rolls the slot back. The advisory lock
-    is held to the end of that transaction, which serialises concurrent first
-    downloads for the same user and type.
+    so a failure while issuing signed URLs rolls both the slot and the credit
+    back. The advisory lock is held to the end of that transaction, which
+    serialises concurrent first downloads for the same user and type.
     """
+    user_id = user.id
     limit = limit_for(item_type)
     if limit is None:
         # Uncapped: nothing to count, so nothing is recorded either. Usage only
         # starts accruing again if a limit is put back.
-        return
+        return False
 
     period = current_period()
 
@@ -121,7 +136,7 @@ async def enforce(
         )
     )
     if existing:
-        return
+        return False
 
     await db.execute(select(func.pg_advisory_xact_lock(_lock_key(user_id, item_type, period))))
 
@@ -135,14 +150,21 @@ async def enforce(
         )
     )
     if existing:
-        return
+        return False
 
+    paid = False
     if await used(db, user_id, item_type, period) >= limit:
-        raise MonthlyDownloadLimitError(
-            item_type.value, limit, next_period_start().isoformat()
-        )
+        if user.download_extra_credits <= 0:
+            raise MonthlyDownloadLimitError(
+                item_type.value, limit, next_period_start().isoformat()
+            )
+        user.download_extra_credits -= 1
+        paid = True
 
+    # Recorded either way, so a paid download can be re-fetched for free like
+    # any other item taken this month.
     db.add(MonthlyDownloadUsage(
         user_id=user_id, period=period, item_type=item_type, item_id=item_id,
     ))
     await db.flush()
+    return paid

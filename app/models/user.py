@@ -56,6 +56,11 @@ class User(Base):
     )
     ai_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     ai_extra_credits: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # Paid-for downloads beyond the monthly allowance. Spent one per item once
+    # the month's quota for that type is used up.
+    download_extra_credits: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
     is_suspended: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     suspension_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
     # Set when the user asks to delete their account. The row survives until the

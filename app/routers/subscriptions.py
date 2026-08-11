@@ -170,6 +170,60 @@ async def initiate_extra_credits(
     return success({"checkout_url": result["authorization_url"], "payment_reference": ref})
 
 
+@router.post(
+    "/downloads/extras/initiate",
+    summary="Buy extra downloads",
+    description=(
+        "Starts a checkout for extra downloads, used once a monthly allowance is "
+        "spent. Credits are shared across loops, drones and drum kits — one "
+        "purchase covers whichever runs out — and do not expire at the end of the "
+        "month.\n\n"
+        "No subscription is required: anyone who has used up their allowance can "
+        "buy more. The credits are added when the payment webhook confirms, not "
+        "when this returns."
+    ),
+    responses={401: {"description": "Missing or invalid token"}},
+)
+@limiter.limit("10/minute")
+async def initiate_extra_downloads(
+    request: Request,
+    body: ExtraCreditsInitiateRequest,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    settings = get_settings()
+    ref = str(uuid.uuid4())
+    qty = settings.download_extra_credits_quantity
+    metadata = {"user_id": str(user.id), "type": "download_extras", "quantity": qty}
+
+    if body.provider == PaymentProvider.flutterwave:
+        result = await flutterwave_service.initialize_payment(
+            amount=settings.download_extra_credits_price / 100,
+            email=user.email,
+            name=user.full_name,
+            product_name=f"Kida Extra Downloads x{qty}",
+            metadata=metadata,
+            tx_ref=ref,
+        )
+        return success({
+            "checkout_url": result["payment_link"],
+            "payment_reference": ref,
+            "quantity": qty,
+        })
+
+    result = await paystack_service.initialize_payment(
+        amount_kobo=settings.download_extra_credits_price,
+        email=user.email,
+        reference=ref,
+        metadata=metadata,
+    )
+    return success({
+        "checkout_url": result["authorization_url"],
+        "payment_reference": ref,
+        "quantity": qty,
+    })
+
+
 @router.post("/webhook/flutterwave")
 async def subscription_flutterwave_webhook(
     request: Request,

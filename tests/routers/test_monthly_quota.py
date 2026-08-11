@@ -503,3 +503,226 @@ async def test_unlimited_on_one_type_does_not_uncap_the_others(
         resp = await client.get(f"/api/v1/drum-kits/{kit.id}/download", headers=_headers(user))
 
     assert resp.status_code == 429
+
+
+# ── Paying for downloads past the allowance ──────────────────────────────────
+#
+# Credits are pre-paid (a card cannot be charged inside a download request) and
+# shared across all three types, so one purchase covers whichever runs out.
+
+async def _give_credits(db, user, n):
+    user.download_extra_credits = n
+    await db.commit()
+    await db.refresh(user)
+
+
+@pytest.mark.asyncio
+async def test_a_credit_is_spent_instead_of_refusing(client, db_session):
+    user = await _make_user(db_session)
+    await _subscribe(db_session, user.id)
+    await _spend(db_session, user.id, MonthlyQuotaType.loop, 20)
+    await _give_credits(db_session, user, 3)
+    loop = await _make_loop(db_session, user.id)
+
+    with _patch_s3():
+        resp = await client.get(f"/api/v1/loops/{loop.id}/download", headers=_headers(user))
+
+    assert resp.status_code == 200
+    await db_session.refresh(user)
+    assert user.download_extra_credits == 2
+
+
+@pytest.mark.asyncio
+async def test_credits_are_untouched_while_the_allowance_lasts(client, db_session):
+    user = await _make_user(db_session)
+    await _subscribe(db_session, user.id)
+    await _give_credits(db_session, user, 3)
+    loop = await _make_loop(db_session, user.id)
+
+    with _patch_s3():
+        resp = await client.get(f"/api/v1/loops/{loop.id}/download", headers=_headers(user))
+
+    assert resp.status_code == 200
+    await db_session.refresh(user)
+    assert user.download_extra_credits == 3
+
+
+@pytest.mark.asyncio
+async def test_running_out_of_credits_refuses_again(client, db_session):
+    user = await _make_user(db_session)
+    await _subscribe(db_session, user.id)
+    await _spend(db_session, user.id, MonthlyQuotaType.loop, 20)
+    await _give_credits(db_session, user, 1)
+
+    first = await _make_loop(db_session, user.id)
+    second = await _make_loop(db_session, user.id)
+
+    with _patch_s3():
+        assert (await client.get(
+            f"/api/v1/loops/{first.id}/download", headers=_headers(user)
+        )).status_code == 200
+        resp = await client.get(
+            f"/api/v1/loops/{second.id}/download", headers=_headers(user)
+        )
+
+    assert resp.status_code == 429
+    assert resp.json()["extra_credits"] == 0
+    await db_session.refresh(user)
+    assert user.download_extra_credits == 0
+
+
+@pytest.mark.asyncio
+async def test_re_downloading_a_paid_item_costs_nothing(client, db_session):
+    """A download that was paid for behaves like any other taken this month."""
+    user = await _make_user(db_session)
+    await _subscribe(db_session, user.id)
+    await _spend(db_session, user.id, MonthlyQuotaType.loop, 20)
+    await _give_credits(db_session, user, 2)
+    loop = await _make_loop(db_session, user.id)
+
+    with _patch_s3():
+        for _ in range(3):
+            assert (await client.get(
+                f"/api/v1/loops/{loop.id}/download", headers=_headers(user)
+            )).status_code == 200
+
+    await db_session.refresh(user)
+    assert user.download_extra_credits == 1
+
+
+@pytest.mark.asyncio
+async def test_credits_are_shared_across_types(client, db_session):
+    user = await _make_user(db_session)
+    await _subscribe(db_session, user.id)
+    await _spend(db_session, user.id, MonthlyQuotaType.loop, 20)
+    await _spend(db_session, user.id, MonthlyQuotaType.drum_kit, 5)
+    await _give_credits(db_session, user, 2)
+    loop = await _make_loop(db_session, user.id)
+    kit = await _make_kit(db_session, user.id)
+
+    with _patch_s3():
+        assert (await client.get(
+            f"/api/v1/loops/{loop.id}/download", headers=_headers(user)
+        )).status_code == 200
+        assert (await client.get(
+            f"/api/v1/drum-kits/{kit.id}/download", headers=_headers(user)
+        )).status_code == 200
+
+    await db_session.refresh(user)
+    assert user.download_extra_credits == 0
+
+
+@pytest.mark.asyncio
+async def test_credits_do_not_apply_to_an_uncapped_type(
+    client, db_session, unlimited_loops
+):
+    user = await _make_user(db_session)
+    await _subscribe(db_session, user.id)
+    await _give_credits(db_session, user, 2)
+    loop = await _make_loop(db_session, user.id)
+
+    with _patch_s3():
+        assert (await client.get(
+            f"/api/v1/loops/{loop.id}/download", headers=_headers(user)
+        )).status_code == 200
+
+    await db_session.refresh(user)
+    assert user.download_extra_credits == 2
+
+
+@pytest.mark.asyncio
+async def test_quota_endpoint_reports_the_credit_balance(client, db_session):
+    user = await _make_user(db_session)
+    await _give_credits(db_session, user, 7)
+
+    resp = await client.get("/api/v1/downloads/quota", headers=_headers(user))
+
+    assert resp.json()["data"]["extra_credits"] == 7
+
+
+# ── Buying credits ───────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_buying_extra_downloads_returns_a_checkout_url(client, db_session):
+    user = await _make_user(db_session)
+
+    with patch(
+        "app.services.paystack_service.initialize_payment",
+        new=AsyncMock(return_value={"authorization_url": "https://pay.example/x"}),
+    ) as init:
+        resp = await client.post(
+            "/api/v1/subscriptions/downloads/extras/initiate",
+            json={"provider": "paystack"}, headers=_headers(user),
+        )
+
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert data["checkout_url"] == "https://pay.example/x"
+    assert data["quantity"] == 10
+    # The webhook keys off this metadata to know what was bought.
+    assert init.call_args.kwargs["metadata"]["type"] == "download_extras"
+
+
+@pytest.mark.asyncio
+async def test_buying_extra_downloads_needs_no_subscription(client, db_session):
+    """Anyone who used up their allowance can buy more."""
+    user = await _make_user(db_session)
+
+    with patch(
+        "app.services.paystack_service.initialize_payment",
+        new=AsyncMock(return_value={"authorization_url": "https://pay.example/x"}),
+    ):
+        resp = await client.post(
+            "/api/v1/subscriptions/downloads/extras/initiate",
+            json={"provider": "paystack"}, headers=_headers(user),
+        )
+
+    assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_buying_extra_downloads_requires_auth(client):
+    resp = await client.post(
+        "/api/v1/subscriptions/downloads/extras/initiate", json={"provider": "paystack"}
+    )
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_the_webhook_credits_the_account(db_session):
+    from app.services import subscription_service
+
+    user = await _make_user(db_session)
+    await subscription_service._process_download_extras_webhook(
+        db_session, str(user.id), 10
+    )
+
+    await db_session.refresh(user)
+    assert user.download_extra_credits == 10
+
+
+@pytest.mark.asyncio
+async def test_the_webhook_adds_to_an_existing_balance(db_session):
+    from app.services import subscription_service
+
+    user = await _make_user(db_session)
+    await _give_credits(db_session, user, 4)
+    await subscription_service._process_download_extras_webhook(
+        db_session, str(user.id), 10
+    )
+
+    await db_session.refresh(user)
+    assert user.download_extra_credits == 14
+
+
+@pytest.mark.asyncio
+async def test_download_credits_do_not_touch_ai_credits(db_session):
+    from app.services import subscription_service
+
+    user = await _make_user(db_session)
+    await subscription_service._process_download_extras_webhook(
+        db_session, str(user.id), 10
+    )
+
+    await db_session.refresh(user)
+    assert user.ai_extra_credits == 0

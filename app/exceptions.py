@@ -72,6 +72,9 @@ class MonthlyDownloadLimitError(AppError):
         self.item_type = item_type
         self.limit = limit
         self.resets_at = resets_at
+        # Always 0 here: the limit is only raised once credits run out. Sent
+        # anyway so the client can key its top-up prompt off one stable field.
+        self.extra_credits = 0
         super().__init__(
             f"Monthly {item_type} download limit reached ({limit})",
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -89,6 +92,7 @@ async def monthly_limit_handler(
             "type": exc.item_type,
             "limit": exc.limit,
             "resets_at": exc.resets_at,
+            "extra_credits": exc.extra_credits,
         },
     )
 

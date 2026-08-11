@@ -104,6 +104,17 @@ async def _process_extras_webhook(
     await db.commit()
 
 
+async def _process_download_extras_webhook(
+    db: AsyncSession, user_id: str, quantity: int
+) -> None:
+    """Credit downloads bought once a monthly allowance ran out."""
+    user = await db.get(User, uuid.UUID(user_id))
+    if not user:
+        return
+    user.download_extra_credits += quantity
+    await db.commit()
+
+
 async def handle_flutterwave_webhook(
     db: AsyncSession, payload: bytes, verif_hash: str
 ) -> None:
@@ -143,6 +154,9 @@ async def handle_flutterwave_webhook(
     elif payment_type == "ai_extras":
         quantity = meta.get("quantity", get_settings().ai_extra_credits_quantity)
         await _process_extras_webhook(db, user_id, int(quantity))
+    elif payment_type == "download_extras":
+        quantity = meta.get("quantity", get_settings().download_extra_credits_quantity)
+        await _process_download_extras_webhook(db, user_id, int(quantity))
 
 
 async def handle_paystack_webhook(
@@ -179,3 +193,6 @@ async def handle_paystack_webhook(
     elif payment_type == "ai_extras":
         quantity = meta.get("quantity", get_settings().ai_extra_credits_quantity)
         await _process_extras_webhook(db, user_id, int(quantity))
+    elif payment_type == "download_extras":
+        quantity = meta.get("quantity", get_settings().download_extra_credits_quantity)
+        await _process_download_extras_webhook(db, user_id, int(quantity))
