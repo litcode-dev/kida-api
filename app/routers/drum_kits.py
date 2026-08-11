@@ -8,13 +8,16 @@ import uuid
 
 from app.database import get_db
 from app.middleware.auth_middleware import get_current_user
-from app.services import drum_kit_service, s3_service, cache_service, free_tier_service
+from app.services import (
+    drum_kit_service, s3_service, cache_service, free_tier_service, monthly_quota_service,
+)
 from app.schemas.drum_kit import (
     DrumKitFilter, DrumKitResponse,
     DrumKitDownloadResponse, DrumSampleDownloadItem, DOWNLOAD_EXPIRY_SECONDS,
 )
 from app.schemas.common import success
 from app.models.drum_kit import DrumKit
+from app.models.monthly_download_usage import MonthlyQuotaType
 from app.models.download import Download
 from app.models.purchase import Purchase
 from app.exceptions import NotFoundError, EntitlementError, AppError
@@ -164,6 +167,9 @@ async def download_drum_kit(
         raise AppError("No ready samples available for download yet", status_code=409)
 
     await free_tier_service.enforce_drum_kit_cap(db, user, kit)
+    await monthly_quota_service.enforce(
+        db, user.id, MonthlyQuotaType.drum_kit, str(kit.id)
+    )
 
     dl = Download(
         user_id=user.id,

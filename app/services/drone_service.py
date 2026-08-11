@@ -6,6 +6,7 @@ from fastapi import UploadFile
 
 from app.models.drone_pad import Drone, DronePad, DronePadCategory, MusicalKey
 from app.models.purchase import Purchase
+from app.models.monthly_download_usage import MonthlyQuotaType
 from app.models.user import User
 from app.schemas.drone_pad import (
     DronePadCategoryCreate,
@@ -14,7 +15,7 @@ from app.schemas.drone_pad import (
     DronePadUpdate,
 )
 from app.exceptions import NotFoundError, EntitlementError
-from app.services import price_sync_service, s3_service
+from app.services import monthly_quota_service, price_sync_service, s3_service
 from app.utils.audio_validator import validate_wav_upload
 
 
@@ -315,13 +316,17 @@ async def get_drone_downloads(
     if key is not None and not pads:
         raise NotFoundError(f"Drone {drone_id} has no pad in key {key.value}")
     await free_tier_service.enforce_drone_download(db, user, drone, key)
+    # One slot per drone group, however many of its pads are taken.
+    await monthly_quota_service.enforce(
+        db, user.id, MonthlyQuotaType.drone, str(drone.id)
+    )
     return await _download_items_for_pads(db, user, pads)
 
 
 async def get_title_downloads(
     db: AsyncSession, user: User, title: str, key: MusicalKey | None = None
 ) -> list[dict]:
-    from app.exceptions import FreeTierLimitError
+    from app.exceptions import FreeTierLimitError, MonthlyDownloadLimitError
     from app.services import free_tier_service
 
     drones = list(
@@ -340,7 +345,7 @@ async def get_title_downloads(
 
     items: list[dict] = []
     matched_any = False
-    refusal: FreeTierLimitError | None = None
+    refusal: FreeTierLimitError | MonthlyDownloadLimitError | None = None
     for drone in drones:
         pads = _pads_for_key(drone, key)
         if not pads:
@@ -348,7 +353,12 @@ async def get_title_downloads(
         matched_any = True
         try:
             await free_tier_service.enforce_drone_download(db, user, drone, key)
-        except FreeTierLimitError as exc:
+            await monthly_quota_service.enforce(
+                db, user.id, MonthlyQuotaType.drone, str(drone.id)
+            )
+        except (FreeTierLimitError, MonthlyDownloadLimitError) as exc:
+            # Serve whatever the allowance still covers; only refuse outright
+            # when nothing could be served at all.
             refusal = exc
             continue
         items.extend(await _download_items_for_pads(db, user, pads))

@@ -90,6 +90,12 @@ class Settings(BaseSettings):
     ai_selfhosted_url: str = ""
     ai_selfhosted_api_key: str = ""
 
+    # Monthly download allowance, counted per distinct item per calendar month
+    # (UTC). Applies to every account, on top of the free-tier caps below.
+    monthly_loop_downloads: int = 20
+    monthly_drone_downloads: int = 5
+    monthly_drum_kit_downloads: int = 5
+
     # Free-tier download caps (lifetime grants per account for FREE content;
     # subscribers and per-item purchasers are exempt). Tunable without a deploy.
     free_tier_loop_downloads: int = 2

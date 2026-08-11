@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.middleware.auth_middleware import get_current_user
-from app.services import download_service
+from app.services import download_service, monthly_quota_service
 from app.schemas.download import DownloadedLoopItem
 from app.schemas.common import success
 
@@ -27,3 +27,22 @@ async def get_download_history(
         "page": page,
         "page_size": page_size,
     })
+
+
+@router.get(
+    "/quota",
+    summary="Monthly download allowance",
+    description=(
+        "How much of this month's download allowance the authenticated user has "
+        "spent, per item type, with the UTC instant it resets.\n\n"
+        "Counted per distinct item: re-downloading something already taken this "
+        "month does not spend another slot, and a drone group counts once however "
+        "many of its pads are fetched."
+    ),
+    responses={401: {"description": "Missing or invalid token"}},
+)
+async def get_monthly_quota(
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    return success(await monthly_quota_service.quota_summary(db, user.id))

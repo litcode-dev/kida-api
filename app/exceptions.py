@@ -61,6 +61,38 @@ class FreeTierLimitError(AppError):
         )
 
 
+class MonthlyDownloadLimitError(AppError):
+    """A monthly download allowance was used up. Rendered with its own stable
+    machine-readable body (see monthly_limit_handler) so the app can tell this
+    apart from the free-tier paywall — this one is not fixed by subscribing, it
+    resets at the start of next month.
+    """
+
+    def __init__(self, item_type: str, limit: int, resets_at: str):
+        self.item_type = item_type
+        self.limit = limit
+        self.resets_at = resets_at
+        super().__init__(
+            f"Monthly {item_type} download limit reached ({limit})",
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        )
+
+
+async def monthly_limit_handler(
+    request: Request, exc: MonthlyDownloadLimitError
+) -> JSONResponse:
+    # Stable contract parsed by the app — do not change field names or shape.
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "error": "monthly_download_limit",
+            "type": exc.item_type,
+            "limit": exc.limit,
+            "resets_at": exc.resets_at,
+        },
+    )
+
+
 async def free_tier_limit_handler(request: Request, exc: FreeTierLimitError) -> JSONResponse:
     # Stable contract parsed by the app — do not change field names or shape.
     return JSONResponse(
