@@ -9,7 +9,7 @@ from app.middleware.rate_limit import limiter
 from app.schemas.user import UserResponse, SuspendRequest
 from app.schemas.common import success
 from app.schemas.loop import LoopCreate, LoopUpdate, LoopResponse
-from app.schemas.stem_pack import StemPackCreate, StemCreate, StemPackResponse, StemResponse
+from app.routers.stem_pack_management import build_stem_pack_router
 from app.schemas.drone_pad import (
     DronePadCategoryCreate,
     DronePadCategoryResponse,
@@ -34,7 +34,7 @@ from app.models.drone_pad import MusicalKey
 from app.exceptions import NotFoundError, AppError, ForbiddenError
 from redis.asyncio import Redis
 from app.services import (
-    auth_service, broadcast_service, loop_service, stem_pack_service, drone_service, drum_kit_service, cache_service,
+    auth_service, broadcast_service, loop_service, drone_service, drum_kit_service, cache_service,
 )
 from app.services.admin_analytics_service import get_platform_analytics
 from app.tasks.notification_tasks import send_broadcast_email, send_new_content_emails
@@ -205,28 +205,9 @@ async def delete_loop(
 
 
 # --- StemPack endpoints ---
-
-@router.delete("/stem-packs/{pack_id}")
-@limiter.limit("20/minute")
-async def delete_stem_pack(
-    request: Request,
-    pack_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
-    admin=Depends(require_admin),
-):
-    from app.models.stem_pack import StemPack, Stem
-    from app.services import s3_service
-    pack = await db.get(StemPack, pack_id)
-    if not pack:
-        raise NotFoundError("StemPack not found")
-    stems = await db.scalars(select(Stem).where(Stem.stem_pack_id == pack_id))
-    for stem in stems.all():
-        if stem.file_s3_key:
-            await s3_service.delete_object(stem.file_s3_key)
-        await db.delete(stem)
-    await db.delete(pack)
-    await db.commit()
-    return success(message="StemPack deleted")
+# Packs, song parts, stems and arrangements come from the same builder the
+# producer router mounts; admins are not held to packs they created.
+router.include_router(build_stem_pack_router(require_admin, enforce_ownership=False))
 
 
 # --- User management endpoints (admin only) ---
@@ -797,56 +778,6 @@ async def update_loop(
     if should_reprocess:
         process_loop_upload.delay(str(loop_id))
     return success(LoopResponse.model_validate(loop).model_dump(), "Loop updated")
-
-
-# --- StemPack endpoints (admin mirror) ---
-
-@router.post("/stem-packs")
-@limiter.limit("30/minute")
-async def create_stem_pack(
-    request: Request,
-    body: StemPackCreate,
-    db: AsyncSession = Depends(get_db),
-    admin=Depends(require_admin),
-):
-    pack = await stem_pack_service.create_stem_pack(db, body, admin.id)
-    return success(StemPackResponse.model_validate(pack).model_dump(), "StemPack created")
-
-
-@router.post("/stem-packs/{pack_id}/stems")
-@limiter.limit("10/minute")
-async def add_stem(
-    request: Request,
-    pack_id: uuid.UUID,
-    file: UploadFile = File(...),
-    label: str = Form(...),
-    duration: int = Form(...),
-    db: AsyncSession = Depends(get_db),
-    admin=Depends(require_admin),
-):
-    data = StemCreate(label=label, duration=duration)
-    stem = await stem_pack_service.add_stem_to_pack(db, pack_id, file, data)
-    return success(StemResponse.model_validate(stem).model_dump(), "Stem added")
-
-
-@router.put("/stem-packs/{pack_id}")
-@limiter.limit("20/minute")
-async def update_stem_pack(
-    request: Request,
-    pack_id: uuid.UUID,
-    body: StemPackCreate,
-    db: AsyncSession = Depends(get_db),
-    admin=Depends(require_admin),
-):
-    from app.models.stem_pack import StemPack
-    pack = await db.get(StemPack, pack_id)
-    if not pack:
-        raise NotFoundError("StemPack not found")
-    for field, value in body.model_dump(exclude_none=True).items():
-        setattr(pack, field, value)
-    await db.commit()
-    await db.refresh(pack)
-    return success(StemPackResponse.model_validate(pack).model_dump(), "StemPack updated")
 
 
 # --- Drone pad endpoints (admin mirror) ---

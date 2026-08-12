@@ -131,12 +131,24 @@ def s3_key_for_loop_thumbnail(loop_id: str, ext: str = "jpg", digest: str | None
     return _thumbnail_key("thumbnails", loop_id, ext, digest)
 
 
+def s3_key_for_raw_stem(stem_id: str) -> str:
+    return f"stems/raw/{stem_id}.wav"
+
+
 def s3_key_for_encrypted_stem(stem_id: str) -> str:
     return f"stems/encrypted/{stem_id}.wav.enc"
 
 
 def s3_key_for_stem_preview(stem_id: str) -> str:
     return f"stems/previews/{stem_id}_preview.mp3"
+
+
+def s3_key_for_encrypted_arrangement_track(track_id: str) -> str:
+    return f"stems/arrangements/encrypted/{track_id}.wav.enc"
+
+
+def s3_key_for_arrangement_track_preview(track_id: str) -> str:
+    return f"stems/arrangements/previews/{track_id}_preview.mp3"
 
 
 def s3_key_for_encrypted_drone(drone_id: str) -> str:

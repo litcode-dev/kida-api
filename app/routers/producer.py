@@ -7,7 +7,7 @@ from pydantic import ValidationError
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
-from app.exceptions import AppError, ForbiddenError, NotFoundError
+from app.exceptions import AppError, ForbiddenError
 from app.middleware.auth_middleware import require_producer
 from app.middleware.rate_limit import limiter
 from app.schemas.common import success
@@ -21,12 +21,12 @@ from app.schemas.drone_pad import (
 )
 from app.schemas.loop import LoopCreate, LoopFilter, LoopUpdate, LoopResponse
 from app.schemas.producer_analytics import AnalyticsParams, AnalyticsPeriod
-from app.schemas.stem_pack import StemPackCreate, StemCreate, StemPackResponse, StemResponse
+from app.routers.stem_pack_management import build_stem_pack_router
 from app.models.drum_kit import DrumKit
 from app.models.drone_pad import MusicalKey
 from app.models.loop import Genre, TempoFeel
 from app.models.user import User
-from app.services import cache_service, drum_kit_service, drone_service, loop_service, stem_pack_service
+from app.services import cache_service, drum_kit_service, drone_service, loop_service
 from app.services.producer_analytics_service import get_producer_analytics
 from app.tasks.notification_tasks import send_new_content_emails
 from app.tasks.upload_tasks import process_drone_upload, process_drum_sample_upload, process_loop_upload
@@ -189,77 +189,10 @@ async def update_loop(
 
 
 # --- StemPack endpoints ---
-
-@router.get("/stem-packs")
-@limiter.limit("60/minute")
-async def list_producer_stem_packs(
-    request: Request,
-    page: int = 1,
-    page_size: int = 20,
-    db: AsyncSession = Depends(get_db),
-    producer=Depends(require_producer),
-):
-    packs, total = await stem_pack_service.list_stem_packs(db, producer.id, page, page_size)
-    return success({
-        "items": [StemPackResponse.model_validate(p).model_dump() for p in packs],
-        "total": total,
-        "page": page,
-        "page_size": page_size,
-    })
-
-
-@router.post("/stem-packs")
-@limiter.limit("30/minute")
-async def create_stem_pack(
-    request: Request,
-    body: StemPackCreate,
-    db: AsyncSession = Depends(get_db),
-    producer=Depends(require_producer),
-):
-    pack = await stem_pack_service.create_stem_pack(db, body, producer.id)
-    return success(StemPackResponse.model_validate(pack).model_dump(), "StemPack created")
-
-
-@router.post("/stem-packs/{pack_id}/stems")
-@limiter.limit("10/minute")
-async def add_stem(
-    request: Request,
-    pack_id: uuid.UUID,
-    file: UploadFile = File(...),
-    label: str = Form(...),
-    duration: int = Form(...),
-    db: AsyncSession = Depends(get_db),
-    producer=Depends(require_producer),
-):
-    from app.models.stem_pack import StemPack
-    pack = await db.get(StemPack, pack_id)
-    if not pack:
-        raise NotFoundError("StemPack not found")
-    _assert_owns(pack, producer, "stem pack")
-    data = StemCreate(label=label, duration=duration)
-    stem = await stem_pack_service.add_stem_to_pack(db, pack_id, file, data)
-    return success(StemResponse.model_validate(stem).model_dump(), "Stem added")
-
-
-@router.put("/stem-packs/{pack_id}")
-@limiter.limit("20/minute")
-async def update_stem_pack(
-    request: Request,
-    pack_id: uuid.UUID,
-    body: StemPackCreate,
-    db: AsyncSession = Depends(get_db),
-    producer=Depends(require_producer),
-):
-    from app.models.stem_pack import StemPack
-    pack = await db.get(StemPack, pack_id)
-    if not pack:
-        raise NotFoundError("StemPack not found")
-    _assert_owns(pack, producer, "stem pack")
-    for field, value in body.model_dump(exclude_none=True).items():
-        setattr(pack, field, value)
-    await db.commit()
-    await db.refresh(pack)
-    return success(StemPackResponse.model_validate(pack).model_dump(), "StemPack updated")
+# Packs, song parts, stems and arrangements are mounted from the shared builder
+# so the producer and admin surfaces cannot drift apart. Producers are held to
+# packs they created.
+router.include_router(build_stem_pack_router(require_producer, enforce_ownership=True))
 
 
 # --- Drone pad endpoints ---
