@@ -476,13 +476,28 @@ async def _loop_s3_keys(db: AsyncSession, loop_ids) -> list[str]:
 
 
 async def _stem_s3_keys(db: AsyncSession, stem_pack_ids) -> list[str]:
-    from app.models.stem_pack import Stem
+    from app.models.stem_pack import Stem, StemArrangement, StemArrangementTrack
+    from app.services import s3_service
 
     rows = await db.execute(
-        select(Stem.file_s3_key, Stem.preview_s3_key)
+        select(Stem.id, Stem.file_s3_key, Stem.preview_s3_key)
         .where(Stem.stem_pack_id.in_(stem_pack_ids))
     )
-    return [k for row in rows for k in row if k]
+    keys: list[str] = []
+    for stem_id, *stored in rows:
+        keys += [k for k in stored if k]
+        # The raw upload is deleted by the processing job on success, but a stem
+        # stuck mid-processing still has one.
+        keys.append(s3_service.s3_key_for_raw_stem(str(stem_id)))
+
+    # Rendered arrangements are separate objects again — one per instrument.
+    track_rows = await db.execute(
+        select(StemArrangementTrack.file_s3_key, StemArrangementTrack.preview_s3_key)
+        .join(StemArrangement, StemArrangementTrack.arrangement_id == StemArrangement.id)
+        .where(StemArrangement.stem_pack_id.in_(stem_pack_ids))
+    )
+    keys += [k for row in track_rows for k in row if k]
+    return keys
 
 
 async def _drum_kit_s3_keys(db: AsyncSession, drum_kit_ids) -> list[str]:
@@ -553,7 +568,9 @@ async def delete_user(
     from app.models.subscription import Subscription
     from app.models.iap_subscription import IapSubscription
     from app.models.loop import Loop
-    from app.models.stem_pack import StemPack, Stem
+    from app.models.stem_pack import (
+        StemPack, Stem, StemPart, StemArrangement, StemArrangementItem, StemArrangementTrack,
+    )
     from app.models.drum_kit import DrumKit, DrumSample
     from app.models.drone_pad import DronePadCategory, Drone, DronePad
     from app.models.app_download_request import AppDownloadRequest
@@ -610,10 +627,50 @@ async def delete_user(
     stem_pack_ids = (await db.scalars(select(StemPack.id).where(StemPack.created_by == uid))).all()
     if stem_pack_ids:
         s3_keys += await _stem_s3_keys(db, stem_pack_ids)
+        stem_ids = (await db.scalars(
+            select(Stem.id).where(Stem.stem_pack_id.in_(stem_pack_ids))
+        )).all()
+        if stem_ids:
+            await db.execute(delete(Download).where(Download.stem_id.in_(stem_ids)))
+        arrangement_ids = (await db.scalars(
+            select(StemArrangement.id).where(StemArrangement.stem_pack_id.in_(stem_pack_ids))
+        )).all()
+        if arrangement_ids:
+            await db.execute(
+                delete(StemArrangementTrack)
+                .where(StemArrangementTrack.arrangement_id.in_(arrangement_ids))
+            )
+            await db.execute(
+                delete(StemArrangementItem)
+                .where(StemArrangementItem.arrangement_id.in_(arrangement_ids))
+            )
+            await db.execute(delete(StemArrangement).where(StemArrangement.id.in_(arrangement_ids)))
         await db.execute(delete(Stem).where(Stem.stem_pack_id.in_(stem_pack_ids)))
+        await db.execute(delete(StemPart).where(StemPart.stem_pack_id.in_(stem_pack_ids)))
         await db.execute(delete(Purchase).where(Purchase.stem_pack_id.in_(stem_pack_ids)))
         await db.execute(delete(Like).where(Like.stem_pack_id.in_(stem_pack_ids)))
         await db.execute(delete(StemPack).where(StemPack.id.in_(stem_pack_ids)))
+
+    # Arrangements created by this user under someone else's pack carry their
+    # own created_by, so they would otherwise block the users delete.
+    orphan_arrangements = (await db.scalars(
+        select(StemArrangement.id).where(StemArrangement.created_by == uid)
+    )).all()
+    if orphan_arrangements:
+        track_rows = await db.execute(
+            select(StemArrangementTrack.file_s3_key, StemArrangementTrack.preview_s3_key)
+            .where(StemArrangementTrack.arrangement_id.in_(orphan_arrangements))
+        )
+        s3_keys += [k for row in track_rows for k in row if k]
+        await db.execute(
+            delete(StemArrangementTrack)
+            .where(StemArrangementTrack.arrangement_id.in_(orphan_arrangements))
+        )
+        await db.execute(
+            delete(StemArrangementItem)
+            .where(StemArrangementItem.arrangement_id.in_(orphan_arrangements))
+        )
+        await db.execute(delete(StemArrangement).where(StemArrangement.id.in_(orphan_arrangements)))
 
     drum_kit_ids = (await db.scalars(select(DrumKit.id).where(DrumKit.created_by == uid))).all()
     if drum_kit_ids:

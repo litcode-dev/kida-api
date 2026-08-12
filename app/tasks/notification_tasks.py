@@ -258,6 +258,7 @@ def send_new_content_push(title: str, content_type: str, item_id: str):
             "loop": "New Loop",
             "drum_kit": "New Drum Kit",
             "drone_pad": "New Drone Pad",
+            "stem_pack": "New Stem Pack",
         }
         push_title = type_labels.get(content_type, "New Content on Kida")
         await send_to_all(

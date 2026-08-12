@@ -1,6 +1,9 @@
 from app.models.user import User, UserRole  # noqa: F401
 from app.models.loop import Loop, Genre, TempoFeel  # noqa: F401
-from app.models.stem_pack import StemPack, Stem  # noqa: F401
+from app.models.stem_pack import (  # noqa: F401
+    StemPack, Stem, StemPart, StemArrangement, StemArrangementItem,
+    StemArrangementTrack, StemPackType, StemInstrument, SongSection,
+)
 from app.models.purchase import Purchase, PurchaseType  # noqa: F401
 from app.models.download import Download  # noqa: F401
 from app.models.like import Like  # noqa: F401

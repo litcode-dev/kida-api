@@ -39,7 +39,14 @@ if settings.sentry_dsn:
 _tags_metadata = [
     {"name": "auth", "description": "Registration, login, token refresh, and OAuth (Google, Apple)."},
     {"name": "loops", "description": "Browse and download individual audio loops."},
-    {"name": "stem-packs", "description": "Browse and download multi-stem packs."},
+    {
+        "name": "stem-packs",
+        "description": (
+            "Browse and download multi-stem packs. A pack is either long-form — one "
+            "continuous stem per instrument — or a breakdown, split into song parts that "
+            "an arrangement stitches back into a full song."
+        ),
+    },
     {"name": "drum-kits", "description": "Browse and download drum kits with individual sample files."},
     {"name": "drones", "description": "Browse and download drone pad audio files."},
     {"name": "payments", "description": "Initiate and verify purchases via Flutterwave or Paystack."},
