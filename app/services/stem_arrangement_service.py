@@ -20,7 +20,11 @@ from app.models.stem_pack import (
     StemPackType,
     StemPart,
 )
-from app.schemas.stem_pack import StemArrangementCreate, StemArrangementUpdate
+from app.schemas.stem_pack import (
+    StemArrangementCreate,
+    StemArrangementResponse,
+    StemArrangementUpdate,
+)
 from app.services import s3_service, stem_pack_service
 
 MAX_ARRANGEMENTS_PER_PACK = 20
@@ -299,6 +303,23 @@ async def delete_arrangement(
     await db.commit()
     for key in keys:
         await s3_service.delete_object(key)
+
+
+def payload(arrangement: StemArrangement) -> dict:
+    """An arrangement as clients read it, with each slot named.
+
+    The running order is only legible as names — "intro, verse, chorus ×2" —
+    so `part_name` and `section` are filled in from the parts the query
+    already loaded, rather than leaving every caller to look them up.
+    """
+    data = StemArrangementResponse.model_validate(arrangement).model_dump(mode="json")
+    parts = {item.part_id: item.part for item in arrangement.items}
+    for item_data in data["items"]:
+        part = parts.get(uuid.UUID(str(item_data["part_id"])))
+        if part is not None:
+            item_data["part_name"] = part.name
+            item_data["section"] = part.section.value
+    return data
 
 
 def timeline(items) -> list[uuid.UUID]:

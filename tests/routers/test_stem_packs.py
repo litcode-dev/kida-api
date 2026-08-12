@@ -414,6 +414,11 @@ async def test_create_arrangement_queues_a_render(client, db_session):
     assert data["is_default"] is True
     assert [i["position"] for i in data["items"]] == [0, 1]
     assert data["items"][1]["repeat_count"] == 2
+    # The producer surface names the running order too, not just the public one.
+    assert [(i["part_name"], i["section"]) for i in data["items"]] == [
+        ("Intro", "intro"),
+        ("Chorus", "chorus"),
+    ]
     mock_render.delay.assert_called_once_with(data["id"])
 
 

@@ -17,7 +17,6 @@ from app.schemas.stem_pack import (
     DOWNLOAD_EXPIRY_SECONDS,
     ArrangementTrackDownloadItem,
     StemArrangementDownloadResponse,
-    StemArrangementResponse,
     StemDownloadItem,
     StemPackDownloadResponse,
     StemPackFilter,
@@ -41,19 +40,8 @@ async def _preview_url(item) -> str | None:
     return None
 
 
-def _decorate_items(arrangement_data: dict, arrangement) -> None:
-    """Name each slot in the running order so clients need no second lookup."""
-    parts = {item.part_id: item.part for item in arrangement.items}
-    for item_data in arrangement_data["items"]:
-        part = parts.get(uuid.UUID(str(item_data["part_id"])))
-        if part is not None:
-            item_data["part_name"] = part.name
-            item_data["section"] = part.section.value
-
-
 async def _arrangement_to_dict(arrangement) -> dict:
-    data = StemArrangementResponse.model_validate(arrangement).model_dump(mode="json")
-    _decorate_items(data, arrangement)
+    data = stem_arrangement_service.payload(arrangement)
     preview_urls = await asyncio.gather(*[_preview_url(t) for t in arrangement.tracks])
     for track_data, preview_url in zip(data["tracks"], preview_urls):
         track_data["preview_url"] = preview_url

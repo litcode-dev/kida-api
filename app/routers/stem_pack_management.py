@@ -18,7 +18,6 @@ from app.models.stem_pack import StemInstrument, StemPackType
 from app.schemas.common import success
 from app.schemas.stem_pack import (
     StemArrangementCreate,
-    StemArrangementResponse,
     StemArrangementUpdate,
     StemCreate,
     StemPackCreate,
@@ -400,7 +399,7 @@ def build_stem_pack_router(actor_dependency, enforce_ownership: bool) -> APIRout
         )
         render_stem_arrangement.delay(str(arrangement.id))
         return success(
-            StemArrangementResponse.model_validate(arrangement).model_dump(mode="json"),
+            stem_arrangement_service.payload(arrangement),
             "Arrangement created, render queued",
         )
 
@@ -414,10 +413,7 @@ def build_stem_pack_router(actor_dependency, enforce_ownership: bool) -> APIRout
     ):
         await owned(db, pack_id, actor)
         arrangements = await stem_arrangement_service.list_arrangements(db, pack_id)
-        return success([
-            StemArrangementResponse.model_validate(a).model_dump(mode="json")
-            for a in arrangements
-        ])
+        return success([stem_arrangement_service.payload(a) for a in arrangements])
 
     @router.put(
         "/{pack_id}/arrangements/{arrangement_id}",
@@ -443,7 +439,7 @@ def build_stem_pack_router(actor_dependency, enforce_ownership: bool) -> APIRout
         if should_render:
             render_stem_arrangement.delay(str(arrangement.id))
         return success(
-            StemArrangementResponse.model_validate(arrangement).model_dump(mode="json"),
+            stem_arrangement_service.payload(arrangement),
             "Arrangement re-render queued" if should_render else "Arrangement updated",
         )
 
@@ -463,10 +459,7 @@ def build_stem_pack_router(actor_dependency, enforce_ownership: bool) -> APIRout
         await owned(db, pack_id, actor)
         arrangement = await stem_arrangement_service.rerender(db, pack_id, arrangement_id)
         render_stem_arrangement.delay(str(arrangement.id))
-        return success(
-            StemArrangementResponse.model_validate(arrangement).model_dump(mode="json"),
-            "Render queued",
-        )
+        return success(stem_arrangement_service.payload(arrangement), "Render queued")
 
     @router.delete("/{pack_id}/arrangements/{arrangement_id}", summary="Delete an arrangement")
     @limiter.limit("20/minute")
