@@ -37,7 +37,10 @@ async def get_download_history(
         "spent, per item type, with the UTC instant it resets.\n\n"
         "Counted per distinct item: re-downloading something already taken this "
         "month does not spend another slot, and a drone group counts once however "
-        "many of its pads are fetched."
+        "many of its pads are fetched.\n\n"
+        "A type with no cap reports `limit` and `remaining` as the string "
+        "`\"unlimited\"`; branch on the `unlimited` boolean rather than "
+        "comparing strings."
     ),
     responses={401: {"description": "Missing or invalid token"}},
 )

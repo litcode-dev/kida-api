@@ -485,7 +485,9 @@ async def test_unlimited_is_reported_by_the_quota_endpoint(
     resp = await client.get("/api/v1/downloads/quota", headers=_headers(user))
 
     loop_quota = resp.json()["data"]["items"]["loop"]
-    assert loop_quota == {"used": 0, "limit": None, "remaining": None, "unlimited": True}
+    assert loop_quota == {
+        "used": 0, "limit": "unlimited", "remaining": "unlimited", "unlimited": True,
+    }
     # The other two keep their caps.
     assert resp.json()["data"]["items"]["drone"]["unlimited"] is False
 

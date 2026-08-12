@@ -32,6 +32,11 @@ from app.models.monthly_download_usage import MonthlyDownloadUsage, MonthlyQuota
 from app.models.user import User
 
 
+# What limit/remaining read as for an uncapped type. Matches the value the
+# environment variables accept, so what you set is what the API reports back.
+UNLIMITED = "unlimited"
+
+
 def current_period(now: datetime | None = None) -> str:
     return (now or datetime.now(timezone.utc)).strftime("%Y-%m")
 
@@ -82,9 +87,11 @@ async def quota_summary(db: AsyncSession, user_id: uuid.UUID) -> dict:
         spent = await used(db, user_id, item_type, period)
         items[item_type.value] = {
             "used": spent,
-            # null for both when uncapped — there is no number to show.
-            "limit": limit,
-            "remaining": None if limit is None else max(limit - spent, 0),
+            # An uncapped type reports the string "unlimited" in place of a
+            # number, so the payload reads for itself. The boolean stays as the
+            # thing clients should branch on rather than comparing strings.
+            "limit": UNLIMITED if limit is None else limit,
+            "remaining": UNLIMITED if limit is None else max(limit - spent, 0),
             "unlimited": limit is None,
         }
     credits = await db.scalar(
