@@ -99,7 +99,9 @@ async def create_drone(
         thumb_bytes = await thumbnail.read()
         content_type = thumbnail.content_type or "image/jpeg"
         ext = content_type.split("/")[-1] if "/" in content_type else "jpg"
-        thumb_key = s3_service.s3_key_for_drone_thumbnail(drone_id, ext)
+        thumb_key = s3_service.s3_key_for_drone_thumbnail(
+            drone_id, ext, s3_service.content_digest(thumb_bytes)
+        )
         await s3_service.upload_bytes(thumb_key, thumb_bytes, content_type)
         thumb_url = _thumbnail_url_for_key(thumb_key)
 
@@ -228,7 +230,9 @@ async def bulk_create_drones(
         thumb_bytes = await thumbnail.read()
         content_type = thumbnail.content_type or "image/jpeg"
         ext = content_type.split("/")[-1] if "/" in content_type else "jpg"
-        thumb_key = s3_service.s3_key_for_drone_thumbnail(drone_id, ext)
+        thumb_key = s3_service.s3_key_for_drone_thumbnail(
+            drone_id, ext, s3_service.content_digest(thumb_bytes)
+        )
         await s3_service.upload_bytes(thumb_key, thumb_bytes, content_type)
         thumb_url = _thumbnail_url_for_key(thumb_key)
 
@@ -379,13 +383,15 @@ async def update_drone(
 
     if thumbnail:
         old_thumb_key = drone.pads[0].thumbnail_s3_key if drone.pads else None
-        if old_thumb_key:
-            await s3_service.delete_object(old_thumb_key)
         thumb_bytes = await thumbnail.read()
         content_type = thumbnail.content_type or "image/jpeg"
         ext = content_type.split("/")[-1] if "/" in content_type else "jpg"
-        new_thumb_key = s3_service.s3_key_for_drone_thumbnail(str(drone_id), ext)
+        new_thumb_key = s3_service.s3_key_for_drone_thumbnail(
+            str(drone_id), ext, s3_service.content_digest(thumb_bytes)
+        )
         await s3_service.upload_bytes(new_thumb_key, thumb_bytes, content_type)
+        if old_thumb_key and old_thumb_key != new_thumb_key:
+            await s3_service.delete_object(old_thumb_key)
         drone.thumbnail_url = _thumbnail_url_for_key(new_thumb_key)
         for pad in drone.pads:
             pad.thumbnail_s3_key = new_thumb_key

@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import boto3
 from botocore.config import Config
 from app.config import get_settings
@@ -107,8 +108,27 @@ def s3_key_for_loop_preview(loop_id: str) -> str:
     return f"previews/{loop_id}_preview.mp3"
 
 
-def s3_key_for_loop_thumbnail(loop_id: str, ext: str = "jpg") -> str:
-    return f"thumbnails/{loop_id}_thumbnail.{ext}"
+def content_digest(data: bytes) -> str:
+    """Short hash of an asset's bytes, used as part of its key.
+
+    Thumbnail keys used to be derived from the item id and content type alone,
+    so replacing a JPEG with another JPEG produced the identical key and the
+    identical CloudFront URL — the new image sat in S3 while the CDN and the
+    app both went on serving the cached old one. Mixing the content in means a
+    different image is always a different URL, with no invalidation needed.
+    """
+    return hashlib.sha256(data).hexdigest()[:12]
+
+
+def _thumbnail_key(prefix: str, item_id: str, ext: str, digest: str | None) -> str:
+    # Without a digest this returns the historical key, so rows written before
+    # content-addressed keys still resolve.
+    suffix = f"_{digest}" if digest else ""
+    return f"{prefix}/{item_id}_thumbnail{suffix}.{ext}"
+
+
+def s3_key_for_loop_thumbnail(loop_id: str, ext: str = "jpg", digest: str | None = None) -> str:
+    return _thumbnail_key("thumbnails", loop_id, ext, digest)
 
 
 def s3_key_for_encrypted_stem(stem_id: str) -> str:
@@ -127,8 +147,8 @@ def s3_key_for_drone_preview(drone_id: str) -> str:
     return f"drones/previews/{drone_id}_preview.mp3"
 
 
-def s3_key_for_drone_thumbnail(drone_id: str, ext: str = "jpg") -> str:
-    return f"drones/thumbnails/{drone_id}_thumbnail.{ext}"
+def s3_key_for_drone_thumbnail(drone_id: str, ext: str = "jpg", digest: str | None = None) -> str:
+    return _thumbnail_key("drones/thumbnails", drone_id, ext, digest)
 
 
 def s3_key_for_raw_drum_sample(sample_id: str) -> str:
@@ -143,5 +163,5 @@ def s3_key_for_drum_sample_preview(sample_id: str) -> str:
     return f"drum-kits/previews/{sample_id}_preview.mp3"
 
 
-def s3_key_for_drum_kit_thumbnail(kit_id: str, ext: str = "jpg") -> str:
-    return f"drum-kits/thumbnails/{kit_id}_thumbnail.{ext}"
+def s3_key_for_drum_kit_thumbnail(kit_id: str, ext: str = "jpg", digest: str | None = None) -> str:
+    return _thumbnail_key("drum-kits/thumbnails", kit_id, ext, digest)

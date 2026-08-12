@@ -36,7 +36,9 @@ async def create_loop(
         thumb_bytes = await thumbnail.read()
         content_type = thumbnail.content_type or "image/jpeg"
         ext = content_type.split("/")[-1] if "/" in content_type else "jpg"
-        thumb_key = s3_service.s3_key_for_loop_thumbnail(loop_id, ext)
+        thumb_key = s3_service.s3_key_for_loop_thumbnail(
+            loop_id, ext, s3_service.content_digest(thumb_bytes)
+        )
         await s3_service.upload_bytes(thumb_key, thumb_bytes, content_type)
 
     loop = Loop(
@@ -155,14 +157,20 @@ async def update_loop(
     loop = await get_loop(db, loop_id)
 
     if thumbnail:
-        if loop.thumbnail_s3_key:
-            await s3_service.delete_object(loop.thumbnail_s3_key)
         thumb_bytes = await thumbnail.read()
         content_type = thumbnail.content_type or "image/jpeg"
         ext = content_type.split("/")[-1] if "/" in content_type else "jpg"
-        new_thumb_key = s3_service.s3_key_for_loop_thumbnail(str(loop_id), ext)
+        new_thumb_key = s3_service.s3_key_for_loop_thumbnail(
+            str(loop_id), ext, s3_service.content_digest(thumb_bytes)
+        )
+        old_thumb_key = loop.thumbnail_s3_key
+        # Upload first: deleting first left the row pointing at a missing object
+        # if the upload then failed. Re-uploading identical bytes lands on the
+        # same key, so only remove the old one when it really is a different key.
         await s3_service.upload_bytes(new_thumb_key, thumb_bytes, content_type)
         loop.thumbnail_s3_key = new_thumb_key
+        if old_thumb_key and old_thumb_key != new_thumb_key:
+            await s3_service.delete_object(old_thumb_key)
 
     should_reprocess = False
     if file:

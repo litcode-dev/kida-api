@@ -41,7 +41,9 @@ async def create_drum_kit(
         thumb_bytes = await thumbnail.read()
         content_type = thumbnail.content_type or "image/jpeg"
         ext = content_type.split("/")[-1] if "/" in content_type else "jpg"
-        thumb_key = s3_service.s3_key_for_drum_kit_thumbnail(kit_id, ext)
+        thumb_key = s3_service.s3_key_for_drum_kit_thumbnail(
+            kit_id, ext, s3_service.content_digest(thumb_bytes)
+        )
         await s3_service.upload_bytes(thumb_key, thumb_bytes, content_type)
 
     slug = _slugify(data.title, kit_id)
@@ -101,14 +103,17 @@ async def update_drum_kit(
     kit = await get_drum_kit(db, kit_id)
 
     if thumbnail:
-        if kit.thumbnail_s3_key:
-            await s3_service.delete_object(kit.thumbnail_s3_key)
         thumb_bytes = await thumbnail.read()
         content_type = thumbnail.content_type or "image/jpeg"
         ext = content_type.split("/")[-1] if "/" in content_type else "jpg"
-        new_thumb_key = s3_service.s3_key_for_drum_kit_thumbnail(str(kit_id), ext)
+        new_thumb_key = s3_service.s3_key_for_drum_kit_thumbnail(
+            str(kit_id), ext, s3_service.content_digest(thumb_bytes)
+        )
+        old_thumb_key = kit.thumbnail_s3_key
         await s3_service.upload_bytes(new_thumb_key, thumb_bytes, content_type)
         kit.thumbnail_s3_key = new_thumb_key
+        if old_thumb_key and old_thumb_key != new_thumb_key:
+            await s3_service.delete_object(old_thumb_key)
 
     update_fields = data.model_dump(exclude_none=True)
     new_desired = update_fields.pop("desired_price_usd", None)
