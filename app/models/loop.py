@@ -46,6 +46,9 @@ class Genre(str, enum.Enum):
     rnb = "R&B"
     kompa = "Kompa"
     fuji = "Fuji"
+    jazz = "Jazz"
+    blues = "Blues"
+    country = "Country"
 
 
 class TempoFeel(str, enum.Enum):

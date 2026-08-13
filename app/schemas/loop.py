@@ -7,6 +7,12 @@ from app.models.loop import Genre, TempoFeel
 
 TIME_SIGNATURE_RE = re.compile(r"[1-9]\d?/(1|2|4|8|16|32)")
 
+# The ceiling was 140, which pre-dates half the catalogue: drill sits around
+# 140-145, seben and soukous run past 150, and anything counted in double time
+# reads higher still. 250 covers those without letting a typo through.
+BPM_MIN = 60
+BPM_MAX = 250
+
 
 class LoopCreate(BaseModel):
     title: str
@@ -23,8 +29,8 @@ class LoopCreate(BaseModel):
     @field_validator("bpm")
     @classmethod
     def bpm_range(cls, v: int) -> int:
-        if not (60 <= v <= 140):
-            raise ValueError("BPM must be between 60 and 140")
+        if not (BPM_MIN <= v <= BPM_MAX):
+            raise ValueError(f"BPM must be between {BPM_MIN} and {BPM_MAX}")
         return v
 
     @field_validator("time_signature")
@@ -53,8 +59,8 @@ class LoopUpdate(BaseModel):
     @field_validator("bpm")
     @classmethod
     def bpm_range(cls, v: int | None) -> int | None:
-        if v is not None and not (60 <= v <= 140):
-            raise ValueError("BPM must be between 60 and 140")
+        if v is not None and not (BPM_MIN <= v <= BPM_MAX):
+            raise ValueError(f"BPM must be between {BPM_MIN} and {BPM_MAX}")
         return v
 
     @field_validator("time_signature")
