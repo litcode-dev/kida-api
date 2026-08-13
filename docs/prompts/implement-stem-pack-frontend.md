@@ -69,6 +69,15 @@ type Section =
   | "intro" | "verse" | "pre_chorus" | "chorus" | "hook" | "refrain"
   | "bridge" | "vamp" | "interlude" | "instrumental" | "solo" | "outro" | "other";
 
+// Genre is the one enum whose wire value is NOT the same as its internal name:
+// send "Afrobeat Worship", not afrobeat_worship. Spaces, hyphen, ampersand and
+// capitalisation exactly as below.
+type Genre =
+  | "Afrobeat" | "Amapiano" | "Trap" | "Boom Bap" | "Lo-fi" | "Gospel"
+  | "Afrobeat Worship" | "Contemporary Worship" | "Dancehall" | "Afrohouse"
+  | "Highlife Gospel" | "African Praise" | "Drill" | "Seben" | "Reggae"
+  | "Highlife" | "Soukous" | "Rumba" | "Afro Pop" | "Hip Hop" | "R&B";
+
 type StemStatus = "processing" | "ready" | "failed";
 type ArrangementStatus = "rendering" | "ready" | "stale" | "failed" | "draft";
 type PackUploadStatus = "empty" | "processing" | "ready" | "failed";
@@ -132,7 +141,7 @@ interface StemPack {
   title: string;
   slug: string;
   loop_id: string | null;
-  genre: string;
+  genre: Genre;
   pack_type: PackType;
   bpm: number;
   key: string;

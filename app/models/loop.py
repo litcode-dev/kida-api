@@ -13,6 +13,16 @@ from app.models.price_sync import PriceSyncMixin
 
 
 class Genre(str, enum.Enum):
+    """Catalogue genres, shared by loops and stem packs.
+
+    The column is a native Postgres enum whose labels are these *member names*
+    (``afrobeat_worship``), while the API sends and accepts the *values*
+    ("Afrobeat Worship"). Adding a member therefore needs a migration —
+    ``ALTER TYPE genre ADD VALUE`` — or every write with the new genre fails.
+    Postgres cannot drop an enum label, so a member added here is effectively
+    permanent: removing one means rebuilding the type and remapping rows.
+    """
+
     afrobeat = "Afrobeat"
     amapiano = "Amapiano"
     trap = "Trap"
@@ -24,6 +34,16 @@ class Genre(str, enum.Enum):
     dancehall = "Dancehall"
     afrohouse = "Afrohouse"
     highlife_gospel = "Highlife Gospel"
+    african_praise = "African Praise"
+    drill = "Drill"
+    seben = "Seben"
+    reggae = "Reggae"
+    highlife = "Highlife"
+    soukous = "Soukous"
+    rumba = "Rumba"
+    afro_pop = "Afro Pop"
+    hip_hop = "Hip Hop"
+    rnb = "R&B"
 
 
 class TempoFeel(str, enum.Enum):
