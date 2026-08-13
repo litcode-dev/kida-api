@@ -17,16 +17,23 @@ from app.config import get_settings
 
 _TOKEN_BYTES = 16  # 32 hex chars — plenty against guessing, short enough to read
 
+# SECRET_KEY also signs access tokens. Mixing a purpose string into the message
+# means an unsubscribe signature can never be mistaken for — or replayed as —
+# anything else signed with that key, and a future signing feature added by
+# someone else cannot collide with this one.
+_TOKEN_PURPOSE = b"kida:newsletter-unsubscribe:v1"
+
 
 def make_token(email: str) -> str:
     """Stable signature for an address. Never expires — an unsubscribe link in a
-    two-year-old email must still work."""
+    two-year-old email must still work.
+
+    Carries no account data: it is a signature over the address, not a session,
+    so a leaked link unsubscribes that address and grants nothing else.
+    """
     settings = get_settings()
-    digest = hmac.new(
-        settings.secret_key.encode(),
-        email.strip().lower().encode(),
-        hashlib.sha256,
-    ).hexdigest()
+    message = _TOKEN_PURPOSE + b"|" + email.strip().lower().encode()
+    digest = hmac.new(settings.secret_key.encode(), message, hashlib.sha256).hexdigest()
     return digest[: _TOKEN_BYTES * 2]
 
 

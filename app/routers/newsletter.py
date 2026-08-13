@@ -1,3 +1,5 @@
+from html import escape
+
 from fastapi import APIRouter, Depends
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, EmailStr
@@ -152,7 +154,7 @@ async def unsubscribe_one_click(
         eyebrow="Unsubscribed",
         heading="You're off the list",
         body=(
-            f"{email} will no longer receive new-content emails from Kida. "
+            f"{escape(email)} will no longer receive new-content emails from Kida. "
             "Purchase receipts and account emails are unaffected."
         ),
         status=200,

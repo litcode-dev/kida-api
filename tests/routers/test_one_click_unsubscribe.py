@@ -141,3 +141,67 @@ async def test_the_json_endpoint_also_suppresses_an_unknown_address(client, db_s
         )
     )
     assert row is not None and row.is_active is False
+
+
+# ── the token must stay a signature, not a credential ─────────────────────────
+
+
+def test_token_is_not_a_session_token():
+    """It signs an address and carries nothing else.
+
+    SECRET_KEY also signs access tokens, so the unsubscribe signature is
+    domain-separated: it must not be decodable as a JWT, and must not embed the
+    address in a recoverable form.
+    """
+    import base64
+
+    token = unsubscribe_service.make_token("reader@test.com")
+
+    assert token.isalnum() and len(token) == 32
+    assert token.count(".") == 0, "a JWT-shaped token would suggest key confusion"
+    for probe in ("reader", "test.com", "reader@test.com"):
+        assert probe not in token
+        assert base64.b64encode(probe.encode()).decode().rstrip("=") not in token
+
+
+def test_purpose_separation_changes_the_signature():
+    """A bare HMAC of the address, without the purpose string, must not verify —
+    otherwise a signature made elsewhere with the same key would be accepted."""
+    import hashlib
+    import hmac
+
+    from app.config import get_settings
+
+    email = "reader@test.com"
+    bare = hmac.new(
+        get_settings().secret_key.encode(), email.encode(), hashlib.sha256
+    ).hexdigest()[:32]
+
+    assert not unsubscribe_service.verify_token(email, bare)
+
+
+@pytest.mark.asyncio
+async def test_the_address_is_escaped_into_the_page(client, db_session):
+    """The address is reflected into HTML, so it is escaped even though a valid
+    signature is needed to get here."""
+    email = 'x<script>alert(1)</script>@test.com'
+    await _subscriber(db_session, email)
+
+    resp = await client.get(_url(email))
+
+    assert resp.status_code == 200
+    assert "<script>alert(1)</script>" not in resp.text
+    assert "&lt;script&gt;" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_an_invalid_link_reveals_nothing_about_the_address(client, db_session):
+    """A wrong token is rejected before any lookup, so the page cannot be used
+    to probe whether an address is on the list."""
+    await _subscriber(db_session, "known@test.com")
+
+    known = await client.get(_url("known@test.com", token="wrong"))
+    unknown = await client.get(_url("nobody@test.com", token="wrong"))
+
+    assert known.status_code == unknown.status_code == 400
+    assert known.text == unknown.text.replace("nobody@test.com", "known@test.com")
