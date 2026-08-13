@@ -15,7 +15,9 @@ _RESEND_URL = "https://api.resend.com/emails"
 _RESEND_BATCH_URL = "https://api.resend.com/emails/batch"
 
 
-async def _send_via_resend(settings, to: str, subject: str, html: str, text: str) -> None:
+async def _send_via_resend(
+    settings, to: str, subject: str, html: str, text: str, headers: dict | None = None
+) -> None:
     payload = {
         "from": settings.resend_from,
         "to": [to],
@@ -23,51 +25,58 @@ async def _send_via_resend(settings, to: str, subject: str, html: str, text: str
         "html": html,
         "text": text,
     }
+    if headers:
+        payload["headers"] = headers
     headers = {"Authorization": f"Bearer {settings.resend_api_key}", "Content-Type": "application/json"}
     async with httpx.AsyncClient(timeout=10) as client:
         resp = await client.post(_RESEND_URL, json=payload, headers=headers)
         resp.raise_for_status()
 
 
-async def _send_batch_via_resend(
-    settings, recipients: list[str], subject: str, html: str, text: str
-) -> None:
+async def _send_batch_via_resend(settings, messages: list[dict]) -> None:
     """One request per chunk instead of one per address.
 
     Resend's batch endpoint takes up to 100 messages per call, so a list of
     5,000 goes out in ~50 requests rather than 5,000 sequential ones where a
-    single slow response stalls everything behind it.
+    single slow response stalls everything behind it. Each message carries its
+    own body and headers, because a one-click unsubscribe link is specific to
+    the address it was sent to.
     """
     headers = {
         "Authorization": f"Bearer {settings.resend_api_key}",
         "Content-Type": "application/json",
     }
-    payload = [
-        {
-            "from": settings.resend_from,
-            "to": [to],
-            "subject": subject,
-            "html": html,
-            "text": text,
-        }
-        for to in recipients
-    ]
     async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.post(_RESEND_BATCH_URL, json=payload, headers=headers)
+        resp = await client.post(_RESEND_BATCH_URL, json=messages, headers=headers)
         resp.raise_for_status()
 
 
 async def send_bulk_email(
-    recipients: list[str], subject: str, html: str, text: str
+    recipients: list[str],
+    subject: str,
+    html: str | None = None,
+    text: str | None = None,
+    *,
+    build=None,
 ) -> tuple[int, int]:
-    """Send the same message to many addresses. Returns (sent, failed).
+    """Send to many addresses. Returns (sent, failed).
 
-    A failing chunk is logged and the rest still go out — one bad address or a
+    ``build(address)`` may return ``(html, text, headers)`` to personalise each
+    message — that is how the unsubscribe link and its List-Unsubscribe headers
+    end up specific to the recipient. Without it every address gets the same
+    ``html``/``text``.
+
+    A failing chunk is logged and the rest still go out: one bad address or a
     transient provider error must not cost the whole send.
     """
     settings = get_settings()
     if not recipients:
         return 0, 0
+
+    def _for(address: str) -> tuple[str, str, dict]:
+        if build is None:
+            return html or "", text or "", {}
+        return build(address)
 
     size = max(settings.email_batch_size, 1)
     chunks = [recipients[i:i + size] for i in range(0, len(recipients), size)]
@@ -76,9 +85,23 @@ async def send_bulk_email(
     sent = failed = 0
 
     for chunk in chunks:
+        rendered = {address: _for(address) for address in chunk}
+
         if use_resend:
+            messages = []
+            for address, (body_html, body_text, extra_headers) in rendered.items():
+                message = {
+                    "from": settings.resend_from,
+                    "to": [address],
+                    "subject": subject,
+                    "html": body_html,
+                    "text": body_text,
+                }
+                if extra_headers:
+                    message["headers"] = extra_headers
+                messages.append(message)
             try:
-                await _send_batch_via_resend(settings, chunk, subject, html, text)
+                await _send_batch_via_resend(settings, messages)
                 sent += len(chunk)
                 continue
             except Exception as exc:  # noqa: BLE001 - one chunk must not stop the rest
@@ -92,9 +115,12 @@ async def send_bulk_email(
 
         # SMTP has no batch endpoint, and it is also where "fallback" lands
         # when the Resend chunk failed.
-        for address in chunk:
+        for address, (body_html, body_text, extra_headers) in rendered.items():
             try:
-                await send_email(to=address, subject=subject, html=html, text=text)
+                await send_email(
+                    to=address, subject=subject, html=body_html, text=body_text,
+                    headers=extra_headers or None,
+                )
                 sent += 1
             except Exception as exc:  # noqa: BLE001
                 log.error("email.bulk.failed", to=address, subject=subject, error=str(exc))
@@ -104,12 +130,16 @@ async def send_bulk_email(
     return sent, failed
 
 
-async def _send_via_smtp(settings, to: str, subject: str, html: str, text: str) -> None:
+async def _send_via_smtp(
+    settings, to: str, subject: str, html: str, text: str, headers: dict | None = None
+) -> None:
     def _send():
         msg = MIMEMultipart("alternative")
         msg["Subject"] = subject
         msg["From"] = settings.smtp_from
         msg["To"] = to
+        for key, value in (headers or {}).items():
+            msg[key] = value
         msg.attach(MIMEText(text, "plain"))
         msg.attach(MIMEText(html, "html"))
         with smtplib.SMTP(settings.smtp_host, settings.smtp_port) as smtp:
@@ -121,24 +151,26 @@ async def _send_via_smtp(settings, to: str, subject: str, html: str, text: str) 
     await asyncio.to_thread(_send)
 
 
-async def send_email(to: str, subject: str, html: str, text: str) -> None:
+async def send_email(
+    to: str, subject: str, html: str, text: str, headers: dict | None = None
+) -> None:
     settings = get_settings()
     backend = settings.email_backend
 
     if backend == "fallback":
-        await _send_with_fallback(settings, to, subject, html, text)
+        await _send_with_fallback(settings, to, subject, html, text, headers)
         return
 
     if backend == "resend":
         if not settings.resend_api_key:
             log.warning("email.skipped", reason="RESEND_API_KEY not configured", to=to)
             return
-        send_fn = _send_via_resend(settings, to, subject, html, text)
+        send_fn = _send_via_resend(settings, to, subject, html, text, headers)
     else:
         if not settings.smtp_user or not settings.smtp_password:
             log.warning("email.skipped", reason="SMTP credentials not configured", to=to)
             return
-        send_fn = _send_via_smtp(settings, to, subject, html, text)
+        send_fn = _send_via_smtp(settings, to, subject, html, text, headers)
 
     try:
         await send_fn
@@ -150,12 +182,14 @@ async def send_email(to: str, subject: str, html: str, text: str) -> None:
         log.error("email.failed", to=to, subject=subject, backend=backend, error=str(exc))
 
 
-async def _send_with_fallback(settings, to: str, subject: str, html: str, text: str) -> None:
+async def _send_with_fallback(
+    settings, to: str, subject: str, html: str, text: str, headers: dict | None = None
+) -> None:
     if not settings.resend_api_key:
         log.warning("email.fallback.resend_skipped", reason="RESEND_API_KEY not configured", to=to)
     else:
         try:
-            await _send_via_resend(settings, to, subject, html, text)
+            await _send_via_resend(settings, to, subject, html, text, headers)
             log.info("email.sent", to=to, subject=subject, backend="resend")
             return
         except httpx.HTTPStatusError as exc:
@@ -170,7 +204,7 @@ async def _send_with_fallback(settings, to: str, subject: str, html: str, text: 
         return
 
     try:
-        await _send_via_smtp(settings, to, subject, html, text)
+        await _send_via_smtp(settings, to, subject, html, text, headers)
         log.info("email.sent", to=to, subject=subject, backend="smtp")
     except Exception as exc:
         log.error("email.failed", to=to, subject=subject, backend="smtp", error=str(exc))
@@ -178,8 +212,21 @@ async def _send_with_fallback(settings, to: str, subject: str, html: str, text: 
 
 # ── Shared footer snippets ─────────────────────────────────────────────────────
 
-def _brand_footer(unsubscribe_email: str = "support@litcode.com.ng") -> str:
+def _brand_footer(
+    unsubscribe_email: str = "support@litcode.com.ng",
+    unsubscribe_url: str | None = None,
+) -> str:
+    """Brand footer. Pass ``unsubscribe_url`` on marketing mail for a one-click
+    link; without it the footer keeps the mailto, which is right for
+    transactional mail nobody should be unsubscribing from."""
     year = datetime.now(timezone.utc).year
+    unsubscribe_link = (
+        f'<a href="{unsubscribe_url}"'
+        f' style="color:#1FBF62;text-decoration:underline;font-size:11px;">Unsubscribe</a>'
+        if unsubscribe_url
+        else f'<a href="mailto:{unsubscribe_email}?subject=Unsubscribe"'
+             f' style="color:#1FBF62;text-decoration:underline;font-size:11px;">Unsubscribe</a>'
+    )
     return f"""
       <!-- BRAND FOOTER -->
       <tr><td style="background:#0a0a0a;padding:24px 32px;border-radius:0 0 8px 8px;">
@@ -200,8 +247,7 @@ def _brand_footer(unsubscribe_email: str = "support@litcode.com.ng") -> str:
               <p style="margin:12px 0 0 0;font-size:11px;color:#aaa;line-height:1.8;">
                 Nigeria &middot; <a href="https://kida.litcode.com.ng" style="color:#1FBF62;text-decoration:none;">kida.litcode.com.ng</a><br>
                 &copy; {year} Litcode. All rights reserved.<br>
-                <a href="mailto:{unsubscribe_email}?subject=Unsubscribe"
-                   style="color:#1FBF62;text-decoration:underline;font-size:11px;">Unsubscribe</a>
+                {unsubscribe_link}
               </p>
             </td>
           </tr>
@@ -209,14 +255,19 @@ def _brand_footer(unsubscribe_email: str = "support@litcode.com.ng") -> str:
       </td></tr>"""
 
 
-def _text_footer() -> str:
+def _text_footer(unsubscribe_url: str | None = None) -> str:
     year = datetime.now(timezone.utc).year
+    unsubscribe = (
+        f"Unsubscribe: {unsubscribe_url}"
+        if unsubscribe_url
+        else "To unsubscribe, email support@litcode.com.ng with subject: Unsubscribe"
+    )
     return (
         f"\n\n---\n"
         f"Kida | Professional Music Production Samples\n"
         f"Nigeria | kida.litcode.com.ng\n"
         f"© {year} Litcode. All rights reserved.\n"
-        f"To unsubscribe, email support@litcode.com.ng with subject: Unsubscribe"
+        f"{unsubscribe}"
     )
 
 
@@ -925,18 +976,12 @@ def newsletter_unsubscribe_text(email: str) -> str:
     )
 
 
-_CONTENT_TYPE_LABELS = {
-    "loop": ("Loop", "LOOPS"),
-    "drum_kit": ("Drum Kit", "DRUM KITS"),
-    "drone_pad": ("Drone Pad", "DRONE PADS"),
-}
-
-
-def content_digest_html(sections, total: int) -> str:
+def content_digest_html(sections, total: int, unsubscribe_url: str | None = None) -> str:
     """The daily roundup: everything that went live, grouped by type.
 
     ``sections`` is a list of (content_type, label, items) where each item has
-    ``title`` and an optional ``subtitle``.
+    ``title`` and an optional ``subtitle``. ``unsubscribe_url`` is signed for
+    one recipient, so this is rendered per address rather than once per send.
     """
     blocks = []
     for _key, label, items in sections:
@@ -971,13 +1016,8 @@ def content_digest_html(sections, total: int) -> str:
         </p>
       </td></tr>
       <tr><td style="padding:0 32px;"><table width="100%" cellpadding="0" cellspacing="0">{''.join(blocks)}</table></td></tr>
-      <tr><td style="padding:24px 32px 32px 32px;">
-        <a href="https://kida.litcode.com.ng"
-           style="display:inline-block;background:#1FBF62;color:#fff;text-decoration:none;padding:12px 22px;border-radius:6px;font-size:14px;font-weight:700;">
-          Browse the catalogue
-        </a>
-      </td></tr>
-      {_brand_footer()}
+      <tr><td style="padding:0 32px 32px 32px;"></td></tr>
+      {_brand_footer(unsubscribe_url=unsubscribe_url)}
     </table>
   </td></tr>
 </table>
@@ -985,7 +1025,7 @@ def content_digest_html(sections, total: int) -> str:
 </html>"""
 
 
-def content_digest_text(sections, total: int) -> str:
+def content_digest_text(sections, total: int, unsubscribe_url: str | None = None) -> str:
     headline = "1 new drop on Kida" if total == 1 else f"{total} new drops on Kida"
     lines = [headline, "", "Everything that went live since the last roundup:", ""]
     for _key, label, items in sections:
@@ -994,75 +1034,7 @@ def content_digest_text(sections, total: int) -> str:
             suffix = f" ({item.subtitle})" if item.subtitle else ""
             lines.append(f"  - {item.title}{suffix}")
         lines.append("")
-    lines.append("Browse the catalogue: https://kida.litcode.com.ng")
-    return "\n".join(lines) + _text_footer()
-
-
-def new_content_html(title: str, content_type: str) -> str:
-    year = datetime.now(timezone.utc).year
-    label, tag = _CONTENT_TYPE_LABELS.get(content_type, ("Content", "NEW"))
-    return f"""<!DOCTYPE html>
-<html lang="en">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;background:#e8e3d9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
-<table width="100%" cellpadding="0" cellspacing="0" style="background:#e8e3d9;">
-  <tr><td align="center" style="padding:32px 16px;">
-    <table width="520" cellpadding="0" cellspacing="0" style="max-width:520px;width:100%;">
-
-      <!-- HEADER -->
-      <tr><td style="background:#0a0a0a;padding:24px 32px 0 32px;border-radius:8px 8px 0 0;">
-        <table width="100%" cellpadding="0" cellspacing="0">
-          <tr>
-            <td style="color:#fff;font-size:11px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;">KIDA</td>
-            <td align="right" style="color:#fff;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;">NEW DROP</td>
-          </tr>
-        </table>
-      </td></tr>
-
-      <!-- HERO -->
-      <tr><td style="background:#0a0a0a;padding:32px 32px 8px 32px;">
-        <p style="margin:0 0 16px 0;color:#1FBF62;font-size:12px;font-weight:800;letter-spacing:0.15em;text-transform:uppercase;">JUST DROPPED.</p>
-        <p style="margin:0;font-size:52px;font-weight:800;line-height:1.05;color:#fff;letter-spacing:-0.02em;">New</p>
-        <p style="margin:0;font-size:52px;font-weight:800;line-height:1.05;color:#1FBF62;letter-spacing:-0.02em;">{label}.</p>
-      </td></tr>
-
-      <!-- META STRIP -->
-      <tr><td style="background:#0a0a0a;padding:24px 32px 28px 32px;border-bottom:1px solid #1f1f1f;">
-        <p style="margin:0;color:#fff;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;">{year} &nbsp;&middot;&nbsp; PREMIUM {tag} &nbsp;&middot;&nbsp; KIDA</p>
-      </td></tr>
-
-      <!-- BODY -->
-      <tr><td style="background:#f2ede4;padding:36px 32px 28px 32px;">
-        <p style="margin:0 0 8px 0;font-size:17px;font-weight:700;color:#0a0a0a;">Fresh drop available now.</p>
-        <p style="margin:0 0 28px 0;font-size:15px;line-height:1.6;color:#333;">
-          <strong>{title}</strong>, a new {label.lower()} has just been added to Kida.
-          Get it before everyone else does.
-        </p>
-        <a href="https://kida.litcode.com.ng"
-           style="display:inline-block;padding:14px 28px;background:#0a0a0a;color:#fff;
-                  font-size:14px;font-weight:700;text-decoration:none;border-radius:4px;
-                  letter-spacing:0.02em;">
-          Listen Now &rarr;
-        </a>
-      </td></tr>
-
-      {_brand_footer()}
-
-    </table>
-  </td></tr>
-</table>
-</body>
-</html>"""
-
-
-def new_content_text(title: str, content_type: str) -> str:
-    label, _ = _CONTENT_TYPE_LABELS.get(content_type, ("Content", "NEW"))
-    return (
-        f"Fresh drop on Kida!\n\n"
-        f"{title}, a new {label.lower()} has just been added.\n"
-        f"Get it before everyone else: https://kida.litcode.com.ng"
-        + _text_footer()
-    )
+    return "\n".join(lines).rstrip() + _text_footer(unsubscribe_url)
 
 
 def account_suspended_html(full_name: str, reason: str) -> str:

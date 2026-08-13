@@ -58,7 +58,7 @@ async def test_a_failing_chunk_does_not_stop_the_rest(resend_settings):
 
     calls = {"n": 0}
 
-    async def _flaky(settings, chunk, subject, html, text):
+    async def _flaky(settings, messages):
         calls["n"] += 1
         if calls["n"] == 1:
             raise httpx.ConnectError("provider down")
@@ -70,3 +70,30 @@ async def test_a_failing_chunk_does_not_stop_the_rest(resend_settings):
 
     assert sent == 2
     assert failed == 2
+
+
+@pytest.mark.asyncio
+async def test_each_message_is_built_for_its_own_recipient(resend_settings):
+    """The unsubscribe link is signed per address, so bodies cannot be shared."""
+    resend_settings.email_batch_size = 100
+    recipients = ["a@test.com", "b@test.com"]
+
+    def _build(address):
+        return (
+            f"<p>hello {address}</p>",
+            f"hello {address}",
+            {"List-Unsubscribe": f"<https://api/u?e={address}>"},
+        )
+
+    with patch.object(email_service, "_send_batch_via_resend", new=AsyncMock()) as batch:
+        sent, failed = await email_service.send_bulk_email(
+            recipients, "subject", build=_build
+        )
+
+    assert (sent, failed) == (2, 0)
+    messages = batch.await_args.args[1]
+    assert [m["to"] for m in messages] == [["a@test.com"], ["b@test.com"]]
+    assert messages[0]["html"] == "<p>hello a@test.com</p>"
+    assert messages[1]["html"] == "<p>hello b@test.com</p>"
+    assert messages[0]["headers"]["List-Unsubscribe"] == "<https://api/u?e=a@test.com>"
+    assert messages[1]["headers"]["List-Unsubscribe"] == "<https://api/u?e=b@test.com>"

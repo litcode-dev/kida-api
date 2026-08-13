@@ -231,7 +231,9 @@ def send_content_digest():
         from app.config import get_settings
         from app.database import AsyncSessionLocal
         from app.schemas.broadcast import BroadcastAudience
-        from app.services import broadcast_service, content_digest_service
+        from app.services import (
+            broadcast_service, content_digest_service, unsubscribe_service,
+        )
         from app.services.email_service import (
             content_digest_html, content_digest_text, send_bulk_email,
         )
@@ -274,11 +276,20 @@ def send_content_digest():
         subject = (
             "1 new drop on Kida" if total == 1 else f"{total} new drops on Kida"
         )
+
+        # Rendered per address: the unsubscribe link and its List-Unsubscribe
+        # headers are signed for one recipient, so one shared body would let
+        # anybody unsubscribe everybody.
+        def _build(address: str):
+            url = unsubscribe_service.unsubscribe_url(address)
+            return (
+                content_digest_html(sections, total, url),
+                content_digest_text(sections, total, url),
+                unsubscribe_service.list_unsubscribe_headers(address),
+            )
+
         sent, failed = await send_bulk_email(
-            recipients=recipients,
-            subject=subject,
-            html=content_digest_html(sections, total),
-            text=content_digest_text(sections, total),
+            recipients=recipients, subject=subject, build=_build
         )
         log.info("content_digest.sent", items=total, sent=sent, failed=failed)
 
