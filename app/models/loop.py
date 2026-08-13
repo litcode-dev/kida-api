@@ -86,5 +86,9 @@ class Loop(PriceSyncMixin, Base):
     download_count: Mapped[int] = mapped_column(Integer, default=0)
     play_count: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(String(20), default="ready", server_default="ready", nullable=False)
+    # When this loop went into a new-content digest. NULL means it is still
+    # waiting to be announced; stamped once so a retried digest cannot email
+    # the whole list about the same loop twice.
+    announced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     created_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

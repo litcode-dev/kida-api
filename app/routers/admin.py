@@ -37,7 +37,7 @@ from app.services import (
     auth_service, broadcast_service, loop_service, drone_service, drum_kit_service, cache_service,
 )
 from app.services.admin_analytics_service import get_platform_analytics
-from app.tasks.notification_tasks import send_broadcast_email, send_new_content_emails
+from app.tasks.notification_tasks import send_broadcast_email
 from app.tasks.upload_tasks import process_drone_upload, process_drum_sample_upload, process_loop_upload
 import uuid
 from datetime import date
@@ -723,7 +723,6 @@ async def upload_loop(
     )
     loop = await loop_service.create_loop(db, file, data, admin.id, thumbnail=thumbnail)
     process_loop_upload.delay(str(loop.id))
-    send_new_content_emails.delay(loop.title, "loop")
     return success(LoopResponse.model_validate(loop).model_dump(), "Loop upload queued")
 
 
@@ -848,7 +847,6 @@ async def upload_drone(
         _structlog.get_logger().warning("cache_invalidation_failed", endpoint="upload_drone", error=str(e))
     for pad in drone.pads:
         process_drone_upload.delay(str(pad.id))
-    send_new_content_emails.delay(drone.title, "drone_pad")
     return success(DroneResponse.model_validate(drone).model_dump(), "Drone pad upload queued")
 
 
@@ -895,7 +893,6 @@ async def bulk_upload_drones(
         _structlog.get_logger().warning("cache_invalidation_failed", endpoint="bulk_upload_drones", error=str(e))
     for pad in pads:
         process_drone_upload.delay(str(pad.id))
-    send_new_content_emails.delay(drone.title, "drone_pad")
 
     return success(
         DroneResponse.model_validate(drone).model_dump(),
@@ -1041,7 +1038,6 @@ async def create_drum_kit(
     )
     for sid in sample_ids:
         process_drum_sample_upload.delay(sid)
-    send_new_content_emails.delay(kit.title, "drum_kit")
     try:
         await cache_service.delete_pattern("drum_kit:list:*")
     except Exception as e:

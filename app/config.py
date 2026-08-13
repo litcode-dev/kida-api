@@ -47,6 +47,18 @@ class Settings(BaseSettings):
     # Frontend
     frontend_url: str = "https://litmusic.app"
 
+    # New-content digest
+    # One email a day listing everything that went live, instead of one email
+    # per item to every recipient. Push notifications still fire per item, so
+    # nothing here delays the "it's live" signal — this is the roundup.
+    content_digest_enabled: bool = True
+    # Hour (UTC) the digest is sent. 17:00 UTC is 18:00 in Lagos — evening,
+    # after work, for the audience this catalogue is built for.
+    content_digest_hour_utc: int = 17
+    # How many addresses go in one provider request. Resend's batch endpoint
+    # caps at 100.
+    email_batch_size: int = 100
+
     # Email
     email_backend: str = "resend"  # "resend" | "smtp"
     resend_api_key: str = ""

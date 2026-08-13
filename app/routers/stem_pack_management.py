@@ -30,7 +30,6 @@ from app.schemas.stem_pack import (
     StemResponse,
 )
 from app.services import stem_arrangement_service, stem_pack_service
-from app.tasks.notification_tasks import send_new_content_emails
 from app.tasks.render_tasks import render_stem_arrangement
 from app.tasks.upload_tasks import process_stem_upload
 
@@ -352,8 +351,12 @@ def build_stem_pack_router(actor_dependency, enforce_ownership: bool) -> APIRout
 
     @router.post(
         "/{pack_id}/publish",
-        summary="Announce the pack",
-        description="Emails users and newsletter subscribers that the pack is live.",
+        summary="Publish the pack",
+        description=(
+            "Marks the pack as live and queues it for the next new-content digest — "
+            "one email a day listing everything that went live, rather than an email "
+            "per item. Publishing twice does not announce it twice."
+        ),
     )
     @limiter.limit("5/minute")
     async def publish_stem_pack(
@@ -369,8 +372,11 @@ def build_stem_pack_router(actor_dependency, enforce_ownership: bool) -> APIRout
                 f"Pack is {status['status']} — every stem must finish processing first",
                 status_code=409,
             )
-        send_new_content_emails.delay(pack.title, "stem_pack")
-        return success(message="Stem pack announced")
+        published_at = await stem_pack_service.publish(db, pack_id)
+        return success(
+            {"id": str(pack.id), "published_at": published_at.isoformat()},
+            "Stem pack published — it will feature in the next digest",
+        )
 
     # --- Arrangements ---
 

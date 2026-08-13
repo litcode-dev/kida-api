@@ -1,4 +1,5 @@
 from celery import Celery
+from celery.schedules import crontab
 from app.config import get_settings
 
 settings = get_settings()
@@ -32,6 +33,13 @@ celery_app.conf.beat_schedule = {
     "reconcile-store-prices": {
         "task": "app.tasks.price_sync_tasks.reconcile_store_prices",
         "schedule": float(settings.price_sync_interval_seconds),
+    },
+    # One roundup a day rather than an email per upload. A fixed hour, not an
+    # interval, so it lands at a predictable time for readers; the task sends
+    # nothing at all when there is nothing new.
+    "new-content-digest": {
+        "task": "app.tasks.notification_tasks.send_content_digest",
+        "schedule": crontab(hour=settings.content_digest_hour_utc, minute=0),
     },
 }
 celery_app.conf.timezone = "UTC"

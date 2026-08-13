@@ -219,31 +219,68 @@ def send_purchase_confirmation(user_id: str, purchase_id: str):
 
 
 @celery_app.task
-def send_new_content_emails(title: str, content_type: str):
-    """Email all users + active newsletter subscribers about a new content drop."""
-    async def _run():
-        from app.database import AsyncSessionLocal
-        from app.models.user import User
-        from app.models.newsletter import NewsletterSubscriber
-        from app.services.email_service import send_email, new_content_html, new_content_text
-        from sqlalchemy import select
+def send_content_digest():
+    """One email listing everything that went live since the last run.
 
-        subject = f"New {content_type.replace('_', ' ').title()} on Kida — {title}"
-        html = new_content_html(title, content_type)
-        text = new_content_text(title, content_type)
+    Replaces the old per-item blast, which cost recipients x items and fired at
+    upload time — before the processing job had finished, so a failed encode
+    still reached the whole list. Push notifications still go out per item the
+    moment it is ready; this is the roundup, not the alert.
+    """
+    async def _run():
+        from app.config import get_settings
+        from app.database import AsyncSessionLocal
+        from app.schemas.broadcast import BroadcastAudience
+        from app.services import broadcast_service, content_digest_service
+        from app.services.email_service import (
+            content_digest_html, content_digest_text, send_bulk_email,
+        )
+
+        settings = get_settings()
+        if not settings.content_digest_enabled:
+            log.info("content_digest.disabled")
+            return
 
         async with AsyncSessionLocal() as db:
-            # Accounts pending deletion are excluded — they asked to leave.
-            user_emails = set(
-                await db.scalars(select(User.email).where(User.deleted_at.is_(None)))
-            )
-            subscriber_emails = set(await db.scalars(
-                select(NewsletterSubscriber.email).where(NewsletterSubscriber.is_active == True)
-            ))
+            digest, claim_ids = await content_digest_service.collect(db)
+            if digest.is_empty():
+                log.info("content_digest.nothing_new")
+                return
 
-        all_emails = user_emails | subscriber_emails
-        for email in all_emails:
-            await send_email(to=email, subject=subject, html=html, text=text)
+            # Everyone who gets marketing mail: users and newsletter
+            # subscribers, minus anyone who unsubscribed. The old per-item task
+            # emailed every user regardless of that opt-out.
+            recipients = await broadcast_service.resolve_recipients(
+                db, BroadcastAudience.all
+            )
+            if not recipients:
+                log.info("content_digest.no_recipients", items=digest.total)
+                return
+
+            sections = digest.sections()
+            total = digest.total
+
+            # Claimed before sending: a crashed send must not re-blast the same
+            # digest to the whole list on the next run. The ids are logged so a
+            # lost digest can be reconstructed.
+            claimed = await content_digest_service.claim(db, claim_ids)
+            log.info(
+                "content_digest.claimed",
+                items=claimed,
+                recipients=len(recipients),
+                ids={k: [str(i) for i in v] for k, v in claim_ids.items() if v},
+            )
+
+        subject = (
+            "1 new drop on Kida" if total == 1 else f"{total} new drops on Kida"
+        )
+        sent, failed = await send_bulk_email(
+            recipients=recipients,
+            subject=subject,
+            html=content_digest_html(sections, total),
+            text=content_digest_text(sections, total),
+        )
+        log.info("content_digest.sent", items=total, sent=sent, failed=failed)
 
     asyncio.run(_run())
 

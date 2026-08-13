@@ -12,6 +12,7 @@ from app.config import get_settings
 log = structlog.get_logger()
 
 _RESEND_URL = "https://api.resend.com/emails"
+_RESEND_BATCH_URL = "https://api.resend.com/emails/batch"
 
 
 async def _send_via_resend(settings, to: str, subject: str, html: str, text: str) -> None:
@@ -26,6 +27,81 @@ async def _send_via_resend(settings, to: str, subject: str, html: str, text: str
     async with httpx.AsyncClient(timeout=10) as client:
         resp = await client.post(_RESEND_URL, json=payload, headers=headers)
         resp.raise_for_status()
+
+
+async def _send_batch_via_resend(
+    settings, recipients: list[str], subject: str, html: str, text: str
+) -> None:
+    """One request per chunk instead of one per address.
+
+    Resend's batch endpoint takes up to 100 messages per call, so a list of
+    5,000 goes out in ~50 requests rather than 5,000 sequential ones where a
+    single slow response stalls everything behind it.
+    """
+    headers = {
+        "Authorization": f"Bearer {settings.resend_api_key}",
+        "Content-Type": "application/json",
+    }
+    payload = [
+        {
+            "from": settings.resend_from,
+            "to": [to],
+            "subject": subject,
+            "html": html,
+            "text": text,
+        }
+        for to in recipients
+    ]
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(_RESEND_BATCH_URL, json=payload, headers=headers)
+        resp.raise_for_status()
+
+
+async def send_bulk_email(
+    recipients: list[str], subject: str, html: str, text: str
+) -> tuple[int, int]:
+    """Send the same message to many addresses. Returns (sent, failed).
+
+    A failing chunk is logged and the rest still go out — one bad address or a
+    transient provider error must not cost the whole send.
+    """
+    settings = get_settings()
+    if not recipients:
+        return 0, 0
+
+    size = max(settings.email_batch_size, 1)
+    chunks = [recipients[i:i + size] for i in range(0, len(recipients), size)]
+
+    use_resend = settings.email_backend in ("resend", "fallback") and settings.resend_api_key
+    sent = failed = 0
+
+    for chunk in chunks:
+        if use_resend:
+            try:
+                await _send_batch_via_resend(settings, chunk, subject, html, text)
+                sent += len(chunk)
+                continue
+            except Exception as exc:  # noqa: BLE001 - one chunk must not stop the rest
+                log.error(
+                    "email.bulk.chunk_failed",
+                    backend="resend", size=len(chunk), subject=subject, error=str(exc),
+                )
+                if settings.email_backend != "fallback":
+                    failed += len(chunk)
+                    continue
+
+        # SMTP has no batch endpoint, and it is also where "fallback" lands
+        # when the Resend chunk failed.
+        for address in chunk:
+            try:
+                await send_email(to=address, subject=subject, html=html, text=text)
+                sent += 1
+            except Exception as exc:  # noqa: BLE001
+                log.error("email.bulk.failed", to=address, subject=subject, error=str(exc))
+                failed += 1
+
+    log.info("email.bulk.done", subject=subject, sent=sent, failed=failed)
+    return sent, failed
 
 
 async def _send_via_smtp(settings, to: str, subject: str, html: str, text: str) -> None:
@@ -854,6 +930,72 @@ _CONTENT_TYPE_LABELS = {
     "drum_kit": ("Drum Kit", "DRUM KITS"),
     "drone_pad": ("Drone Pad", "DRONE PADS"),
 }
+
+
+def content_digest_html(sections, total: int) -> str:
+    """The daily roundup: everything that went live, grouped by type.
+
+    ``sections`` is a list of (content_type, label, items) where each item has
+    ``title`` and an optional ``subtitle``.
+    """
+    blocks = []
+    for _key, label, items in sections:
+        rows = "".join(
+            f"""
+            <tr><td style="padding:6px 0;border-bottom:1px solid #eee;">
+              <p style="margin:0;font-size:15px;font-weight:700;color:#0a0a0a;">{item.title}</p>
+              {f'<p style="margin:2px 0 0 0;font-size:12px;color:#777;">{item.subtitle}</p>' if item.subtitle else ''}
+            </td></tr>"""
+            for item in items
+        )
+        blocks.append(f"""
+          <tr><td style="padding:20px 0 6px 0;">
+            <p style="margin:0;font-size:11px;font-weight:800;letter-spacing:0.14em;text-transform:uppercase;color:#1FBF62;">{label}</p>
+          </td></tr>
+          <tr><td><table width="100%" cellpadding="0" cellspacing="0">{rows}</table></td></tr>""")
+
+    headline = "1 new drop on Kida" if total == 1 else f"{total} new drops on Kida"
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#e8e3d9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#e8e3d9;">
+  <tr><td align="center" style="padding:32px 16px;">
+    <table width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#fff;border-radius:8px;">
+      <tr><td style="padding:32px 32px 8px 32px;">
+        <p style="margin:0 0 6px 0;color:#1FBF62;font-size:12px;font-weight:800;letter-spacing:0.15em;text-transform:uppercase;">FRESH DROPS</p>
+        <h1 style="margin:0;font-size:24px;color:#0a0a0a;">{headline}</h1>
+        <p style="margin:10px 0 0 0;font-size:14px;color:#555;line-height:1.6;">
+          Here is everything that went live since the last roundup.
+        </p>
+      </td></tr>
+      <tr><td style="padding:0 32px;"><table width="100%" cellpadding="0" cellspacing="0">{''.join(blocks)}</table></td></tr>
+      <tr><td style="padding:24px 32px 32px 32px;">
+        <a href="https://kida.litcode.com.ng"
+           style="display:inline-block;background:#1FBF62;color:#fff;text-decoration:none;padding:12px 22px;border-radius:6px;font-size:14px;font-weight:700;">
+          Browse the catalogue
+        </a>
+      </td></tr>
+      {_brand_footer()}
+    </table>
+  </td></tr>
+</table>
+</body>
+</html>"""
+
+
+def content_digest_text(sections, total: int) -> str:
+    headline = "1 new drop on Kida" if total == 1 else f"{total} new drops on Kida"
+    lines = [headline, "", "Everything that went live since the last roundup:", ""]
+    for _key, label, items in sections:
+        lines.append(f"{label.upper()}")
+        for item in items:
+            suffix = f" ({item.subtitle})" if item.subtitle else ""
+            lines.append(f"  - {item.title}{suffix}")
+        lines.append("")
+    lines.append("Browse the catalogue: https://kida.litcode.com.ng")
+    return "\n".join(lines) + _text_footer()
 
 
 def new_content_html(title: str, content_type: str) -> str:

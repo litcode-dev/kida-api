@@ -92,6 +92,16 @@ class StemPack(Base):
     tags: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)
     price: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Unlike loops, drones and kits — which are announced as soon as their audio
+    # is ready — a pack is only announced once its producer publishes it, since
+    # a half-filled breakdown pack is not something to email anyone about.
+    published_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+    # See Loop.announced_at.
+    announced_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
     created_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

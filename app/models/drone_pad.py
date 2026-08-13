@@ -57,6 +57,11 @@ class Drone(PriceSyncMixin, Base):
         ForeignKey("drone_pad_categories.id", ondelete="SET NULL"),
         nullable=True,
     )
+    # See Loop.announced_at. A drone is announced as one item however many pads
+    # it has, so the stamp lives here rather than on DronePad.
+    announced_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
     created_by: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
     )

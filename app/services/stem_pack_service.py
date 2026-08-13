@@ -1,5 +1,6 @@
 import re
 import uuid
+from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
@@ -467,6 +468,21 @@ async def upload_status(db: AsyncSession, pack_id: uuid.UUID) -> dict:
             for s in stems
         ],
     }
+
+
+async def publish(db: AsyncSession, pack_id: uuid.UUID) -> datetime:
+    """Mark a pack live so the next new-content digest picks it up.
+
+    Idempotent: publishing again keeps the original timestamp, so a second call
+    cannot get the pack into a second digest. Announcement itself is the
+    digest's job — nothing is emailed here.
+    """
+    pack = await get_stem_pack(db, pack_id)
+    if pack.published_at is None:
+        pack.published_at = datetime.now(timezone.utc)
+        await db.commit()
+        await db.refresh(pack)
+    return pack.published_at
 
 
 async def delete_stem_pack(db: AsyncSession, pack_id: uuid.UUID) -> None:
