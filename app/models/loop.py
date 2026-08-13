@@ -44,6 +44,8 @@ class Genre(str, enum.Enum):
     afro_pop = "Afro Pop"
     hip_hop = "Hip Hop"
     rnb = "R&B"
+    kompa = "Kompa"
+    fuji = "Fuji"
 
 
 class TempoFeel(str, enum.Enum):

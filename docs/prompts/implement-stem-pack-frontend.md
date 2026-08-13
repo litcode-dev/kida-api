@@ -76,7 +76,8 @@ type Genre =
   | "Afrobeat" | "Amapiano" | "Trap" | "Boom Bap" | "Lo-fi" | "Gospel"
   | "Afrobeat Worship" | "Contemporary Worship" | "Dancehall" | "Afrohouse"
   | "Highlife Gospel" | "African Praise" | "Drill" | "Seben" | "Reggae"
-  | "Highlife" | "Soukous" | "Rumba" | "Afro Pop" | "Hip Hop" | "R&B";
+  | "Highlife" | "Soukous" | "Rumba" | "Afro Pop" | "Hip Hop" | "R&B"
+  | "Kompa" | "Fuji";
 
 type StemStatus = "processing" | "ready" | "failed";
 type ArrangementStatus = "rendering" | "ready" | "stale" | "failed" | "draft";
