@@ -4,7 +4,6 @@ from datetime import date
 from decimal import Decimal
 from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile
 from pydantic import ValidationError
-from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.exceptions import AppError, ForbiddenError
@@ -22,10 +21,8 @@ from app.schemas.drone_pad import (
 from app.schemas.loop import LoopCreate, LoopFilter, LoopUpdate, LoopResponse
 from app.schemas.producer_analytics import AnalyticsParams, AnalyticsPeriod
 from app.routers.stem_pack_management import build_stem_pack_router
-from app.models.drum_kit import DrumKit
 from app.models.drone_pad import MusicalKey
 from app.models.loop import Genre, TempoFeel
-from app.models.user import User
 from app.services import cache_service, drum_kit_service, drone_service, loop_service
 from app.services.producer_analytics_service import get_producer_analytics
 from app.tasks.upload_tasks import process_drone_upload, process_drum_sample_upload, process_loop_upload
@@ -84,6 +81,7 @@ async def list_producer_loops(
     key: str | None = None,
     tempo_feel: TempoFeel | None = None,
     is_free: bool | None = None,
+    tags: str | None = None,
     sort: str = "newest",
     page: int = 1,
     page_size: int = 20,
@@ -93,6 +91,7 @@ async def list_producer_loops(
     filters = LoopFilter(
         search=search, genre=genre, bpm_min=bpm_min, bpm_max=bpm_max,
         key=key, tempo_feel=tempo_feel, is_free=is_free, sort=sort,
+        tags=[t.strip() for t in tags.split(",") if t.strip()] if tags else None,
         page=page, page_size=page_size, created_by=producer.id,
     )
     loops, total = await loop_service.list_loops(db, filters)

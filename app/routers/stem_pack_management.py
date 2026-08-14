@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.exceptions import AppError, ForbiddenError
 from app.middleware.rate_limit import limiter
+from app.models.loop import Genre
 from app.models.stem_pack import StemInstrument, StemPackType
 from app.schemas.common import success
 from app.schemas.stem_pack import (
@@ -65,6 +66,7 @@ def build_stem_pack_router(actor_dependency, enforce_ownership: bool) -> APIRout
     async def list_stem_packs(
         request: Request,
         search: str | None = None,
+        genre: Genre | None = None,
         pack_type: StemPackType | None = None,
         tags: str | None = None,
         page: int = 1,
@@ -74,6 +76,7 @@ def build_stem_pack_router(actor_dependency, enforce_ownership: bool) -> APIRout
     ):
         filters = StemPackFilter(
             search=search,
+            genre=genre,
             pack_type=pack_type,
             tags=_parse_csv(tags) or None,
             page=page,

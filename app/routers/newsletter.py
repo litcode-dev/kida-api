@@ -111,29 +111,21 @@ def _one_click_page(title: str, eyebrow: str, heading: str, body: str, status: i
     )
 
 
-@router.api_route(
-    "/unsubscribe/one-click",
-    methods=["GET", "POST"],
-    summary="One-click unsubscribe",
-    description=(
-        "The address in a marketing email's footer and its `List-Unsubscribe` header. "
-        "GET is what a person clicking the link hits and returns a confirmation page; "
-        "POST is what a mail client sends on their behalf under RFC 8058. No login, no "
-        "confirmation step — one click and the address stops receiving marketing mail.\n\n"
-        "`token` is an HMAC of the address, so an address can only be unsubscribed by "
-        "someone holding a link that was actually sent to it."
-    ),
-    responses={
-        200: {"description": "Unsubscribed, or already unsubscribed"},
-        400: {"description": "Missing or invalid token"},
-    },
-    include_in_schema=True,
+_ONE_CLICK_DOC = (
+    "The address in a marketing email's footer and its `List-Unsubscribe` header. "
+    "GET is what a person clicking the link hits and returns a confirmation page; "
+    "POST is what a mail client sends on their behalf under RFC 8058. No login, no "
+    "confirmation step — one click and the address stops receiving marketing mail.\n\n"
+    "`token` is an HMAC of the address, so an address can only be unsubscribed by "
+    "someone holding a link that was actually sent to it."
 )
-async def unsubscribe_one_click(
-    email: str,
-    token: str,
-    db: AsyncSession = Depends(get_db),
-):
+_ONE_CLICK_RESPONSES = {
+    200: {"description": "Unsubscribed, or already unsubscribed"},
+    400: {"description": "Missing or invalid token"},
+}
+
+
+async def _unsubscribe_one_click(email: str, token: str, db: AsyncSession) -> HTMLResponse:
     if not unsubscribe_service.verify_token(email, token):
         log.warning("newsletter.one_click.bad_token", email=email)
         return _one_click_page(
@@ -159,3 +151,30 @@ async def unsubscribe_one_click(
         ),
         status=200,
     )
+
+
+# Two decorators rather than one api_route serving both methods: FastAPI
+# derives an operation id per method, so a single handler on GET and POST
+# emits the same id twice and collides in generated clients.
+@router.get(
+    "/unsubscribe/one-click",
+    summary="One-click unsubscribe",
+    description=_ONE_CLICK_DOC,
+    responses=_ONE_CLICK_RESPONSES,
+)
+async def unsubscribe_one_click(
+    email: str, token: str, db: AsyncSession = Depends(get_db)
+):
+    return await _unsubscribe_one_click(email, token, db)
+
+
+@router.post(
+    "/unsubscribe/one-click",
+    summary="One-click unsubscribe (RFC 8058)",
+    description="What a mail client POSTs to the `List-Unsubscribe` URL itself.",
+    responses=_ONE_CLICK_RESPONSES,
+)
+async def unsubscribe_one_click_post(
+    email: str, token: str, db: AsyncSession = Depends(get_db)
+):
+    return await _unsubscribe_one_click(email, token, db)

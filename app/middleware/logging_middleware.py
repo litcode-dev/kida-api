@@ -3,7 +3,6 @@ import time
 import structlog
 from starlette.types import ASGIApp, Receive, Scope, Send
 from starlette.requests import Request
-from starlette.responses import Response
 
 logger = structlog.get_logger()
 

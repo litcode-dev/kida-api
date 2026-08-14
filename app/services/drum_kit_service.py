@@ -1,11 +1,11 @@
 import uuid
 import re
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import selectinload
 from fastapi import UploadFile
 from app.models.drum_kit import DrumKit, DrumSample
-from app.schemas.drum_kit import DrumKitCreate, DrumKitFilter
+from app.schemas.drum_kit import DrumKitCreate, DrumKitFilter, DrumKitUpdate
 from app.exceptions import NotFoundError, AppError
 from app.services import price_sync_service, readiness, s3_service, store_sku
 from app.utils.audio_validator import validate_wav_upload
@@ -96,10 +96,9 @@ async def get_drum_kit(db: AsyncSession, kit_id: uuid.UUID) -> DrumKit:
 async def update_drum_kit(
     db: AsyncSession,
     kit_id: uuid.UUID,
-    data: "DrumKitUpdate",
+    data: DrumKitUpdate,
     thumbnail: UploadFile | None = None,
 ) -> DrumKit:
-    from app.schemas.drum_kit import DrumKitUpdate
     kit = await get_drum_kit(db, kit_id)
 
     if thumbnail:
@@ -138,7 +137,10 @@ async def list_drum_kits(db: AsyncSession, filters: DrumKitFilter) -> tuple[list
     if filters.created_by:
         q = q.where(DrumKit.created_by == filters.created_by)
     if filters.search:
-        q = q.where(DrumKit.title.ilike(f"%{filters.search}%"))
+        # Title and description, ORed — matching how loops, packs and drones
+        # search. A kit has no genre or category to fold in.
+        like = f"%{filters.search}%"
+        q = q.where(or_(DrumKit.title.ilike(like), DrumKit.description.ilike(like)))
     if filters.is_free is not None:
         q = q.where(DrumKit.is_free == filters.is_free)
     if filters.tags:

@@ -7,7 +7,7 @@ from app.models.purchase import Purchase, PurchaseType, PaymentProvider
 from app.models.loop import Loop
 from app.models.stem_pack import StemPack
 from app.models.user import User
-from app.exceptions import NotFoundError, PaymentError, AppError
+from app.exceptions import NotFoundError, AppError
 from app.schemas.purchase import CheckoutRequest
 from app.services import flutterwave_service, paystack_service
 

@@ -566,3 +566,108 @@ async def test_a_zero_page_no_longer_500s(client, db_session):
 
     assert resp.status_code == 200
     assert resp.json()["data"]["items"]
+
+
+# ── filters that existed in the service but no route could reach ──────────────
+
+
+@pytest.mark.asyncio
+async def test_loops_can_be_filtered_by_tag(client, db_session):
+    """LoopFilter.tags was implemented and unreachable — no route exposed it."""
+    user = await _user(db_session)
+    tagged = await _loop(db_session, user.id, title="Dark Loop")
+    tagged.tags = ["dark", "808"]
+    plain = await _loop(db_session, user.id, title="Bright Loop")
+    plain.tags = ["bright"]
+    await db_session.commit()
+
+    resp = await client.get(
+        "/api/v1/loops?tags=808", headers={"Authorization": f"Bearer {_token(user)}"}
+    )
+
+    assert resp.status_code == 200
+    assert [i["title"] for i in resp.json()["data"]["items"]] == ["Dark Loop"]
+
+
+@pytest.mark.asyncio
+async def test_drum_kit_search_covers_the_description(db_session):
+    from app.models.drum_kit import DrumKit, DrumSample
+    from app.schemas.drum_kit import DrumKitFilter
+    from app.services import drum_kit_service
+
+    user = await _user(db_session)
+
+    async def _kit(title, description):
+        kit = DrumKit(
+            id=uuid.uuid4(), title=title, slug=uuid.uuid4().hex[:12], tags=[],
+            is_free=True, description=description, created_by=user.id,
+        )
+        db_session.add(kit)
+        await db_session.flush()
+        db_session.add(DrumSample(
+            id=uuid.uuid4(), drum_kit_id=kit.id, label="Kick",
+            status="ready", duration=1,
+        ))
+        await db_session.commit()
+
+    await _kit("Untitled Kit", "punchy amapiano log drums")
+    await _kit("Other Kit", "trap hats")
+
+    kits, _total = await drum_kit_service.list_drum_kits(
+        db_session, DrumKitFilter(search="amapiano")
+    )
+
+    assert [k.title for k in kits] == ["Untitled Kit"]
+
+
+def test_kit_and_pack_pagination_is_bounded():
+    from app.schemas.drum_kit import DrumKitFilter
+    from app.schemas.stem_pack import StemPackFilter
+
+    for filter_cls in (DrumKitFilter, StemPackFilter):
+        assert filter_cls(page_size=100_000).page_size == 100
+        assert filter_cls(page_size=0).page_size == 1
+        assert filter_cls(page=0).page == 1
+        assert filter_cls(page=-2).page == 1
+
+
+@pytest.mark.asyncio
+async def test_tag_filtering_works_on_every_catalogue(db_session):
+    """The tag filter compiled but blew up at runtime: the columns used the
+    generic ARRAY type, and .overlap() is a Postgres dialect operator."""
+    from app.models.drum_kit import DrumKit, DrumSample
+    from app.models.stem_pack import StemPack, StemPackType
+    from app.schemas.drum_kit import DrumKitFilter
+    from app.schemas.stem_pack import StemPackFilter
+    from app.services import drum_kit_service, stem_pack_service
+
+    user = await _user(db_session)
+
+    tagged = await _loop(db_session, user.id, title="Tagged Loop")
+    tagged.tags = ["808", "dark"]
+    await db_session.commit()
+
+    kit = DrumKit(
+        id=uuid.uuid4(), title="Tagged Kit", slug=uuid.uuid4().hex[:12],
+        tags=["808"], is_free=True, created_by=user.id,
+    )
+    db_session.add(kit)
+    await db_session.flush()
+    db_session.add(DrumSample(
+        id=uuid.uuid4(), drum_kit_id=kit.id, label="Kick", status="ready", duration=1,
+    ))
+    pack = StemPack(
+        id=uuid.uuid4(), title="Tagged Pack", slug=uuid.uuid4().hex[:12],
+        genre=Genre.afrobeat, pack_type=StemPackType.long_form, bpm=100, key="C",
+        tags=["808"], price=Decimal("20.00"), created_by=user.id,
+    )
+    db_session.add(pack)
+    await db_session.commit()
+
+    loops, _ = await loop_service.list_loops(db_session, LoopFilter(tags=["808"]))
+    kits, _ = await drum_kit_service.list_drum_kits(db_session, DrumKitFilter(tags=["808"]))
+    packs, _ = await stem_pack_service.list_stem_packs(db_session, StemPackFilter(tags=["808"]))
+
+    assert [l.title for l in loops] == ["Tagged Loop"]
+    assert [k.title for k in kits] == ["Tagged Kit"]
+    assert [p.title for p in packs] == ["Tagged Pack"]

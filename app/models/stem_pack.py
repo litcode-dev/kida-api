@@ -3,10 +3,10 @@ import enum
 from datetime import datetime
 from decimal import Decimal
 from sqlalchemy import (
-    String, Integer, Numeric, Text, DateTime, ForeignKey, func, ARRAY,
+    String, Integer, Numeric, Text, DateTime, ForeignKey, func,
     Boolean, Index, UniqueConstraint, Enum as SAEnum, text,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 from app.models.loop import Genre
@@ -89,6 +89,9 @@ class StemPack(Base):
     )
     bpm: Mapped[int] = mapped_column(Integer, nullable=False)
     key: Mapped[str] = mapped_column(String(50), nullable=False)
+    # Postgres ARRAY, not the generic one: the tag filter uses .overlap(),
+    # which is a dialect operator the generic type does not carry. The DDL
+    # is identical either way, so this needs no migration.
     tags: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)
     price: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)

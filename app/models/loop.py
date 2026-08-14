@@ -5,9 +5,9 @@ from datetime import datetime
 from decimal import Decimal
 from sqlalchemy import (
     String, Integer, Boolean, Numeric, Text,
-    DateTime, Enum as SAEnum, ForeignKey, func, ARRAY
+    DateTime, Enum as SAEnum, ForeignKey, func,
 )
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.dialects.postgresql import ARRAY, UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 from app.database import Base
 from app.models.price_sync import PriceSyncMixin
@@ -93,6 +93,9 @@ class Loop(PriceSyncMixin, Base):
     key: Mapped[str | None] = mapped_column(String(50), nullable=True)
     duration: Mapped[int] = mapped_column(Integer, nullable=False)
     tempo_feel: Mapped[TempoFeel] = mapped_column(SAEnum(TempoFeel), nullable=False)
+    # Postgres ARRAY, not the generic one: the tag filter uses .overlap(),
+    # which is a dialect operator the generic type does not carry. The DDL
+    # is identical either way, so this needs no migration.
     tags: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)
     price: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
     is_free: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)

@@ -1,10 +1,9 @@
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 import httpx
 from app.database import get_db
 from app.middleware.auth_middleware import get_current_user
-from app.middleware.rate_limit import limiter
 from app.services import (
     loop_service, s3_service, like_service, free_tier_service, monthly_quota_service,
 )
@@ -39,6 +38,7 @@ async def list_loops(
     key: str | None = None,
     tempo_feel: TempoFeel | None = None,
     is_free: bool | None = None,
+    tags: str | None = Query(None, description="Comma-separated tags, e.g. `808,dark`"),
     sort: str = "newest",
     page: int = 1,
     page_size: int = 20,
@@ -49,6 +49,7 @@ async def list_loops(
         ready_only=True,
         search=search, genre=genre, bpm_min=bpm_min, bpm_max=bpm_max,
         key=key, tempo_feel=tempo_feel, is_free=is_free,
+        tags=[t.strip() for t in tags.split(",") if t.strip()] if tags else None,
         sort=sort, page=page, page_size=page_size,
     )
     loops, total = await loop_service.list_loops(db, filters)

@@ -220,7 +220,14 @@ class StemPackFilter(BaseModel):
     @field_validator("page_size")
     @classmethod
     def cap_page_size(cls, v: int) -> int:
-        return min(v, 100)
+        return min(max(v, 1), 100)
+
+    @field_validator("page")
+    @classmethod
+    def floor_page(cls, v: int) -> int:
+        # page 0 becomes a negative OFFSET, which Postgres refuses outright.
+        return max(v, 1)
+
 
 
 class StemDownloadItem(BaseModel):

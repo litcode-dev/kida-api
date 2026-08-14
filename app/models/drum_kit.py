@@ -1,8 +1,8 @@
 import uuid
 from datetime import datetime
 from decimal import Decimal
-from sqlalchemy import String, Integer, Text, DateTime, ForeignKey, func, ARRAY, Boolean, Numeric
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import String, Integer, Text, DateTime, ForeignKey, func, Boolean, Numeric
+from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 from app.models.price_sync import PriceSyncMixin
@@ -16,6 +16,9 @@ class DrumKit(PriceSyncMixin, Base):
     slug: Mapped[str] = mapped_column(String(300), unique=True, index=True, nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     thumbnail_s3_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # Postgres ARRAY, not the generic one: the tag filter uses .overlap(),
+    # which is a dialect operator the generic type does not carry. The DDL
+    # is identical either way, so this needs no migration.
     tags: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)
     is_free: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)

@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, or_
+from sqlalchemy import select
 from app.database import get_db
 from app.middleware.auth_middleware import get_current_user
 from app.middleware.rate_limit import limiter
