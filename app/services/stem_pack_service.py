@@ -27,7 +27,7 @@ from app.schemas.stem_pack import (
     StemPartUpdate,
 )
 from app.exceptions import AppError, ConflictError, EntitlementError, NotFoundError
-from app.services import s3_service
+from app.services import readiness, s3_service
 from app.utils.audio_validator import validate_wav_upload
 
 MAX_STEMS_PER_UPLOAD = len(StemInstrument)
@@ -138,6 +138,8 @@ def _search_clause(query: str):
 
 async def list_stem_packs(db: AsyncSession, filters: StemPackFilter) -> tuple[list[StemPack], int]:
     q = select(StemPack)
+    if filters.ready_only:
+        q = q.where(readiness.stem_pack_is_ready())
     if filters.created_by:
         q = q.where(StemPack.created_by == filters.created_by)
     if filters.search:

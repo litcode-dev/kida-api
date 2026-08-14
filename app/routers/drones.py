@@ -70,6 +70,7 @@ async def list_drones(
 
     async def _fetch():
         filters = DronePadFilter(
+            ready_only=True,
             search=search, key=key, is_free=is_free, category_id=category_id,
             page=page, page_size=page_size,
         )

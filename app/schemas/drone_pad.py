@@ -88,6 +88,9 @@ class DroneResponse(BaseModel):
 
 
 class DronePadFilter(BaseModel):
+    # Public callers set this; producer and admin listings leave it off so a
+    # producer can still watch their own uploads move through processing.
+    ready_only: bool = False
     search: str | None = None
     key: MusicalKey | None = None
     is_free: bool | None = None

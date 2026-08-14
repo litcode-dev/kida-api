@@ -84,6 +84,9 @@ class DrumKitDownloadResponse(BaseModel):
 
 
 class DrumKitFilter(BaseModel):
+    # Public callers set this; producer and admin listings leave it off so a
+    # producer can still watch their own uploads move through processing.
+    ready_only: bool = False
     search: str | None = None
     is_free: bool | None = None
     tags: list[str] | None = None

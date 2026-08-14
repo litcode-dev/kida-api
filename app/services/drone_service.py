@@ -15,7 +15,7 @@ from app.schemas.drone_pad import (
     DronePadUpdate,
 )
 from app.exceptions import NotFoundError, EntitlementError
-from app.services import monthly_quota_service, price_sync_service, s3_service
+from app.services import monthly_quota_service, price_sync_service, readiness, s3_service
 from app.utils.audio_validator import validate_wav_upload
 
 
@@ -171,6 +171,8 @@ def _search_clause(query: str):
 
 async def list_drones(db: AsyncSession, filters: DronePadFilter) -> tuple[list[Drone], int]:
     q = select(Drone)
+    if filters.ready_only:
+        q = q.where(readiness.drone_is_ready())
     if filters.created_by:
         q = q.where(Drone.created_by == filters.created_by)
     if filters.search:

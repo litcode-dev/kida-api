@@ -69,6 +69,7 @@ async def list_drum_kits(
 
     async def _fetch():
         filters = DrumKitFilter(
+            ready_only=True,
             search=search,
             is_free=is_free,
             tags=[t.strip() for t in tags.split(",") if t.strip()] if tags else None,

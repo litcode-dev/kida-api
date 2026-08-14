@@ -97,6 +97,7 @@ async def list_stem_packs(
     user=Depends(get_current_user),
 ):
     filters = StemPackFilter(
+        ready_only=True,
         search=search,
         genre=genre,
         pack_type=pack_type,

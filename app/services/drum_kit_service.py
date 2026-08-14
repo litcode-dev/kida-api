@@ -7,7 +7,7 @@ from fastapi import UploadFile
 from app.models.drum_kit import DrumKit, DrumSample
 from app.schemas.drum_kit import DrumKitCreate, DrumKitFilter
 from app.exceptions import NotFoundError, AppError
-from app.services import price_sync_service, s3_service, store_sku
+from app.services import price_sync_service, readiness, s3_service, store_sku
 from app.utils.audio_validator import validate_wav_upload
 
 MAX_SAMPLES_PER_KIT = 50
@@ -133,6 +133,8 @@ async def update_drum_kit(
 
 async def list_drum_kits(db: AsyncSession, filters: DrumKitFilter) -> tuple[list[DrumKit], int]:
     q = select(DrumKit)
+    if filters.ready_only:
+        q = q.where(readiness.drum_kit_is_ready())
     if filters.created_by:
         q = q.where(DrumKit.created_by == filters.created_by)
     if filters.search:

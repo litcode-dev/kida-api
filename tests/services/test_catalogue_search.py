@@ -388,3 +388,137 @@ async def test_ready_only_ands_with_search(db_session):
     await _loop(db_session, user.id, title="Piano Processing", status="processing")
 
     assert await _titles(db_session, ready_only=True, search="piano") == ["Piano Ready"]
+
+
+# ── the same readiness rule for kits, drones and packs ────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_public_listing_hides_a_kit_with_unfinished_samples(db_session):
+    from app.models.drum_kit import DrumKit, DrumSample
+    from app.schemas.drum_kit import DrumKitFilter
+    from app.services import drum_kit_service
+
+    user = await _user(db_session)
+
+    async def _kit(title, statuses):
+        kit = DrumKit(
+            id=uuid.uuid4(), title=title, slug=uuid.uuid4().hex[:12],
+            tags=[], is_free=True, created_by=user.id,
+        )
+        db_session.add(kit)
+        await db_session.flush()
+        for status in statuses:
+            db_session.add(DrumSample(
+                id=uuid.uuid4(), drum_kit_id=kit.id, label="Kick",
+                status=status, duration=1,
+            ))
+        await db_session.commit()
+
+    await _kit("Ready Kit", ("ready", "ready"))
+    await _kit("Half Kit", ("ready", "processing"))
+    await _kit("Empty Kit", ())
+
+    kits, total = await drum_kit_service.list_drum_kits(
+        db_session, DrumKitFilter(ready_only=True)
+    )
+
+    assert [k.title for k in kits] == ["Ready Kit"]
+    assert total == 1
+
+
+@pytest.mark.asyncio
+async def test_public_listing_hides_a_drone_with_a_failed_pad(db_session):
+    from app.models.drone_pad import Drone, DronePad, MusicalKey
+    from app.schemas.drone_pad import DronePadFilter
+    from app.services import drone_service
+
+    user = await _user(db_session)
+
+    async def _drone_with(title, statuses):
+        drone = Drone(
+            id=uuid.uuid4(), title=title, price=Decimal("0.00"),
+            is_free=True, created_by=user.id,
+        )
+        db_session.add(drone)
+        await db_session.flush()
+        for status in statuses:
+            db_session.add(DronePad(
+                id=uuid.uuid4(), drone_id=drone.id, key=MusicalKey.C,
+                duration=30, status=status,
+            ))
+        await db_session.commit()
+
+    await _drone_with("Good Drone", ("ready",))
+    await _drone_with("Broken Drone", ("ready", "failed"))
+    await _drone_with("Empty Drone", ())
+
+    drones, total = await drone_service.list_drones(
+        db_session, DronePadFilter(ready_only=True)
+    )
+
+    assert [d.title for d in drones] == ["Good Drone"]
+    assert total == 1
+
+
+@pytest.mark.asyncio
+async def test_public_listing_hides_a_pack_with_unfinished_stems(db_session):
+    from app.models.stem_pack import Stem, StemInstrument, StemPack, StemPackType
+    from app.schemas.stem_pack import StemPackFilter
+    from app.services import stem_pack_service
+
+    user = await _user(db_session)
+
+    async def _pack_with(title, statuses):
+        pack = StemPack(
+            id=uuid.uuid4(), title=title, slug=uuid.uuid4().hex[:12],
+            genre=Genre.afrobeat, pack_type=StemPackType.long_form,
+            bpm=100, key="C", tags=[], price=Decimal("20.00"), created_by=user.id,
+        )
+        db_session.add(pack)
+        await db_session.flush()
+        for i, status in enumerate(statuses):
+            db_session.add(Stem(
+                id=uuid.uuid4(), stem_pack_id=pack.id,
+                instrument=list(StemInstrument)[i], label="Stem", status=status,
+            ))
+        await db_session.commit()
+
+    await _pack_with("Ready Pack", ("ready", "ready"))
+    await _pack_with("Half Pack", ("ready", "processing"))
+    await _pack_with("Empty Pack", ())
+
+    packs, total = await stem_pack_service.list_stem_packs(
+        db_session, StemPackFilter(ready_only=True)
+    )
+
+    assert [p.title for p in packs] == ["Ready Pack"]
+    assert total == 1
+
+
+@pytest.mark.asyncio
+async def test_producers_still_see_their_own_unfinished_uploads(db_session):
+    """Same split as loops: the producer view is where an upload in flight is
+    tracked, so readiness must not be filtered there."""
+    from app.models.drum_kit import DrumKit, DrumSample
+    from app.schemas.drum_kit import DrumKitFilter
+    from app.services import drum_kit_service
+
+    user = await _user(db_session)
+    kit = DrumKit(
+        id=uuid.uuid4(), title="Half Kit", slug=uuid.uuid4().hex[:12],
+        tags=[], is_free=True, created_by=user.id,
+    )
+    db_session.add(kit)
+    await db_session.flush()
+    db_session.add(DrumSample(
+        id=uuid.uuid4(), drum_kit_id=kit.id, label="Kick",
+        status="processing", duration=1,
+    ))
+    await db_session.commit()
+
+    kits, _total = await drum_kit_service.list_drum_kits(
+        db_session, DrumKitFilter(created_by=user.id)
+    )
+
+    assert [k.title for k in kits] == ["Half Kit"]

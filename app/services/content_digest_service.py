@@ -21,10 +21,11 @@ from datetime import datetime, timezone
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.drone_pad import Drone, DronePad
-from app.models.drum_kit import DrumKit, DrumSample
+from app.models.drone_pad import Drone
+from app.models.drum_kit import DrumKit
 from app.models.loop import Loop
-from app.models.stem_pack import Stem, StemPack
+from app.models.stem_pack import StemPack
+from app.services import readiness
 
 # Order the digest lists them in, and the label each group gets.
 SECTION_LABELS = [
@@ -81,18 +82,7 @@ async def _ready_drum_kits(db: AsyncSession) -> list[DrumKit]:
     # Ready means every sample finished processing, and there is at least one.
     result = await db.scalars(
         select(DrumKit)
-        .where(
-            DrumKit.announced_at.is_(None),
-            select(DrumSample.id)
-            .where(DrumSample.drum_kit_id == DrumKit.id)
-            .exists(),
-            ~select(DrumSample.id)
-            .where(
-                DrumSample.drum_kit_id == DrumKit.id,
-                DrumSample.status != "ready",
-            )
-            .exists(),
-        )
+        .where(DrumKit.announced_at.is_(None), readiness.drum_kit_is_ready())
         .order_by(DrumKit.created_at)
     )
     return list(result.all())
@@ -101,13 +91,7 @@ async def _ready_drum_kits(db: AsyncSession) -> list[DrumKit]:
 async def _ready_drones(db: AsyncSession) -> list[Drone]:
     result = await db.scalars(
         select(Drone)
-        .where(
-            Drone.announced_at.is_(None),
-            select(DronePad.id).where(DronePad.drone_id == Drone.id).exists(),
-            ~select(DronePad.id)
-            .where(DronePad.drone_id == Drone.id, DronePad.status != "ready")
-            .exists(),
-        )
+        .where(Drone.announced_at.is_(None), readiness.drone_is_ready())
         .order_by(Drone.created_at)
     )
     return list(result.all())
@@ -119,10 +103,7 @@ async def _ready_stem_packs(db: AsyncSession) -> list[StemPack]:
         .where(
             StemPack.announced_at.is_(None),
             StemPack.published_at.is_not(None),
-            select(Stem.id).where(Stem.stem_pack_id == StemPack.id).exists(),
-            ~select(Stem.id)
-            .where(Stem.stem_pack_id == StemPack.id, Stem.status != "ready")
-            .exists(),
+            readiness.stem_pack_is_ready(),
         )
         .order_by(StemPack.created_at)
     )
