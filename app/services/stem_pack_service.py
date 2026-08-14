@@ -324,12 +324,27 @@ async def _validate_placement(
     return None
 
 
-async def _assert_instrument_free(
-    db: AsyncSession, pack_id: uuid.UUID, part_id: uuid.UUID | None, instrument: StemInstrument
+async def _occupied_slots(
+    db: AsyncSession, pack_id: uuid.UUID
+) -> set[tuple[uuid.UUID | None, StemInstrument]]:
+    """Every (part, instrument) slot this pack has already filled.
+
+    One query answers the question for the whole upload. Asking per stem meant
+    a producer sending eight instruments paid eight round trips for an answer
+    that does not change between them.
+    """
+    rows = await db.execute(
+        select(Stem.part_id, Stem.instrument).where(Stem.stem_pack_id == pack_id)
+    )
+    return {(part_id, instrument) for part_id, instrument in rows}
+
+
+def _assert_instrument_free(
+    taken: set[tuple[uuid.UUID | None, StemInstrument]],
+    part_id: uuid.UUID | None,
+    instrument: StemInstrument,
 ) -> None:
-    q = select(Stem.id).where(Stem.stem_pack_id == pack_id, Stem.instrument == instrument)
-    q = q.where(Stem.part_id == part_id) if part_id else q.where(Stem.part_id.is_(None))
-    if await db.scalar(q):
+    if (part_id, instrument) in taken:
         where = "this part" if part_id else "this pack"
         raise ConflictError(
             f"{instrument_label(instrument)} already has a stem in {where} — "
@@ -360,6 +375,14 @@ async def add_stems_to_pack(
 
     pack = await get_stem_pack(db, pack_id)
 
+    # Both checks in the loop below ask per-stem questions with pack-wide
+    # answers, so both are answered once here. Loading the parts warms the
+    # identity map, which is what makes get_part inside _validate_placement
+    # free for every stem after the first.
+    if pack.pack_type == StemPackType.breakdown:
+        await db.scalars(select(StemPart).where(StemPart.stem_pack_id == pack.id))
+    taken = await _occupied_slots(db, pack_id)
+
     seen: set[tuple[uuid.UUID | None, StemInstrument]] = set()
     placements: list[uuid.UUID | None] = []
     for data in stems_data:
@@ -370,7 +393,7 @@ async def add_stems_to_pack(
                 status_code=422,
             )
         seen.add((part_id, data.instrument))
-        await _assert_instrument_free(db, pack_id, part_id, data.instrument)
+        _assert_instrument_free(taken, part_id, data.instrument)
         placements.append(part_id)
 
     created: list[Stem] = []
@@ -392,8 +415,14 @@ async def add_stems_to_pack(
         created.append(stem)
 
     await db.commit()
-    for stem in created:
-        await db.refresh(stem)
+    # One round trip for the batch rather than a refresh per stem. The rows are
+    # already in the identity map; this only fills in the server-side defaults
+    # (created_at) that the INSERT did not send back.
+    await db.execute(
+        select(Stem)
+        .where(Stem.id.in_([s.id for s in created]))
+        .execution_options(populate_existing=True)
+    )
     return created
 
 

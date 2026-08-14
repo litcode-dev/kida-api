@@ -96,6 +96,18 @@ def render_stem_arrangement(self, arrangement_id: str):
                             lambda s=representative: wav_duration_seconds(fetch_wav(s))
                         )
 
+                    # A re-render reuses the rows the last one wrote. Looking
+                    # them up once beats a lookup per instrument, and the loop
+                    # below keeps this in step with what it creates.
+                    tracks_by_instrument = {
+                        t.instrument: t
+                        for t in (await db.scalars(
+                            select(StemArrangementTrack).where(
+                                StemArrangementTrack.arrangement_id == arrangement.id
+                            )
+                        )).all()
+                    }
+
                     total_seconds = 0
                     for instrument in instruments:
                         # Only this instrument's audio is held at a time; a pack
@@ -127,18 +139,14 @@ def render_stem_arrangement(self, arrangement_id: str):
                         seconds = int(await asyncio.to_thread(wav_duration_seconds, rendered))
                         del rendered
 
-                        track = await db.scalar(
-                            select(StemArrangementTrack).where(
-                                StemArrangementTrack.arrangement_id == arrangement.id,
-                                StemArrangementTrack.instrument == instrument,
-                            )
-                        )
+                        track = tracks_by_instrument.get(instrument)
                         if track is None:
                             track = StemArrangementTrack(
                                 arrangement_id=arrangement.id, instrument=instrument
                             )
                             db.add(track)
                             await db.flush()
+                            tracks_by_instrument[instrument] = track
 
                         enc_key = s3_key_for_encrypted_arrangement_track(str(track.id))
                         prev_key = s3_key_for_arrangement_track_preview(str(track.id))

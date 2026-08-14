@@ -142,6 +142,47 @@ async def _seed(db, s3: FakeS3):
 
 
 @pytest.mark.asyncio
+async def test_re_render_reuses_the_existing_tracks(db_session, monkeypatch):
+    """A second render updates the rows the first one wrote.
+
+    The task looks its tracks up in one query and keeps that map in step with
+    what it creates; getting that wrong would either duplicate a row — which
+    the per-instrument unique constraint refuses — or strand the old one.
+    """
+    from app.tasks import render_tasks
+
+    s3 = FakeS3()
+    arrangement = await _seed(db_session, s3)
+    monkeypatch.setattr(render_tasks, "_s3", lambda: s3)
+
+    async def _track_ids():
+        rows = (await db_session.execute(
+            StemArrangementTrack.__table__.select().where(
+                StemArrangementTrack.arrangement_id == arrangement.id
+            )
+        )).mappings().all()
+        return {r["instrument"]: r["id"] for r in rows}
+
+    await asyncio.to_thread(
+        render_tasks.render_stem_arrangement.apply, args=[str(arrangement.id)], throw=True
+    )
+    first = await _track_ids()
+
+    arrangement.status = "rendering"
+    await db_session.commit()
+    await asyncio.to_thread(
+        render_tasks.render_stem_arrangement.apply, args=[str(arrangement.id)], throw=True
+    )
+    second = await _track_ids()
+
+    assert first == second, "re-rendering replaced the track rows instead of updating them"
+    assert len(second) == 2
+
+    await db_session.refresh(arrangement)
+    assert arrangement.status == "ready"
+
+
+@pytest.mark.asyncio
 async def test_render_stitches_parts_and_pads_absent_instruments(db_session, monkeypatch):
     from app.tasks import render_tasks
 
