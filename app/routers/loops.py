@@ -46,6 +46,7 @@ async def list_loops(
     user=Depends(get_current_user),
 ):
     filters = LoopFilter(
+        ready_only=True,
         search=search, genre=genre, bpm_min=bpm_min, bpm_max=bpm_max,
         key=key, tempo_feel=tempo_feel, is_free=is_free,
         sort=sort, page=page, page_size=page_size,

@@ -96,6 +96,11 @@ def _search_clause(query: str):
 
 async def list_loops(db: AsyncSession, filters: LoopFilter) -> tuple[list[Loop], int]:
     q = select(Loop)
+    if filters.ready_only:
+        # A loop is browsable only once its audio is on S3. Before that,
+        # preview and download both refuse it with a 409, so listing it puts
+        # something in the catalogue that cannot be played or bought.
+        q = q.where(Loop.status == "ready")
     if filters.created_by:
         q = q.where(Loop.created_by == filters.created_by)
     if filters.search:

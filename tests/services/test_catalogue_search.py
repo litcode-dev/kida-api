@@ -29,7 +29,8 @@ async def _user(db):
     return user
 
 
-async def _loop(db, user_id, *, title, genre=Genre.afrobeat, description=None, bpm=100):
+async def _loop(db, user_id, *, title, genre=Genre.afrobeat, description=None, bpm=100,
+                status="ready"):
     loop = Loop(
         id=uuid.uuid4(),
         title=title,
@@ -41,6 +42,7 @@ async def _loop(db, user_id, *, title, genre=Genre.afrobeat, description=None, b
         tags=[],
         price=Decimal("10.00"),
         description=description,
+        status=status,
         created_by=user_id,
     )
     db.add(loop)
@@ -341,3 +343,48 @@ async def test_drone_search_ands_with_the_category_filter(db_session):
     assert await _drone_titles(
         db_session, search="pad", category_id=cinematic.id
     ) == ["Pad One"]
+
+
+# ── the public catalogue only shows loops that can actually be played ─────────
+
+
+@pytest.mark.asyncio
+async def test_public_listing_hides_loops_that_are_not_ready(db_session):
+    user = await _user(db_session)
+    await _loop(db_session, user.id, title="Playable", status="ready")
+    await _loop(db_session, user.id, title="Still Encoding", status="processing")
+    await _loop(db_session, user.id, title="Broken Upload", status="failed")
+
+    assert await _titles(db_session, ready_only=True) == ["Playable"]
+
+
+@pytest.mark.asyncio
+async def test_the_public_total_excludes_unready_loops(db_session):
+    """The count drives pagination, so it has to match what is listed."""
+    user = await _user(db_session)
+    await _loop(db_session, user.id, title="Playable", status="ready")
+    await _loop(db_session, user.id, title="Hidden", status="processing")
+
+    _loops, total = await loop_service.list_loops(db_session, LoopFilter(ready_only=True))
+
+    assert total == 1
+
+
+@pytest.mark.asyncio
+async def test_a_producer_still_sees_their_own_uploads_processing(db_session):
+    """Hiding them from the producer would remove the only view of an upload
+    in flight — the whole point of the status they poll."""
+    user = await _user(db_session)
+    await _loop(db_session, user.id, title="Playable", status="ready")
+    await _loop(db_session, user.id, title="Still Encoding", status="processing")
+
+    assert await _titles(db_session, created_by=user.id) == ["Playable", "Still Encoding"]
+
+
+@pytest.mark.asyncio
+async def test_ready_only_ands_with_search(db_session):
+    user = await _user(db_session)
+    await _loop(db_session, user.id, title="Piano Ready", status="ready")
+    await _loop(db_session, user.id, title="Piano Processing", status="processing")
+
+    assert await _titles(db_session, ready_only=True, search="piano") == ["Piano Ready"]

@@ -16,9 +16,10 @@ async def _create_user(db, role=UserRole.user):
     return user
 
 
-async def _create_loop(db, user_id, is_free=True):
+async def _create_loop(db, user_id, is_free=True, title="Test Loop", status="ready"):
     loop = Loop(
-        id=uuid.uuid4(), title="Test Loop", slug=f"test-loop-{uuid.uuid4().hex[:6]}",
+        id=uuid.uuid4(), title=title, slug=f"test-loop-{uuid.uuid4().hex[:6]}",
+        status=status,
         genre=Genre.afrobeat, bpm=100, key="C major", duration=30,
         tempo_feel=TempoFeel.mid, tags=["test"], price=Decimal("4.99"),
         is_free=is_free, is_paid=not is_free, created_by=user_id,
@@ -251,3 +252,32 @@ async def test_update_loop_without_is_free_leaves_flags_alone(db_session):
     )
     assert updated.title == "Renamed"
     assert (updated.is_free, updated.is_paid) == (False, True)
+
+
+@pytest.mark.asyncio
+async def test_public_catalogue_omits_loops_that_are_not_ready(client, db_session):
+    """A processing loop 409s on preview and download, so listing it puts
+    something in the catalogue nobody can play."""
+    user = await _create_user(db_session)
+    await _create_loop(db_session, user.id, title="Playable")
+    await _create_loop(db_session, user.id, title="Still Encoding", status="processing")
+
+    resp = await client.get("/api/v1/loops", headers=_headers(user))
+
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert [i["title"] for i in data["items"]] == ["Playable"]
+    assert data["total"] == 1
+
+
+@pytest.mark.asyncio
+async def test_producer_listing_still_shows_its_own_processing_loops(client, db_session):
+    producer = await _create_user(db_session, role=UserRole.producer)
+    await _create_loop(db_session, producer.id, title="Playable")
+    await _create_loop(db_session, producer.id, title="Still Encoding", status="processing")
+
+    resp = await client.get("/api/v1/producer/loops", headers=_headers(producer))
+
+    assert resp.status_code == 200
+    titles = sorted(i["title"] for i in resp.json()["data"]["items"])
+    assert titles == ["Playable", "Still Encoding"]
