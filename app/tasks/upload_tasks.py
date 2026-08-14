@@ -18,6 +18,29 @@ def _s3() -> boto3.client:
     return _s3._client
 
 
+async def _invalidate(*keys: str, patterns: tuple[str, ...] = ()) -> None:
+    """Drop cache entries after a job changes what a listing would return.
+
+    Never allowed to fail the job. These calls sit inside the task's retry
+    block, so an unguarded Redis outage would retry work that already
+    succeeded and eventually mark finished audio as failed — losing an upload
+    over a cache that was only ever an optimisation.
+    """
+    import structlog
+
+    from app.services import cache_service
+
+    try:
+        for key in keys:
+            await cache_service.delete(key)
+        for pattern in patterns:
+            await cache_service.delete_pattern(pattern)
+    except Exception as exc:  # noqa: BLE001 - a cold cache beats a lost upload
+        structlog.get_logger().warning(
+            "cache_invalidation_failed", keys=keys, patterns=patterns, error=str(exc)
+        )
+
+
 @celery_app.task(bind=True, max_retries=3, default_retry_delay=10)
 def process_loop_upload(self, loop_id: str):
     async def _run():
@@ -151,9 +174,9 @@ def process_drum_sample_upload(self, sample_id: str):
 
                     s3.delete_object(Bucket=settings.s3_bucket_name, Key=raw_key)
 
-                    from app.services import cache_service as _cache
-                    await _cache.delete(f"drum_kit:detail:{kit_id}")
-                    await _cache.delete_pattern("drum_kit:list:*")
+                    await _invalidate(
+                        f"drum_kit:detail:{kit_id}", patterns=("drum_kit:list:*",)
+                    )
 
                     from app.models.drum_kit import DrumKit, DrumSample as _DS
                     from sqlalchemy import select as _select
@@ -323,6 +346,11 @@ def process_drone_upload(self, drone_id: str):
                     await db.commit()
 
                     s3.delete_object(Bucket=settings.s3_bucket_name, Key=raw_key)
+
+                    # The public list only shows drones whose pads are all
+                    # ready, and this is where that becomes true — without
+                    # this the drone stays invisible until the entry expires.
+                    await _invalidate(patterns=("drone:list:*",))
 
                     from app.models.drone_pad import Drone as _Drone, DronePad as _DP
                     from sqlalchemy import select as _select
