@@ -1,8 +1,8 @@
 import uuid
 import re
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
-from app.models.loop import Loop
+from sqlalchemy import func, or_, select
+from app.models.loop import Genre, Loop
 from app.models.purchase import Purchase
 from app.models.user import User
 from app.schemas.loop import LoopCreate, LoopUpdate, LoopFilter
@@ -74,12 +74,32 @@ async def get_loop(db: AsyncSession, loop_id: uuid.UUID) -> Loop:
     return loop
 
 
+def _search_clause(query: str):
+    """Free text over the fields a person would search by.
+
+    Title, description and genre, ORed — searching "worship" should surface a
+    worship-genre loop whose title never says the word, and a loop whose
+    description mentions it. The dedicated `genre` parameter still exists for
+    exact filtering and ANDs with this.
+
+    Genre is matched by resolving the term to enum members first, so the
+    comparison runs against the display value ("Afrobeat Worship") rather than
+    the stored label, and against an indexed equality rather than a cast.
+    """
+    like = f"%{query}%"
+    clauses = [Loop.title.ilike(like), Loop.description.ilike(like)]
+    genres = Genre.matching(query)
+    if genres:
+        clauses.append(Loop.genre.in_(genres))
+    return or_(*clauses)
+
+
 async def list_loops(db: AsyncSession, filters: LoopFilter) -> tuple[list[Loop], int]:
     q = select(Loop)
     if filters.created_by:
         q = q.where(Loop.created_by == filters.created_by)
     if filters.search:
-        q = q.where(Loop.title.ilike(f"%{filters.search}%"))
+        q = q.where(_search_clause(filters.search))
     if filters.genre:
         q = q.where(Loop.genre == filters.genre)
     if filters.bpm_min is not None:

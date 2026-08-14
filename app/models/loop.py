@@ -1,5 +1,6 @@
-import uuid
 import enum
+import re
+import uuid
 from datetime import datetime
 from decimal import Decimal
 from sqlalchemy import (
@@ -10,6 +11,11 @@ from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 from app.database import Base
 from app.models.price_sync import PriceSyncMixin
+
+
+def _search_key(value: str) -> str:
+    """Lowercase, letters and digits only — "Lo-fi" and "lofi" compare equal."""
+    return re.sub(r"[^a-z0-9]+", "", (value or "").lower())
 
 
 class Genre(str, enum.Enum):
@@ -49,6 +55,22 @@ class Genre(str, enum.Enum):
     jazz = "Jazz"
     blues = "Blues"
     country = "Country"
+
+    @classmethod
+    def matching(cls, query: str) -> list["Genre"]:
+        """Genres whose display value contains ``query``, loosely compared.
+
+        Free-text search runs against what people see — "Afrobeat Worship" —
+        not the stored label (``afrobeat_worship``), and nobody types
+        punctuation the way the catalogue spells it. Comparing with everything
+        but letters and digits stripped means "lofi" finds Lo-fi, "hip hop"
+        finds Hip Hop and "rb" finds R&B, while "worship" still finds both
+        worship genres.
+        """
+        needle = _search_key(query)
+        if not needle:
+            return []
+        return [genre for genre in cls if needle in _search_key(genre.value)]
 
 
 class TempoFeel(str, enum.Enum):

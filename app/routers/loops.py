@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 import httpx
@@ -17,9 +17,22 @@ import uuid
 router = APIRouter(prefix="/loops", tags=["loops"])
 
 
-@router.get("")
+@router.get(
+    "",
+    summary="List loops",
+    description=(
+        "Paginated loops. `search` is free text across **title, description and "
+        "genre** — searching `worship` finds a worship-genre loop whose title never "
+        "says the word. Genre matching ignores case and punctuation, so `lofi` finds "
+        "Lo-fi and `hip hop` finds Hip Hop.\n\n"
+        "Every other parameter is an exact filter and is ANDed with the search: "
+        "`?search=piano&genre=Trap` means a piano match *within* Trap."
+    ),
+)
 async def list_loops(
-    search: str | None = None,
+    search: str | None = Query(
+        None, description="Free text over title, description and genre"
+    ),
     genre: Genre | None = None,
     bpm_min: int | None = None,
     bpm_max: int | None = None,
