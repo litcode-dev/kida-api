@@ -233,3 +233,111 @@ async def test_a_pack_with_no_description_is_still_found_by_title(db_session):
     await _pack(db_session, user.id, title="Guitar Pack", description=None)
 
     assert await _pack_titles(db_session, search="guitar") == ["Guitar Pack"]
+
+
+# ── drones search title, description and category name ────────────────────────
+
+
+async def _category(db, user_id, name):
+    from app.models.drone_pad import DronePadCategory
+
+    category = DronePadCategory(id=uuid.uuid4(), name=name, created_by=user_id)
+    db.add(category)
+    await db.flush()
+    return category
+
+
+async def _drone(db, user_id, *, title, description=None, category=None):
+    from app.models.drone_pad import Drone
+
+    drone = Drone(
+        id=uuid.uuid4(),
+        title=title,
+        description=description,
+        price=Decimal("0.00"),
+        is_free=True,
+        category_id=category.id if category else None,
+        created_by=user_id,
+    )
+    db.add(drone)
+    await db.commit()
+    return drone
+
+
+async def _drone_titles(db, **kwargs):
+    from app.schemas.drone_pad import DronePadFilter
+    from app.services import drone_service
+
+    drones, _total = await drone_service.list_drones(db, DronePadFilter(**kwargs))
+    return sorted(d.title for d in drones)
+
+
+@pytest.mark.asyncio
+async def test_drone_search_matches_the_title(db_session):
+    user = await _user(db_session)
+    await _drone(db_session, user.id, title="Deep Space Pad")
+    await _drone(db_session, user.id, title="Warm Strings")
+
+    assert await _drone_titles(db_session, search="space") == ["Deep Space Pad"]
+
+
+@pytest.mark.asyncio
+async def test_drone_search_matches_the_description(db_session):
+    user = await _user(db_session)
+    await _drone(db_session, user.id, title="Untitled", description="swelling cinematic bed")
+    await _drone(db_session, user.id, title="Other")
+
+    assert await _drone_titles(db_session, search="cinematic") == ["Untitled"]
+
+
+@pytest.mark.asyncio
+async def test_drone_search_matches_the_category_name(db_session):
+    """The point of the change: a category hit with nothing in the title."""
+    user = await _user(db_session)
+    cinematic = await _category(db_session, user.id, "Cinematic")
+    await _drone(db_session, user.id, title="Deep Space Pad", category=cinematic)
+    await _drone(db_session, user.id, title="Warm Strings")
+
+    assert await _drone_titles(db_session, search="cinematic") == ["Deep Space Pad"]
+
+
+@pytest.mark.asyncio
+async def test_a_drone_with_no_category_is_still_found_by_title(db_session):
+    # The category branch is an EXISTS — it must not exclude uncategorised rows.
+    user = await _user(db_session)
+    await _drone(db_session, user.id, title="Lonely Pad", category=None)
+
+    assert await _drone_titles(db_session, search="lonely") == ["Lonely Pad"]
+
+
+@pytest.mark.asyncio
+async def test_drone_search_returns_each_drone_once(db_session):
+    """A join would duplicate a row matching on both its own field and its
+    category; EXISTS keeps it to one."""
+    user = await _user(db_session)
+    ambient = await _category(db_session, user.id, "Ambient")
+    await _drone(db_session, user.id, title="Ambient Pad",
+                 description="ambient texture", category=ambient)
+
+    from app.schemas.drone_pad import DronePadFilter
+    from app.services import drone_service
+
+    drones, total = await drone_service.list_drones(
+        db_session, DronePadFilter(search="ambient")
+    )
+
+    assert [d.title for d in drones] == ["Ambient Pad"]
+    assert total == 1
+
+
+@pytest.mark.asyncio
+async def test_drone_search_ands_with_the_category_filter(db_session):
+    user = await _user(db_session)
+    cinematic = await _category(db_session, user.id, "Cinematic")
+    ambient = await _category(db_session, user.id, "Ambient")
+    await _drone(db_session, user.id, title="Pad One", category=cinematic)
+    await _drone(db_session, user.id, title="Pad Two", category=ambient)
+
+    assert await _drone_titles(
+        db_session, search="pad", category_id=cinematic.id
+    ) == ["Pad One"]

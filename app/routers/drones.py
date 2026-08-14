@@ -36,8 +36,20 @@ async def get_drone_category(category_id: uuid.UUID, db: AsyncSession = Depends(
     return success(data)
 
 
-@router.get("")
+@router.get(
+    "",
+    summary="List drones",
+    description=(
+        "Paginated drones. `search` is free text across **title, description and "
+        "category name** — a drone filed under Cinematic is findable by that word "
+        "even when its own title never says it. Every other parameter is an exact "
+        "filter and ANDs with the search."
+    ),
+)
 async def list_drones(
+    search: str | None = Query(
+        None, description="Free text over title, description and category name"
+    ),
     key: MusicalKey | None = None,
     is_free: bool | None = None,
     category_id: uuid.UUID | None = None,
@@ -46,8 +58,11 @@ async def list_drones(
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
 ):
+    # search is part of the key: without it every search would be answered from
+    # — and would poison — the unfiltered list's cache entry.
     cache_key = (
-        f"drone:list:{key.value if key else 'none'}"
+        f"drone:list:{search or 'none'}"
+        f":{key.value if key else 'none'}"
         f":{str(is_free).lower() if is_free is not None else 'none'}"
         f":{category_id or 'none'}"
         f":{page}:{page_size}"
@@ -55,7 +70,7 @@ async def list_drones(
 
     async def _fetch():
         filters = DronePadFilter(
-            key=key, is_free=is_free, category_id=category_id,
+            search=search, key=key, is_free=is_free, category_id=category_id,
             page=page, page_size=page_size,
         )
         drones, total = await drone_service.list_drones(db, filters)

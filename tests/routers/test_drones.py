@@ -100,7 +100,7 @@ async def test_list_drones_caches_under_the_expected_key_and_ttl(client, db_sess
     # Whatever the cache returns is served straight through (the hit path).
     assert resp.json()["data"] == payload
     key, _fetch, ttl = mock_cache.call_args[0]
-    assert key == "drone:list:none:none:none:1:50"
+    assert key == "drone:list:none:none:none:none:1:50"
     assert ttl == cache_service.TTL_DRONE_LIST
 
 
@@ -136,7 +136,7 @@ async def test_list_drones_cache_key_encodes_filters(client, db_session):
         )
 
     assert resp.status_code == 200
-    assert mock_cache.call_args[0][0] == "drone:list:A:true:none:2:10"
+    assert mock_cache.call_args[0][0] == "drone:list:none:A:true:none:2:10"
 
 
 @pytest.mark.asyncio
@@ -240,3 +240,23 @@ async def test_download_drone_increments_download_count(client, db_session):
     drone = await db_session.get(Drone, pad.drone_id)
     await db_session.refresh(drone)
     assert drone.download_count == 1
+
+
+@pytest.mark.asyncio
+async def test_drone_search_is_part_of_the_cache_key(client, db_session):
+    """Without the search term in the key, a search would be answered from — and
+    would overwrite — the unfiltered list's cache entry."""
+    user = await _create_user(db_session)
+    seen_keys = []
+
+    async def _capture(key, fetch_fn, ttl):
+        seen_keys.append(key)
+        return await fetch_fn()
+
+    with patch("app.routers.drones.cache_service.get_or_set", new=_capture):
+        await client.get("/api/v1/drones", headers=_headers(user))
+        await client.get("/api/v1/drones?search=cinematic", headers=_headers(user))
+
+    assert len(seen_keys) == 2
+    assert seen_keys[0] != seen_keys[1]
+    assert "cinematic" in seen_keys[1]

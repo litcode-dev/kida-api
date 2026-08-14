@@ -88,6 +88,7 @@ class DroneResponse(BaseModel):
 
 
 class DronePadFilter(BaseModel):
+    search: str | None = None
     key: MusicalKey | None = None
     is_free: bool | None = None
     category_id: uuid.UUID | None = None

@@ -199,6 +199,7 @@ router.include_router(build_stem_pack_router(require_producer, enforce_ownership
 @limiter.limit("60/minute")
 async def list_producer_drones(
     request: Request,
+    search: str | None = None,
     key: MusicalKey | None = None,
     is_free: bool | None = None,
     category_id: uuid.UUID | None = None,
@@ -209,7 +210,7 @@ async def list_producer_drones(
 ):
     from app.schemas.drone_pad import DronePadFilter
     filters = DronePadFilter(
-        key=key, is_free=is_free, category_id=category_id,
+        search=search, key=key, is_free=is_free, category_id=category_id,
         page=page, page_size=page_size, created_by=producer.id,
     )
     drones, total = await drone_service.list_drones(db, filters)

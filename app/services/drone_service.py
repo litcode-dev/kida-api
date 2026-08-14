@@ -1,6 +1,6 @@
 import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import selectinload
 from fastapi import UploadFile
 
@@ -151,10 +151,30 @@ async def get_drone_pad(db: AsyncSession, pad_id: uuid.UUID) -> DronePad:
     return pad
 
 
+def _search_clause(query: str):
+    """Free text over the fields a person would search by.
+
+    Title, description and category name, ORed. A drone filed under "Cinematic"
+    should be findable by that word even when its own title never says it. The
+    dedicated `category_id` filter still ANDs with this for exact filtering.
+
+    The category is matched with EXISTS rather than a join, so the query does
+    not grow a row per category and needs no DISTINCT.
+    """
+    like = f"%{query}%"
+    return or_(
+        Drone.title.ilike(like),
+        Drone.description.ilike(like),
+        Drone.category.has(DronePadCategory.name.ilike(like)),
+    )
+
+
 async def list_drones(db: AsyncSession, filters: DronePadFilter) -> tuple[list[Drone], int]:
     q = select(Drone)
     if filters.created_by:
         q = q.where(Drone.created_by == filters.created_by)
+    if filters.search:
+        q = q.where(_search_clause(filters.search))
     if filters.is_free is not None:
         q = q.where(Drone.is_free == filters.is_free)
     if filters.category_id is not None:
