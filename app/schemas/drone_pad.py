@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 from decimal import Decimal
-from pydantic import BaseModel, model_validator, Field
+from pydantic import BaseModel, field_validator, model_validator, Field
 from app.models.drone_pad import MusicalKey
 
 
@@ -98,3 +98,19 @@ class DronePadFilter(BaseModel):
     page: int = 1
     page_size: int = 50
     created_by: uuid.UUID | None = None
+
+    @field_validator("page_size")
+    @classmethod
+    def cap_page_size(cls, v: int) -> int:
+        # One request must not be able to ask for the whole table. Capped
+        # rather than rejected so an over-eager client gets a page instead of
+        # an error it never handled before.
+        return min(max(v, 1), 100)
+
+    @field_validator("page")
+    @classmethod
+    def floor_page(cls, v: int) -> int:
+        # page 0 becomes OFFSET -20, which Postgres refuses outright — a 500
+        # for what is really a client typo.
+        return max(v, 1)
+

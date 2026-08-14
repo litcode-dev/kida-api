@@ -13,7 +13,11 @@ from app.models.loop import Genre, Loop, TempoFeel
 from app.models.user import User, UserRole
 from app.schemas.loop import LoopFilter
 from app.services import loop_service
-from app.services.auth_service import hash_password
+from app.services.auth_service import create_access_token, hash_password
+
+
+def _token(user):
+    return create_access_token(str(user.id), user.role.value)
 
 
 async def _user(db):
@@ -522,3 +526,43 @@ async def test_producers_still_see_their_own_unfinished_uploads(db_session):
     )
 
     assert [k.title for k in kits] == ["Half Kit"]
+
+
+# ── pagination cannot be used to ask for the whole table ──────────────────────
+
+
+def test_loop_pagination_is_bounded():
+    from app.schemas.loop import LoopFilter
+
+    assert LoopFilter(page_size=100_000).page_size == 100
+    assert LoopFilter(page_size=0).page_size == 1
+    # page 0 would build OFFSET -20, which Postgres refuses outright.
+    assert LoopFilter(page=0).page == 1
+    assert LoopFilter(page=-5).page == 1
+    # Ordinary values are untouched.
+    assert LoopFilter(page=3, page_size=50).page == 3
+    assert LoopFilter(page=3, page_size=50).page_size == 50
+
+
+def test_drone_pagination_is_bounded():
+    from app.schemas.drone_pad import DronePadFilter
+
+    assert DronePadFilter(page_size=100_000).page_size == 100
+    assert DronePadFilter(page_size=0).page_size == 1
+    assert DronePadFilter(page=0).page == 1
+    assert DronePadFilter(page=-5).page == 1
+    assert DronePadFilter(page=2, page_size=50).page_size == 50
+
+
+@pytest.mark.asyncio
+async def test_a_zero_page_no_longer_500s(client, db_session):
+    """It used to reach Postgres as OFFSET -20 and blow up."""
+    user = await _user(db_session)
+    await _loop(db_session, user.id, title="Anything")
+
+    resp = await client.get("/api/v1/loops?page=0", headers={
+        "Authorization": f"Bearer {_token(user)}"
+    })
+
+    assert resp.status_code == 200
+    assert resp.json()["data"]["items"]
