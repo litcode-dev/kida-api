@@ -91,8 +91,8 @@ async def list_stem_packs(
     genre: Genre | None = Query(None),
     pack_type: StemPackType | None = Query(None, description="`long_form` or `breakdown`"),
     tags: str | None = Query(None, description="Comma-separated tags"),
-    page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
+    page: int = Query(1, description="Page number; anything below 1 is treated as 1"),
+    page_size: int = Query(20, description="Results per page, clamped to 100"),
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
 ):
@@ -109,8 +109,8 @@ async def list_stem_packs(
     return success({
         "items": list(await asyncio.gather(*[_pack_to_dict(p) for p in packs])),
         "total": total,
-        "page": page,
-        "page_size": page_size,
+        "page": filters.page,
+        "page_size": filters.page_size,
     })
 
 

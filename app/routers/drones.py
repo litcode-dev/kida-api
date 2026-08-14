@@ -58,28 +58,30 @@ async def list_drones(
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
 ):
+    filters = DronePadFilter(
+        ready_only=True,
+        search=search, key=key, is_free=is_free, category_id=category_id,
+        page=page, page_size=page_size,
+    )
     # search is part of the key: without it every search would be answered from
-    # — and would poison — the unfiltered list's cache entry.
+    # — and would poison — the unfiltered list's cache entry. Pagination is
+    # keyed on the clamped values so an out-of-range page_size cannot mint
+    # unbounded distinct entries for the identical payload.
     cache_key = (
         f"drone:list:{search or 'none'}"
         f":{key.value if key else 'none'}"
         f":{str(is_free).lower() if is_free is not None else 'none'}"
         f":{category_id or 'none'}"
-        f":{page}:{page_size}"
+        f":{filters.page}:{filters.page_size}"
     )
 
     async def _fetch():
-        filters = DronePadFilter(
-            ready_only=True,
-            search=search, key=key, is_free=is_free, category_id=category_id,
-            page=page, page_size=page_size,
-        )
         drones, total = await drone_service.list_drones(db, filters)
         return {
             "items": [DroneResponse.model_validate(d).model_dump(mode="json") for d in drones],
             "total": total,
-            "page": page,
-            "page_size": page_size,
+            "page": filters.page,
+            "page_size": filters.page_size,
         }
 
     data = await cache_service.get_or_set(cache_key, _fetch, cache_service.TTL_DRONE_LIST)

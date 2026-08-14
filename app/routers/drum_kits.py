@@ -60,28 +60,33 @@ async def list_drum_kits(
     search: str | None = Query(None, description="Case-insensitive title search"),
     is_free: bool | None = Query(None, description="Filter by free (`true`) or paid (`false`)"),
     tags: str | None = Query(None, description="Comma-separated tags, e.g. `trap,808`"),
-    page: int = Query(1, ge=1, description="Page number"),
-    page_size: int = Query(20, ge=1, le=100, description="Results per page (max 100)"),
+    page: int = Query(1, description="Page number; anything below 1 is treated as 1"),
+    page_size: int = Query(20, description="Results per page, clamped to 100"),
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
 ):
-    cache_key = _list_cache_key(search, is_free, tags, page, page_size)
+    filters = DrumKitFilter(
+        ready_only=True,
+        search=search,
+        is_free=is_free,
+        tags=[t.strip() for t in tags.split(",") if t.strip()] if tags else None,
+        page=page,
+        page_size=page_size,
+    )
+    # Keyed on the clamped values, not the raw ones: page_size=100000 and
+    # page_size=200000 return the identical payload, and keying them apart
+    # would let anyone mint unbounded distinct entries.
+    cache_key = _list_cache_key(
+        search, is_free, tags, filters.page, filters.page_size
+    )
 
     async def _fetch():
-        filters = DrumKitFilter(
-            ready_only=True,
-            search=search,
-            is_free=is_free,
-            tags=[t.strip() for t in tags.split(",") if t.strip()] if tags else None,
-            page=page,
-            page_size=page_size,
-        )
         kits, total = await drum_kit_service.list_drum_kits(db, filters)
         return {
             "items": list(await asyncio.gather(*[_kit_to_dict(k) for k in kits])),
             "total": total,
-            "page": page,
-            "page_size": page_size,
+            "page": filters.page,
+            "page_size": filters.page_size,
         }
 
     data = await cache_service.get_or_set(cache_key, _fetch, cache_service.TTL_DRUM_KIT_LIST)

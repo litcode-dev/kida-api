@@ -281,3 +281,18 @@ async def test_producer_listing_still_shows_its_own_processing_loops(client, db_
     assert resp.status_code == 200
     titles = sorted(i["title"] for i in resp.json()["data"]["items"])
     assert titles == ["Playable", "Still Encoding"]
+
+
+@pytest.mark.asyncio
+async def test_out_of_range_pagination_is_clamped_not_rejected(client, db_session):
+    """All four catalogues clamp rather than 422, and report back what they
+    actually used so a client can trust the echoed values."""
+    user = await _create_user(db_session)
+    await _create_loop(db_session, user.id)
+
+    for path in ("/api/v1/loops", "/api/v1/drum-kits", "/api/v1/stem-packs", "/api/v1/drones"):
+        resp = await client.get(f"{path}?page=0&page_size=100000", headers=_headers(user))
+        assert resp.status_code == 200, f"{path} -> {resp.status_code} {resp.text[:120]}"
+        data = resp.json()["data"]
+        assert data["page"] == 1, path
+        assert data["page_size"] == 100, path

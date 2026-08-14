@@ -260,3 +260,22 @@ async def test_drone_search_is_part_of_the_cache_key(client, db_session):
     assert len(seen_keys) == 2
     assert seen_keys[0] != seen_keys[1]
     assert "cinematic" in seen_keys[1]
+
+
+@pytest.mark.asyncio
+async def test_an_absurd_page_size_cannot_mint_unbounded_cache_keys(client, db_session):
+    """Clamping happens before the key is built, so two out-of-range sizes that
+    return the identical payload share one entry instead of two."""
+    user = await _create_user(db_session)
+    seen = []
+
+    async def _capture(key, fetch_fn, ttl):
+        seen.append(key)
+        return await fetch_fn()
+
+    with patch("app.routers.drones.cache_service.get_or_set", new=_capture):
+        await client.get("/api/v1/drones?page_size=100000", headers=_headers(user))
+        await client.get("/api/v1/drones?page_size=200000", headers=_headers(user))
+
+    assert seen[0] == seen[1]
+    assert seen[0].endswith(":1:100")

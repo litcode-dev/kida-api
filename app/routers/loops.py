@@ -56,8 +56,8 @@ async def list_loops(
     return success({
         "items": [LoopResponse.model_validate(l).model_dump() for l in loops],
         "total": total,
-        "page": page,
-        "page_size": page_size,
+        "page": filters.page,
+        "page_size": filters.page_size,
     })
 
 
