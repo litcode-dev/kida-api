@@ -2,7 +2,7 @@ import re
 import uuid
 from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import selectinload
 from fastapi import UploadFile
 from app.models.stem_pack import (
@@ -15,6 +15,7 @@ from app.models.stem_pack import (
     StemPackType,
     StemPart,
 )
+from app.models.loop import Genre
 from app.models.purchase import Purchase
 from app.models.user import User
 from app.schemas.stem_pack import (
@@ -120,12 +121,27 @@ async def update_stem_pack(db: AsyncSession, pack_id: uuid.UUID, data: StemPackU
     return pack
 
 
+def _search_clause(query: str):
+    """Free text over the fields a person would search by.
+
+    Mirrors loop search: title, description and genre ORed, so a worship-genre
+    pack whose title never says the word is still findable. The dedicated
+    `genre` filter ANDs with this rather than replacing it.
+    """
+    like = f"%{query}%"
+    clauses = [StemPack.title.ilike(like), StemPack.description.ilike(like)]
+    genres = Genre.matching(query)
+    if genres:
+        clauses.append(StemPack.genre.in_(genres))
+    return or_(*clauses)
+
+
 async def list_stem_packs(db: AsyncSession, filters: StemPackFilter) -> tuple[list[StemPack], int]:
     q = select(StemPack)
     if filters.created_by:
         q = q.where(StemPack.created_by == filters.created_by)
     if filters.search:
-        q = q.where(StemPack.title.ilike(f"%{filters.search}%"))
+        q = q.where(_search_clause(filters.search))
     if filters.genre:
         q = q.where(StemPack.genre == filters.genre)
     if filters.pack_type:

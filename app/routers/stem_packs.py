@@ -77,11 +77,17 @@ async def _pack_to_dict(pack) -> dict:
         "Paginated stem packs. `pack_type=long_form` returns packs whose stems are "
         "one continuous take per instrument; `pack_type=breakdown` returns packs "
         "uploaded part by part, which carry their stems inside `parts` and their "
-        "running orders inside `arrangements`."
+        "running orders inside `arrangements`.\n\n"
+        "`search` is free text across **title, description and genre** — searching "
+        "`worship` finds a worship-genre pack whose title never says the word. Genre "
+        "matching ignores case and punctuation, so `lofi` finds Lo-fi. Every other "
+        "parameter is an exact filter and ANDs with the search."
     ),
 )
 async def list_stem_packs(
-    search: str | None = Query(None, description="Case-insensitive title search"),
+    search: str | None = Query(
+        None, description="Free text over title, description and genre"
+    ),
     genre: Genre | None = Query(None),
     pack_type: StemPackType | None = Query(None, description="`long_form` or `breakdown`"),
     tags: str | None = Query(None, description="Comma-separated tags"),

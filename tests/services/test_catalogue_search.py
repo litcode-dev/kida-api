@@ -1,7 +1,8 @@
-"""Free-text loop search: title, description and genre in one box.
+"""Free-text search over the catalogue: title, description and genre in one box.
 
 Searching used to hit the title alone, so a worship-genre loop called
 "Midnight Drive" was unfindable by the word a person would actually type.
+Loops and stem packs share the rules, so both are covered here.
 """
 import uuid
 from decimal import Decimal
@@ -160,3 +161,75 @@ async def test_the_reported_total_counts_search_hits_only(db_session):
     _loops, total = await loop_service.list_loops(db_session, LoopFilter(search="piano"))
 
     assert total == 2
+
+
+# ── stem packs use the same rules ─────────────────────────────────────────────
+
+
+async def _pack(db, user_id, *, title, genre=Genre.afrobeat, description=None):
+    from app.models.stem_pack import StemPack, StemPackType
+
+    pack = StemPack(
+        id=uuid.uuid4(),
+        title=title,
+        slug=f"{uuid.uuid4().hex[:12]}",
+        genre=genre,
+        pack_type=StemPackType.long_form,
+        bpm=100,
+        key="C",
+        tags=[],
+        price=Decimal("20.00"),
+        description=description,
+        created_by=user_id,
+    )
+    db.add(pack)
+    await db.commit()
+    return pack
+
+
+async def _pack_titles(db, **kwargs):
+    from app.schemas.stem_pack import StemPackFilter
+    from app.services import stem_pack_service
+
+    packs, _total = await stem_pack_service.list_stem_packs(db, StemPackFilter(**kwargs))
+    return sorted(p.title for p in packs)
+
+
+@pytest.mark.asyncio
+async def test_pack_search_matches_title_description_and_genre(db_session):
+    user = await _user(db_session)
+    await _pack(db_session, user.id, title="Praise Session", genre=Genre.trap)
+    await _pack(db_session, user.id, title="Nameless", genre=Genre.african_praise)
+    await _pack(db_session, user.id, title="Notes", genre=Genre.trap,
+                description="recorded at a praise night")
+    await _pack(db_session, user.id, title="Unrelated", genre=Genre.drill)
+
+    assert await _pack_titles(db_session, search="praise") == [
+        "Nameless", "Notes", "Praise Session",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_pack_genre_search_ignores_punctuation(db_session):
+    user = await _user(db_session)
+    await _pack(db_session, user.id, title="Dusty Keys", genre=Genre.lo_fi)
+    await _pack(db_session, user.id, title="Other", genre=Genre.trap)
+
+    assert await _pack_titles(db_session, search="lofi") == ["Dusty Keys"]
+
+
+@pytest.mark.asyncio
+async def test_pack_search_ands_with_the_genre_filter(db_session):
+    user = await _user(db_session)
+    await _pack(db_session, user.id, title="Piano Pack", genre=Genre.trap)
+    await _pack(db_session, user.id, title="Piano Pack Two", genre=Genre.gospel)
+
+    assert await _pack_titles(db_session, search="piano", genre=Genre.trap) == ["Piano Pack"]
+
+
+@pytest.mark.asyncio
+async def test_a_pack_with_no_description_is_still_found_by_title(db_session):
+    user = await _user(db_session)
+    await _pack(db_session, user.id, title="Guitar Pack", description=None)
+
+    assert await _pack_titles(db_session, search="guitar") == ["Guitar Pack"]
