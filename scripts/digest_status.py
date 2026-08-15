@@ -15,6 +15,10 @@ of a handful of things, and none of them are visible from outside the database:
 
 This prints all six, plus what the next digest currently holds.
 
+It also answers "is beat even running?" from the database alone, by checking
+the marks beat's other scheduled jobs leave behind — which is the only way to
+ask on a hosted platform where there is no container to inspect.
+
 Nothing here writes to the database unless --release or --send-now is passed.
 
 Run:
@@ -31,6 +35,7 @@ from sqlalchemy import case, func, select, text, update
 
 from app.config import get_settings
 from app.database import AsyncSessionLocal, engine
+from app.models.download import Download
 from app.models.drone_pad import Drone, DronePad
 from app.models.drum_kit import DrumKit, DrumSample
 from app.models.loop import Loop
@@ -138,6 +143,59 @@ async def _blocked_children(db, parent_model, child_model, parent_fk) -> list[st
     return lines
 
 
+async def _beat_heartbeat(db, now: datetime) -> tuple[list[str], bool]:
+    """Whether celery beat is running at all, judged from its other jobs.
+
+    The digest is not the only thing on the beat schedule, and the neighbours
+    leave marks. cleanup_expired_downloads deletes every expired download row
+    once an hour, so an expired row that is still here is one no sweep came
+    for — and its age is roughly how long beat has been down.
+    reconcile_store_prices stamps price_synced_at, which is positive proof beat
+    fired, though only when there was pending work for it to do.
+
+    This matters because it is answerable from the database. On a hosted
+    platform there is no container to check, and "is beat alive" is otherwise
+    indistinguishable from "the digest had nothing to send".
+
+    Returns the evidence, and whether it shows beat to be down.
+    """
+    stale = await db.scalar(
+        select(func.count(Download.id)).where(Download.expires_at < now)
+    )
+    oldest = await db.scalar(
+        select(func.min(Download.expires_at)).where(Download.expires_at < now)
+    )
+    last_sync = None
+    for model in (Loop, DrumKit, Drone):
+        stamped = await db.scalar(select(func.max(model.price_synced_at)))
+        if stamped and (last_sync is None or stamped > last_sync):
+            last_sync = stamped
+
+    lines = []
+    # An hour of slack: the cleanup runs hourly, so a row that expired forty
+    # minutes ago is simply waiting its turn, not evidence of anything.
+    down = bool(stale and oldest and oldest < now - timedelta(hours=2))
+    if stale:
+        lines.append(
+            f"{stale} expired download row(s) still present; oldest expired "
+            f"{_both_zones(oldest)}"
+        )
+        if down:
+            behind = now - oldest
+            lines.append(
+                f"cleanup_expired_downloads runs hourly and has not — beat looks "
+                f"down for about {behind.days}d {behind.seconds // 3600}h"
+            )
+    else:
+        lines.append("No expired downloads outstanding — the hourly cleanup is keeping up.")
+
+    if last_sync:
+        lines.append(f"Last store price sync: {_both_zones(last_sync)}")
+    else:
+        lines.append("No store price sync has ever stamped a row (inconclusive on its own).")
+    return lines, down
+
+
 async def _announced_since(db, since: datetime) -> list[str]:
     """Items stamped since a given moment — i.e. claimed by a sweep that ran."""
     lines = []
@@ -240,6 +298,9 @@ async def report() -> None:
             "Nothing was stamped. Either there was nothing new, or the sweep did not run.",
         )
 
+        beat_lines, beat_down = await _beat_heartbeat(db, now)
+        _section("Is celery beat running?", beat_lines, "")
+
         recipients = await broadcast_service.resolve_recipients(db, BroadcastAudience.all)
         print(f"\nRecipients: {len(recipients)} address(es) would receive the next digest.")
 
@@ -260,8 +321,16 @@ async def report() -> None:
         print("  No recipients resolve. The sweep exits before sending and claims nothing.")
     elif digest.total and not claimed:
         print(f"  {digest.total} item(s) are ready and were NOT claimed at {last_run:%H:%M} UTC.")
-        print("  The sweep did not run. Check that the celery beat process is alive:")
-        print("    docker compose ps beat && docker compose logs --tail=50 beat")
+        print("  The sweep did not run.")
+        if beat_down:
+            print("  The hourly download cleanup has not run either, so this is not specific")
+            print("  to the digest: celery beat is not running. A worker alone is not enough")
+            print("  — beat is a separate process, and nothing on the schedule fires without")
+            print("  it. Start it alongside the worker:")
+            print("    celery -A app.tasks.celery_app.celery_app beat --loglevel=info")
+        else:
+            print("  Beat's other jobs look healthy, so check the worker log for this task:")
+            print("    content_digest.disabled / .nothing_new / .no_recipients / .claimed")
     elif claimed and not digest.total:
         print("  The sweep ran and claimed these items, so any missing mail failed during")
         print("  sending, after the claim. Check the worker log for content_digest.sent /")
