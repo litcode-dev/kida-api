@@ -55,6 +55,8 @@ class Genre(str, enum.Enum):
     jazz = "Jazz"
     blues = "Blues"
     country = "Country"
+    hausa_groove = "Hausa Groove"
+    ariaria = "Ariaria"
 
     @classmethod
     def matching(cls, query: str) -> list["Genre"]:

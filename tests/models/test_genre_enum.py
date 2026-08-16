@@ -24,6 +24,9 @@ def test_wire_values_are_stable():
     assert Genre("Hip Hop") is Genre.hip_hop
     assert Genre("Kompa") is Genre.kompa
     assert Genre("Fuji") is Genre.fuji
+    # Two words, one word — the wire value is spelled exactly as displayed.
+    assert Genre("Hausa Groove") is Genre.hausa_groove
+    assert Genre("Ariaria") is Genre.ariaria
     # Highlife and Highlife Gospel are separate genres, not one with a suffix.
     assert Genre("Highlife") is Genre.highlife
     assert Genre("Highlife Gospel") is Genre.highlife_gospel

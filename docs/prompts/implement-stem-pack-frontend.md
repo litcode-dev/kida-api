@@ -77,7 +77,8 @@ type Genre =
   | "Afrobeat Worship" | "Contemporary Worship" | "Dancehall" | "Afrohouse"
   | "Highlife Gospel" | "African Praise" | "Drill" | "Seben" | "Reggae"
   | "Highlife" | "Soukous" | "Rumba" | "Afro Pop" | "Hip Hop" | "R&B"
-  | "Kompa" | "Fuji";
+  | "Kompa" | "Fuji" | "Jazz" | "Blues" | "Country"
+  | "Hausa Groove" | "Ariaria";
 
 type StemStatus = "processing" | "ready" | "failed";
 type ArrangementStatus = "rendering" | "ready" | "stale" | "failed" | "draft";
