@@ -77,9 +77,14 @@ class Settings(BaseSettings):
     onesignal_api_key: str
 
     # Account deletion
-    # Days a self-deleted account stays restorable before the purge job removes
-    # it for good. Must stay in step with the deletion copy shown in-app.
-    account_deletion_grace_days: int = 30
+    # How long a confirmation link from the public deletion page stays valid.
+    # Short: it authorises destroying an account, and the person is reading the
+    # email they just asked for.
+    deletion_request_token_ttl_minutes: int = 60
+    # Attempts before a third-party deletion (RevenueCat, OneSignal) is given up
+    # on and recorded as failed. With the exponential backoff in
+    # account_deletion_service this spans roughly a day and a half.
+    deletion_propagation_max_attempts: int = 8
 
     # JWT
     access_token_expire_minutes: int = 15

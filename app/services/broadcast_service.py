@@ -29,11 +29,7 @@ async def resolve_recipients(db: AsyncSession, audience: BroadcastAudience) -> l
     emails: set[str] = set()
 
     if audience in (BroadcastAudience.users, BroadcastAudience.all):
-        # Accounts pending deletion are excluded — they asked to leave.
-        emails |= {
-            e.lower()
-            for e in await db.scalars(select(User.email).where(User.deleted_at.is_(None)))
-        }
+        emails |= {e.lower() for e in await db.scalars(select(User.email))}
 
     if audience in (BroadcastAudience.subscribers, BroadcastAudience.all):
         emails |= {

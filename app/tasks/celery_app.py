@@ -16,6 +16,7 @@ celery_app = Celery(
         "app.tasks.upload_tasks",
         "app.tasks.render_tasks",
         "app.tasks.price_sync_tasks",
+        "app.tasks.deletion_tasks",
     ],
 )
 
@@ -26,9 +27,12 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.download_tasks.cleanup_expired_downloads",
         "schedule": 3600.0,
     },
-    "purge-expired-deleted-accounts-daily": {
-        "task": "app.tasks.notification_tasks.purge_expired_deleted_accounts",
-        "schedule": 86400.0,
+    # Third-party deletions that did not go through first time. Frequent because
+    # each row carries its own backoff — the sweep only acts on what is due, and
+    # an empty queue costs one indexed SELECT.
+    "retry-deletion-propagation": {
+        "task": "app.tasks.deletion_tasks.retry_pending_deletion_propagation",
+        "schedule": 300.0,
     },
     "reconcile-store-prices": {
         "task": "app.tasks.price_sync_tasks.reconcile_store_prices",

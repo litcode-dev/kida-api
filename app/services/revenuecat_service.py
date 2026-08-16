@@ -24,6 +24,7 @@ from __future__ import annotations
 import hmac
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from urllib.parse import quote
 
 import httpx
 import structlog
@@ -249,16 +250,19 @@ class RevenueCatClient:
         self._api_key = api_key or settings.revenuecat_api_key
         self._base_url = (base_url or settings.revenuecat_base_url).rstrip("/")
 
+    def _headers(self) -> dict:
+        return {
+            "Authorization": f"Bearer {self._api_key}",
+            "Content-Type": "application/json",
+        }
+
     async def _get(self, path: str) -> dict:
         if not self._api_key:
             raise AppError("RevenueCat is not configured", status_code=503)
         async with httpx.AsyncClient() as client:
             resp = await client.get(
                 f"{self._base_url}{path}",
-                headers={
-                    "Authorization": f"Bearer {self._api_key}",
-                    "Content-Type": "application/json",
-                },
+                headers=self._headers(),
                 timeout=15.0,
             )
         if resp.status_code == 404:
@@ -279,3 +283,44 @@ class RevenueCatClient:
         """Fetch and normalize a subscriber's Kiɗa Premium entitlement."""
         payload = await self.get_subscriber(app_user_id)
         return parse_subscriber(app_user_id, payload)
+
+    async def delete_subscriber(self, app_user_id: str) -> bool:
+        """Permanently delete a subscriber from RevenueCat.
+
+        ``DELETE /v1/subscribers/{app_user_id}``. Returns True when RevenueCat
+        no longer holds the subscriber — which includes a 404, because "we never
+        had them" and "we no longer have them" are the same end state and a
+        retry of an already-successful delete must not look like a failure.
+
+        Returns False on anything retryable (5xx, rate limit, network). Raises
+        :class:`AppError` only for a 4xx that will never succeed on retry, so
+        the caller can stop trying rather than loop forever.
+
+        Note this deletes RevenueCat's *record* of the customer. It does not
+        cancel or refund an active store subscription — only Apple or Google can
+        do that, and the user has to do it from their store account.
+        """
+        if not self._api_key:
+            logger.info("revenuecat_delete_skipped", reason="not configured")
+            raise AppError("RevenueCat is not configured", status_code=503)
+
+        url = f"{self._base_url}/subscribers/{quote(app_user_id, safe='')}"
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.delete(url, headers=self._headers(), timeout=15.0)
+        except httpx.HTTPError as exc:
+            logger.warning("revenuecat_delete_transport_error", error=str(exc))
+            return False
+
+        if resp.status_code in (200, 202, 204, 404):
+            logger.info("revenuecat_subscriber_deleted", status=resp.status_code)
+            return True
+        if resp.status_code == 429 or resp.status_code >= 500:
+            logger.warning("revenuecat_delete_retryable", status=resp.status_code)
+            return False
+        logger.error(
+            "revenuecat_delete_failed", status=resp.status_code, body=resp.text[:300]
+        )
+        raise AppError(
+            f"RevenueCat rejected the delete ({resp.status_code})", status_code=502
+        )

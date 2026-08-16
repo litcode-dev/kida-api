@@ -6,12 +6,14 @@ from app.database import get_db
 from app.middleware.auth_middleware import get_current_user, get_redis
 from app.middleware.rate_limit import limiter
 from app.services import auth_service
+from app.services import deletion_request_service
 from app.services import oauth_service
 from app.exceptions import AppError, EmailNotVerifiedError
 from app.schemas.user import (
     UserRegister, UserLogin, UserResponse, TokenResponse,
     RefreshRequest, OAuthCallbackRequest, GoogleTokenRequest, AppleTokenRequest, DeleteAccountRequest,
     VerifyEmailRequest, ResendVerificationRequest,
+    DeletionRequestCreate, DeletionRequestConfirm,
 )
 from app.schemas.common import success
 
@@ -120,9 +122,6 @@ async def refresh(
     if user.is_suspended:
         from app.exceptions import UnauthorizedError
         raise UnauthorizedError("Account suspended")
-    if user.deleted_at is not None:
-        from app.exceptions import UnauthorizedError
-        raise UnauthorizedError("Account pending deletion")
     await auth_service.revoke_refresh_token(redis, body.refresh_token)
     new_refresh = auth_service.create_refresh_token()
     await auth_service.store_refresh_token(redis, new_refresh, user_id)
@@ -151,14 +150,17 @@ async def me(user=Depends(get_current_user)):
     "/me",
     summary="Delete account",
     description=(
-        "Schedules the authenticated user's account for deletion. Access stops "
-        "immediately — the session is signed out and the account cannot be used — "
-        "but nothing is erased yet.\n\n"
-        "The account and all associated data are permanently removed once the grace "
-        "window closes; `purge_due_at` in the response says when. Until then the user "
-        "can undo this by signing in again with the same credentials, which restores "
-        "the account as it was. Pass `refresh_token` in the body to revoke the current "
-        "session as well."
+        "Permanently deletes the authenticated user's account and everything "
+        "attached to it — profile, purchases, subscriptions, likes, downloads, "
+        "uploaded content and its stored files — along with the records held by "
+        "RevenueCat and OneSignal.\n\n"
+        "There is no grace period and no way to undo this. Every session ends "
+        "immediately; pass `refresh_token` in the body to revoke the current "
+        "session's token too, though every session is revoked regardless. Once "
+        "it returns, the email address is free to register again as a new "
+        "account.\n\n"
+        "A repeat call from the same token gets 401, because the account it "
+        "authenticates no longer exists."
     ),
     responses={401: {"description": "Missing or invalid token"}},
 )
@@ -168,14 +170,67 @@ async def delete_account(
     redis: Redis = Depends(get_redis),
     user=Depends(get_current_user),
 ):
-    due = await auth_service.soft_delete_user(db, user, redis, body.refresh_token)
+    await auth_service.delete_user(db, user, redis, body.refresh_token)
+    return success(message="Account deleted")
+
+
+@router.post(
+    "/deletion-request",
+    summary="Request account deletion without signing in",
+    description=(
+        "For the public account-deletion page: starts deletion for people who "
+        "cannot sign in (lost password, an OAuth account they no longer control, "
+        "a device they no longer have).\n\n"
+        "If the address belongs to an account, a single-use confirmation link is "
+        "emailed to it. Nothing is deleted by this call — control of the inbox has "
+        "to be demonstrated first.\n\n"
+        "Always returns the same response whether or not the address is "
+        "registered, so this cannot be used to test who has an account."
+    ),
+)
+@limiter.limit("3/hour")
+async def request_deletion(
+    request: Request,
+    body: DeletionRequestCreate,
+    db: AsyncSession = Depends(get_db),
+):
+    await deletion_request_service.start_request(db, body.email)
+    # Deliberately unconditional. The one thing this endpoint must never do is
+    # answer "is this address registered?" — so it says the same either way.
     return success(
-        {
-            "purge_due_at": due.isoformat(),
-            "grace_days": auth_service.deletion_grace_days(),
-            "restorable": True,
-        },
-        "Account scheduled for deletion. Sign in again before the grace period ends to restore it.",
+        message=(
+            "If that address has a Kida account, we've emailed a link to confirm "
+            "the deletion. The link expires shortly."
+        )
+    )
+
+
+@router.post(
+    "/deletion-request/confirm",
+    summary="Confirm a deletion requested by email",
+    description=(
+        "Redeems the single-use link from `/auth/deletion-request` and deletes "
+        "the account on the same terms as in-app deletion: everything is erased "
+        "at once, with no grace period and no way to undo it.\n\n"
+        "A POST, not a GET, precisely so that a mail client or link scanner "
+        "prefetching the URL cannot delete an account nobody confirmed.\n\n"
+        "Returns the same response for a token that is expired, already used, "
+        "forged, or belongs to no account."
+    ),
+)
+@limiter.limit("10/hour")
+async def confirm_deletion_request(
+    request: Request,
+    body: DeletionRequestConfirm,
+    db: AsyncSession = Depends(get_db),
+    redis: Redis = Depends(get_redis),
+):
+    await deletion_request_service.confirm_request(db, redis, body.token)
+    return success(
+        message=(
+            "If that link was valid, the account has been deleted and a "
+            "confirmation email is on its way."
+        )
     )
 
 

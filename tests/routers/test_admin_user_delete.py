@@ -247,14 +247,8 @@ async def test_admin_delete_notifies_the_team_inbox_as_admin_initiated(
 
 
 @pytest.mark.asyncio
-async def test_self_delete_is_deferred_and_reports_the_user_as_actor(
-    client, db_session, fake_redis, monkeypatch
-):
-    """Self-deletion is a soft delete, so the notification waits for the purge —
-    and still records the user, not an admin, as the actor."""
-    from datetime import datetime, timedelta, timezone
-
-    from app.services import auth_service
+async def test_self_delete_reports_the_user_as_actor(client, db_session, monkeypatch):
+    """Same code path as an admin removal, but the actor has to say who asked."""
     from app.tasks import notification_tasks
 
     victim = await _make_user(db_session)
@@ -268,14 +262,7 @@ async def test_self_delete_is_deferred_and_reports_the_user_as_actor(
     resp = await client.request(
         "DELETE", "/api/v1/auth/me", headers=_headers(victim), json={},
     )
+
     assert resp.status_code == 200
-    assert calls == []  # still restorable — nothing to report yet
-
-    await db_session.refresh(victim)
-    victim.deleted_at = datetime.now(timezone.utc) - timedelta(days=31)
-    await db_session.commit()
-
-    await auth_service.purge_expired_accounts(db_session, fake_redis)
-
     assert len(calls) == 1
     assert calls[0][-1] == "user"

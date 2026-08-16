@@ -19,12 +19,17 @@ class FakeRedis:
 
     def __init__(self):
         self.store: dict[str, str] = {}
+        # Sets live apart from strings, as they do in Redis — the refresh-token
+        # index is a set while the tokens themselves are strings.
+        self.sets: dict[str, set[str]] = {}
 
     async def setex(self, key, ttl, value):
         self.store[key] = value
         return True
 
-    async def set(self, key, value):
+    async def set(self, key, value, ex=None, nx=False):
+        if nx and key in self.store:
+            return None
         self.store[key] = value
         return True
 
@@ -36,10 +41,35 @@ class FakeRedis:
         for k in keys:
             if self.store.pop(k, None) is not None:
                 removed += 1
+            if self.sets.pop(k, None) is not None:
+                removed += 1
         return removed
 
     async def exists(self, key):
-        return 1 if key in self.store else 0
+        return 1 if key in self.store or key in self.sets else 0
+
+    async def sadd(self, key, *members):
+        bucket = self.sets.setdefault(key, set())
+        before = len(bucket)
+        bucket.update(members)
+        return len(bucket) - before
+
+    async def srem(self, key, *members):
+        bucket = self.sets.get(key)
+        if not bucket:
+            return 0
+        removed = len(bucket & set(members))
+        bucket -= set(members)
+        if not bucket:
+            self.sets.pop(key, None)
+        return removed
+
+    async def smembers(self, key):
+        return set(self.sets.get(key, set()))
+
+    async def expire(self, key, ttl):
+        # TTLs are not simulated; keys live for the test.
+        return 1 if key in self.store or key in self.sets else 0
 
     async def ping(self):
         return True

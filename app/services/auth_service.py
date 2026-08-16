@@ -19,10 +19,23 @@ log = structlog.get_logger()
 
 ALGORITHM = "HS256"
 REFRESH_PREFIX = "refresh:"
+# Set of a user's live refresh tokens, so every session can be revoked at once.
+REFRESH_INDEX_PREFIX = "refresh_user:"
 VERIFY_PREFIX = "email_verify:"
 VERIFY_COOLDOWN_PREFIX = "email_verify_cooldown:"
 VERIFY_CODE_TTL_MINUTES = 15
 VERIFY_RESEND_COOLDOWN_SECONDS = 60
+
+
+def _deletion_actors() -> dict:
+    """``delete_user``'s ``actor`` string → the audit enum. Imported lazily to
+    keep this module free of a model import cycle."""
+    from app.models.deletion_audit import DeletionActor
+    return {
+        "user": DeletionActor.user,
+        "admin": DeletionActor.admin,
+        "email_request": DeletionActor.email_request,
+    }
 
 
 async def hash_password(password: str) -> str:
@@ -57,10 +70,29 @@ def decode_access_token(token: str) -> dict:
         raise UnauthorizedError("Invalid or expired token")
 
 
+def _as_str(value) -> str | None:
+    if value is None:
+        return None
+    return value.decode() if isinstance(value, bytes) else value
+
+
 async def store_refresh_token(redis: Redis, token: str, user_id: str) -> None:
+    """Store a refresh token, and index it against its owner.
+
+    The index is what makes "sign out everywhere" possible. Without it a token
+    can only be reached by presenting it, so deleting an account could revoke
+    the one session that asked and leave every other device's token sitting in
+    Redis until it aged out.
+    """
     key = f"{REFRESH_PREFIX}{token}"
     expire_seconds = settings.refresh_token_expire_days * 86400
     await redis.setex(key, expire_seconds, user_id)
+
+    index = f"{REFRESH_INDEX_PREFIX}{user_id}"
+    await redis.sadd(index, token)
+    # Bump the index's own TTL each time so it outlives its newest member and
+    # cannot linger forever once the account stops being used.
+    await redis.expire(index, expire_seconds)
 
 
 async def validate_refresh_token(redis: Redis, token: str) -> str:
@@ -68,11 +100,35 @@ async def validate_refresh_token(redis: Redis, token: str) -> str:
     user_id = await redis.get(key)
     if not user_id:
         raise UnauthorizedError("Refresh token invalid or expired")
-    return user_id.decode() if isinstance(user_id, bytes) else user_id
+    return _as_str(user_id)
 
 
 async def revoke_refresh_token(redis: Redis, token: str) -> None:
-    await redis.delete(f"{REFRESH_PREFIX}{token}")
+    key = f"{REFRESH_PREFIX}{token}"
+    user_id = _as_str(await redis.get(key))
+    await redis.delete(key)
+    if user_id:
+        await redis.srem(f"{REFRESH_INDEX_PREFIX}{user_id}", token)
+
+
+async def revoke_all_refresh_tokens(redis: Redis, user_id: str) -> int:
+    """Revoke every session an account holds. Returns how many were removed.
+
+    Best effort: a Redis failure here must not stop an account deletion, since
+    the tokens are unusable the moment the account row is gone (``/auth/refresh``
+    reloads the user and rejects it). This is about not leaving the identifier
+    lying around, not about access control.
+    """
+    index = f"{REFRESH_INDEX_PREFIX}{user_id}"
+    try:
+        tokens = [_as_str(t) for t in await redis.smembers(index)]
+        if tokens:
+            await redis.delete(*[f"{REFRESH_PREFIX}{t}" for t in tokens if t])
+        await redis.delete(index)
+        return len(tokens)
+    except Exception as exc:  # noqa: BLE001 - never block a deletion on Redis
+        log.error("refresh_token_revoke_all_failed", user_id=user_id, error=str(exc))
+        return 0
 
 
 def _generate_verification_code() -> str:
@@ -102,23 +158,6 @@ async def register_user(
     The account cannot log in until the email is verified (see verify_email).
     """
     existing = await db.scalar(select(User).where(User.email == email))
-    if existing is not None and within_deletion_grace(existing.deleted_at):
-        # The address belongs to an account waiting to be purged. Treat this as
-        # the owner coming back rather than a duplicate: reset the credentials
-        # and re-issue a code, but leave deleted_at set — verify_email restores
-        # the account only once the code proves they still hold the inbox.
-        existing.password_hash = await hash_password(password)
-        existing.full_name = full_name
-        existing.is_verified = False
-        await db.commit()
-        await db.refresh(existing)
-        code = await issue_verification_code(redis, str(existing.id))
-        await _start_cooldown(redis, str(existing.id))
-        log.info(
-            "verification_code.issued_for_returning_user",
-            user_id=str(existing.id), email=existing.email,
-        )
-        return existing, code
     if existing:
         raise ConflictError("Email already registered")
     user = User(
@@ -157,37 +196,16 @@ async def verify_email(db: AsyncSession, redis: Redis, email: str, code: str) ->
         raise AppError("Invalid or expired verification code", status_code=400)
 
     user.is_verified = True
-    # A returning user re-registered against an account still inside its grace
-    # window; the code they just entered proves the inbox is theirs, so the
-    # pending deletion is taken back here rather than at registration.
-    was_pending_deletion = user.deleted_at is not None
-    if was_pending_deletion:
-        user.deleted_at = None
     await db.commit()
     await db.refresh(user)
     await redis.delete(key)
     await redis.delete(f"{VERIFY_COOLDOWN_PREFIX}{user.id}")
 
-    if was_pending_deletion:
-        # A returning user, not a new one: send the same "welcome back" mail the
-        # login route sends, and keep them out of the new-signup notification —
-        # the account already existed.
-        log.info("account_restored_on_verify", user_id=str(user.id), email=user.email)
-        from app.services.email_service import (
-            send_email, account_restored_html, account_restored_text,
-        )
-        await send_email(
-            to=user.email,
-            subject="Your Kida account is back",
-            html=account_restored_html(user.full_name),
-            text=account_restored_text(user.full_name),
-        )
-    else:
-        from app.tasks.notification_tasks import (
-            send_registration_email, send_new_user_admin_notification,
-        )
-        send_registration_email.delay(str(user.id))
-        send_new_user_admin_notification.delay(str(user.id))
+    from app.tasks.notification_tasks import (
+        send_registration_email, send_new_user_admin_notification,
+    )
+    send_registration_email.delay(str(user.id))
+    send_new_user_admin_notification.delay(str(user.id))
 
     log.info("email.verified", user_id=str(user.id), email=user.email)
     return user
@@ -242,13 +260,6 @@ async def authenticate_user(db: AsyncSession, email: str, password: str) -> User
     if user.is_suspended:
         msg = f"Account suspended: {user.suspension_reason}" if user.suspension_reason else "Account suspended"
         raise UnauthorizedError(msg)
-    if user.deleted_at is not None:
-        # Signing back in during the grace window is how a user takes their
-        # deletion back. Past the window the account is owed deletion, so the
-        # password must stop working even if the purge job has not run yet.
-        if not within_deletion_grace(user.deleted_at):
-            raise UnauthorizedError("Invalid credentials")
-        await restore_user(db, user)
     if not user.is_verified:
         raise EmailNotVerifiedError("Please verify your email before logging in")
     return user
@@ -262,20 +273,6 @@ async def is_newsletter_subscriber(db: AsyncSession, email: str) -> bool:
         )
     )
     return row is not None
-
-
-async def _restore_if_returning(db: AsyncSession, user: User) -> None:
-    """Undo a pending deletion for an OAuth user signing back in.
-
-    The provider has just confirmed the address, so this is the same "changed
-    my mind" signal a password login gives. Past the grace window the account
-    is owed deletion and the sign-in is refused instead.
-    """
-    if user.deleted_at is None:
-        return
-    if not within_deletion_grace(user.deleted_at):
-        raise UnauthorizedError("Invalid credentials")
-    await restore_user(db, user)
 
 
 async def find_or_create_oauth_user(
@@ -297,7 +294,6 @@ async def find_or_create_oauth_user(
         if user.is_suspended:
             msg = f"Account suspended: {user.suspension_reason}" if user.suspension_reason else "Account suspended"
             raise UnauthorizedError(msg)
-        await _restore_if_returning(db, user)
         if avatar_url and user.avatar_url != avatar_url:
             user.avatar_url = avatar_url
             await db.commit()
@@ -310,7 +306,6 @@ async def find_or_create_oauth_user(
         if user.is_suspended:
             msg = f"Account suspended: {user.suspension_reason}" if user.suspension_reason else "Account suspended"
             raise UnauthorizedError(msg)
-        await _restore_if_returning(db, user)
         user.oauth_provider = provider
         user.oauth_provider_id = provider_id
         # The provider confirmed this email, so linking it verifies the account.
@@ -357,105 +352,6 @@ async def find_or_create_oauth_user(
             await db.commit()
             await db.refresh(user)
         return user
-
-
-def deletion_grace_days() -> int:
-    return get_settings().account_deletion_grace_days
-
-
-def purge_due_at(deleted_at: datetime) -> datetime:
-    """When a soft-deleted account becomes eligible for permanent removal."""
-    if deleted_at.tzinfo is None:
-        deleted_at = deleted_at.replace(tzinfo=timezone.utc)
-    return deleted_at + timedelta(days=deletion_grace_days())
-
-
-def within_deletion_grace(deleted_at: datetime | None) -> bool:
-    """True while a soft-deleted account can still be restored."""
-    if deleted_at is None:
-        return False
-    return datetime.now(timezone.utc) < purge_due_at(deleted_at)
-
-
-async def soft_delete_user(
-    db: AsyncSession, user: User, redis: Redis, refresh_token: str | None
-) -> datetime:
-    """Mark an account for deletion and return the date it will be purged.
-
-    Nothing is removed yet — the row is kept so the user can change their mind
-    by signing back in (see authenticate_user). Access is cut off immediately:
-    the session's refresh token is revoked and get_current_user rejects the
-    account, so an unexpired access token cannot outlive the request.
-    """
-    now = datetime.now(timezone.utc)
-    user.deleted_at = now
-    await db.commit()
-    await db.refresh(user)
-
-    if refresh_token:
-        await revoke_refresh_token(redis, refresh_token)
-
-    due = purge_due_at(now)
-    from app.services.email_service import (
-        send_email, account_deletion_scheduled_html, account_deletion_scheduled_text,
-    )
-    await send_email(
-        to=user.email,
-        subject="Your Kida account is scheduled for deletion",
-        html=account_deletion_scheduled_html(user.full_name, due),
-        text=account_deletion_scheduled_text(user.full_name, due),
-    )
-    log.info(
-        "account_deletion_scheduled",
-        user_id=str(user.id), email=user.email, purge_due_at=due.isoformat(),
-    )
-    return due
-
-
-async def restore_user(db: AsyncSession, user: User) -> User:
-    """Take back a pending deletion, putting the account straight back into use."""
-    user.deleted_at = None
-    await db.commit()
-    await db.refresh(user)
-    log.info("account_restored", user_id=str(user.id), email=user.email)
-
-    from app.services.email_service import (
-        send_email, account_restored_html, account_restored_text,
-    )
-    await send_email(
-        to=user.email,
-        subject="Your Kida account is back",
-        html=account_restored_html(user.full_name),
-        text=account_restored_text(user.full_name),
-    )
-    return user
-
-
-async def purge_expired_accounts(db: AsyncSession, redis: Redis) -> list[str]:
-    """Hard-delete every account whose grace window has closed.
-
-    Returns the ids purged. Each account is deleted independently so one
-    failure cannot strand the rest.
-    """
-    cutoff = datetime.now(timezone.utc) - timedelta(days=deletion_grace_days())
-    users = (
-        await db.scalars(
-            select(User).where(User.deleted_at.is_not(None), User.deleted_at <= cutoff)
-        )
-    ).all()
-
-    purged: list[str] = []
-    for user in users:
-        uid = str(user.id)
-        try:
-            await delete_user(db, user, redis, None, actor="user")
-            purged.append(uid)
-        except Exception as exc:  # noqa: BLE001 - one bad row must not stop the sweep
-            await db.rollback()
-            log.error("account_purge_failed", user_id=uid, error=str(exc))
-    if purged:
-        log.info("accounts_purged", count=len(purged))
-    return purged
 
 
 async def _loop_s3_keys(db: AsyncSession, loop_ids) -> list[str]:
@@ -557,9 +453,11 @@ async def delete_user(
 ) -> None:
     """Permanently delete an account and everything that references it.
 
-    ``actor`` is "user" for self-deletion via DELETE /auth/me and "admin" when
-    an admin removes the account; it only changes the wording of the internal
-    notification, not what gets deleted.
+    There is no pending state and nothing to undo: by the time this returns the
+    rows are gone. ``actor`` is "user" for self-deletion via DELETE /auth/me,
+    "email_request" for the confirmed public deletion link, and "admin" when an
+    admin removes the account; it changes the wording of the internal
+    notification and what the audit records, not what gets deleted.
     """
     from app.models.ai_generation import AIGeneration
     from app.models.download import Download
@@ -584,6 +482,23 @@ async def delete_user(
     uid = user.id
     user_provider = user.oauth_provider or "email"
     user_joined_at = user.created_at
+    # The account holder asked for this and it is being carried out in the same
+    # breath, so the request time is now. An admin removal has no such request.
+    requested_at = None if actor == "admin" else datetime.now(timezone.utc)
+
+    # Identifiers the third parties know this person by, read while the rows
+    # still exist. Handed to the propagation queue below.
+    stored_rc_ids = (await db.scalars(
+        select(IapSubscription.app_user_id).where(IapSubscription.user_id == uid)
+    )).all()
+    # Whatever RevenueCat actually recorded, plus both ids we have ever sent it:
+    # the backend reconciles with the user UUID, the client has been reporting
+    # the lowercased email. Deleting under all of them is the only way to be
+    # sure the subscriber is gone. See docs/account-deletion.md.
+    revenuecat_ids = [i for i in stored_rc_ids if i] + [
+        str(uid), user_email.strip().lower()
+    ]
+    onesignal_subscription_id = user.onesignal_player_id
 
     # Transactional records owned by the user
     await db.execute(delete(AIGeneration).where(AIGeneration.user_id == uid))
@@ -702,12 +617,31 @@ async def delete_user(
     if drone_cat_ids:
         await db.execute(delete(DronePadCategory).where(DronePadCategory.id.in_(drone_cat_ids)))
 
+    # The audit row is written in the same transaction as the delete, so a
+    # rollback cannot leave a record claiming an account was removed when it
+    # wasn't — and the third-party work is queued atomically with it.
+    from app.models.deletion_audit import DeletionActor
+    from app.services import account_deletion_service
+
+    audit_id = await account_deletion_service.record_deletion(
+        db,
+        user_id=uid,
+        actor=_deletion_actors().get(actor, DeletionActor.user),
+        requested_at=requested_at,
+        revenuecat_app_user_ids=revenuecat_ids,
+        onesignal_subscription_id=onesignal_subscription_id,
+        onesignal_external_id=str(uid),
+    )
+
     await db.execute(delete(User).where(User.id == uid))
     await db.commit()
 
     # The suspension flag is mirrored in Redis by the admin suspend endpoint and
     # is not covered by the database delete.
     await redis.delete(f"suspended:{uid}")
+    # Sessions on every other device. Unusable already — the account row is
+    # gone — but the tokens should not sit in Redis holding a dead user id.
+    await revoke_all_refresh_tokens(redis, str(uid))
 
     # Only now that the rows are really gone.
     await _delete_s3_objects(s3_keys, str(uid))
@@ -729,7 +663,21 @@ async def delete_user(
         user_joined_at.isoformat() if user_joined_at else None,
         actor,
     )
-    log.info("account_deleted", user_id=str(uid), email=user_email, actor=actor)
+
+    # Tell RevenueCat and OneSignal. Queued rather than awaited: the local
+    # delete is already committed and must not be held up — or undone — by a
+    # third-party outage. The queued row is retried by the beat sweep if this
+    # never runs.
+    try:
+        from app.tasks.deletion_tasks import propagate_account_deletion
+        propagate_account_deletion.delay(str(audit_id))
+    except Exception as exc:  # noqa: BLE001 - the sweep will pick it up
+        log.error(
+            "account_deletion.propagation_enqueue_failed",
+            audit_id=str(audit_id), error=str(exc),
+        )
+
+    log.info("account_deleted", user_id=str(uid), actor=actor, audit_id=str(audit_id))
 
 
 async def get_user_by_id(db: AsyncSession, user_id: str) -> User:

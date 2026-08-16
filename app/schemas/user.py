@@ -32,8 +32,6 @@ class UserResponse(BaseModel):
     is_suspended: bool = False
     suspension_reason: str | None = None
     is_verified: bool = False
-    # Set while the account is inside its deletion grace window.
-    deleted_at: datetime | None = None
 
     model_config = {"from_attributes": True}
 
@@ -90,3 +88,15 @@ class AppleTokenRequest(BaseModel):
 
 class DeleteAccountRequest(BaseModel):
     refresh_token: str | None = None
+
+
+class DeletionRequestCreate(BaseModel):
+    """Start the out-of-app deletion route for an address."""
+
+    email: EmailStr
+
+
+class DeletionRequestConfirm(BaseModel):
+    """Redeem the signed link mailed by :class:`DeletionRequestCreate`."""
+
+    token: str

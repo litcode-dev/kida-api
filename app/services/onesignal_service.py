@@ -1,3 +1,5 @@
+from urllib.parse import quote
+
 import httpx
 import structlog
 from app.config import get_settings
@@ -6,11 +8,23 @@ log = structlog.get_logger()
 
 ONESIGNAL_API_URL = "https://onesignal.com/api/v1/notifications"
 
+# The user/subscription endpoints live on the newer host and use "Key" auth
+# rather than the legacy "Basic" the notifications endpoint above still takes.
+ONESIGNAL_BASE_URL = "https://api.onesignal.com"
+
 
 def _headers() -> dict:
     settings = get_settings()
     return {
         "Authorization": f"Basic {settings.onesignal_api_key}",
+        "Content-Type": "application/json",
+    }
+
+
+def _key_headers() -> dict:
+    settings = get_settings()
+    return {
+        "Authorization": f"Key {settings.onesignal_api_key}",
         "Content-Type": "application/json",
     }
 
@@ -112,6 +126,71 @@ async def send_to_segment(
         payload["big_picture"] = image_url
         payload["ios_attachments"] = {"image": image_url}
     return await _post(payload)
+
+
+# ── Deletion ──────────────────────────────────────────────────────────────────
+
+async def _delete(path: str, what: str) -> bool:
+    """DELETE against the OneSignal user API. True when the record is gone.
+
+    A 404 counts as gone: "never existed" and "already deleted" are the same end
+    state, and a retried deletion must not report failure the second time.
+    Returns False for anything worth retrying (429, 5xx, network). Raises for a
+    permanent 4xx so the caller stops retrying instead of looping.
+    """
+    settings = get_settings()
+    if not settings.onesignal_api_key or not settings.onesignal_app_id:
+        raise RuntimeError("OneSignal is not configured")
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.delete(
+                f"{ONESIGNAL_BASE_URL}{path}", headers=_key_headers()
+            )
+    except httpx.HTTPError as exc:
+        log.warning("onesignal.delete_transport_error", what=what, error=str(exc))
+        return False
+
+    if resp.status_code in (200, 202, 204, 404):
+        log.info("onesignal.deleted", what=what, status=resp.status_code)
+        return True
+    if resp.status_code == 429 or resp.status_code >= 500:
+        log.warning("onesignal.delete_retryable", what=what, status=resp.status_code)
+        return False
+    log.error(
+        "onesignal.delete_failed",
+        what=what, status=resp.status_code, body=resp.text[:300],
+    )
+    raise RuntimeError(f"OneSignal rejected the {what} delete ({resp.status_code})")
+
+
+async def delete_user_by_external_id(external_id: str) -> bool:
+    """Delete a OneSignal user and every channel subscription they hold.
+
+    Keyed on the ``external_id`` alias, which is what the app sets when it calls
+    ``OneSignal.login(user.id)``. This is the thorough one — it covers every
+    device the person ever installed on, not just the last one to register.
+    """
+    app_id = get_settings().onesignal_app_id
+    return await _delete(
+        f"/apps/{app_id}/users/by/external_id/{quote(external_id, safe='')}",
+        "user",
+    )
+
+
+async def delete_subscription(subscription_id: str) -> bool:
+    """Delete a single push subscription by its id.
+
+    ``users.onesignal_player_id`` holds what the legacy SDK called a player id;
+    OneSignal's current model calls the same value a subscription id. This is
+    the fallback for accounts where no ``external_id`` alias was ever set, and
+    it only removes the one device it names.
+    """
+    app_id = get_settings().onesignal_app_id
+    return await _delete(
+        f"/apps/{app_id}/subscriptions/{quote(subscription_id, safe='')}",
+        "subscription",
+    )
 
 
 # ── Transactional helpers ─────────────────────────────────────────────────────

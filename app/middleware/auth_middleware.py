@@ -36,10 +36,6 @@ async def get_current_user(
         reason = redis_reason or user.suspension_reason
         msg = f"Account suspended: {reason}" if reason else "Account suspended"
         raise UnauthorizedError(msg)
-    if user.deleted_at is not None:
-        # Access tokens outlive the delete request by up to their expiry, so the
-        # check has to live here rather than only at login.
-        raise UnauthorizedError("Account pending deletion")
     return user
 
 

@@ -1307,67 +1307,45 @@ def _simple_notice_html(tag: str, hero_top: str, hero_accent: str, paragraphs: s
 </html>"""
 
 
-def account_deletion_scheduled_html(full_name: str, purge_due_at: datetime) -> str:
-    due = purge_due_at.strftime("%b %d, %Y")
+def deletion_request_html(confirm_url: str, ttl_minutes: int) -> str:
+    """Confirmation link for a deletion asked for from the public web page.
+
+    Addressed to nobody by name: the request arrives with an address and nothing
+    else, and the person reading it may not be the account holder. Naming them
+    would leak that the address is registered to whoever opened the mail.
+    """
+    window = f"{ttl_minutes} minutes" if ttl_minutes < 120 else f"{ttl_minutes // 60} hours"
     paragraphs = (
-        f'<p style="margin:0 0 8px 0;font-size:17px;font-weight:700;color:#0a0a0a;">Hi {full_name},</p>'
         '<p style="margin:0 0 20px 0;font-size:15px;line-height:1.6;color:#333;">'
-        "Your Kida account has been scheduled for deletion and is no longer usable. "
-        f"On <strong>{due}</strong> it and all your data will be permanently removed."
+        "Someone asked us to delete the Kida account registered to this address. "
+        "If that was you, confirm below."
         "</p>"
-        '<p style="margin:0 0 20px 0;font-size:15px;line-height:1.6;color:#333;">'
-        "Changed your mind? Sign in again with the same email and password before that "
-        "date and your account comes back exactly as you left it. After that date it "
-        "cannot be recovered."
+        '<p style="margin:0 0 24px 0;font-size:15px;line-height:1.6;color:#333;">'
+        f"This link works once and expires in <strong>{window}</strong>. Using it "
+        "<strong>deletes the account straight away</strong> — there is no waiting "
+        "period and it cannot be undone."
         "</p>"
-        '<a href="https://kida.litcode.com.ng" '
+        f'<a href="{confirm_url}" '
         'style="display:inline-block;padding:14px 28px;background:#0a0a0a;color:#fff;'
         'font-size:14px;font-weight:700;text-decoration:none;border-radius:4px;'
-        'letter-spacing:0.02em;">Sign back in &rarr;</a>'
-    )
-    return _simple_notice_html("ACCOUNT DELETION", "Scheduled for", "deletion.", paragraphs)
-
-
-def account_deletion_scheduled_text(full_name: str, purge_due_at: datetime) -> str:
-    due = purge_due_at.strftime("%b %d, %Y")
-    return (
-        f"Hi {full_name},\n\n"
-        f"Your Kida account has been scheduled for deletion and is no longer usable.\n"
-        f"On {due} it and all your data will be permanently removed.\n\n"
-        f"Changed your mind? Sign in again with the same email and password before that\n"
-        f"date and your account comes back exactly as you left it. After that date it\n"
-        f"cannot be recovered.\n\n"
-        f"Sign back in: https://kida.litcode.com.ng"
-        + _text_footer()
-    )
-
-
-def account_restored_html(full_name: str) -> str:
-    paragraphs = (
-        f'<p style="margin:0 0 8px 0;font-size:17px;font-weight:700;color:#0a0a0a;">Hi {full_name},</p>'
-        '<p style="margin:0 0 20px 0;font-size:15px;line-height:1.6;color:#333;">'
-        "Good to have you back. The deletion scheduled for your Kida account has been "
-        "cancelled and everything is exactly where you left it — your purchases, "
-        "downloads and library are untouched."
+        'letter-spacing:0.02em;">Confirm deletion &rarr;</a>'
+        '<p style="margin:24px 0 0 0;font-size:14px;line-height:1.6;color:#666;">'
+        "Didn't ask for this? Ignore this email — nothing happens unless the link "
+        "above is used, and we will not email you about it again."
         "</p>"
-        '<p style="margin:0 0 20px 0;font-size:15px;line-height:1.6;color:#333;">'
-        "If this was not you, change your password straight away."
-        "</p>"
-        '<a href="https://kida.litcode.com.ng" '
-        'style="display:inline-block;padding:14px 28px;background:#0a0a0a;color:#fff;'
-        'font-size:14px;font-weight:700;text-decoration:none;border-radius:4px;'
-        'letter-spacing:0.02em;">Browse Loops &rarr;</a>'
     )
-    return _simple_notice_html("ACCOUNT RESTORED", "Welcome", "back.", paragraphs)
+    return _simple_notice_html("ACCOUNT DELETION", "Confirm your", "deletion.", paragraphs)
 
 
-def account_restored_text(full_name: str) -> str:
+def deletion_request_text(confirm_url: str, ttl_minutes: int) -> str:
+    window = f"{ttl_minutes} minutes" if ttl_minutes < 120 else f"{ttl_minutes // 60} hours"
     return (
-        f"Hi {full_name},\n\n"
-        f"Good to have you back. The deletion scheduled for your Kida account has been\n"
-        f"cancelled and everything is exactly where you left it — your purchases,\n"
-        f"downloads and library are untouched.\n\n"
-        f"If this was not you, change your password straight away.\n\n"
-        f"Browse: https://kida.litcode.com.ng"
+        "Someone asked us to delete the Kida account registered to this address.\n"
+        "If that was you, confirm with the link below.\n\n"
+        f"{confirm_url}\n\n"
+        f"This link works once and expires in {window}. Using it deletes the account\n"
+        "straight away — there is no waiting period and it cannot be undone.\n\n"
+        "Didn't ask for this? Ignore this email — nothing happens unless the link\n"
+        "above is used, and we will not email you about it again."
         + _text_footer()
     )
