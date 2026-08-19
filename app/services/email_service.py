@@ -51,6 +51,29 @@ async def _send_batch_via_resend(settings, messages: list[dict]) -> None:
         resp.raise_for_status()
 
 
+def delivery_problem(settings=None) -> str | None:
+    """Why the configured backend would drop every message, or None if it is usable.
+
+    ``send_email`` logs "email.skipped" and returns when its backend has no
+    credentials, so a missing key turns a send into a very fast no-op. Bulk
+    senders check this before they start: the daily digest stamps its content as
+    announced as it sends, and doing that against a backend that cannot deliver
+    anything means the content is never mentioned again.
+    """
+    settings = settings or get_settings()
+    smtp_ready = bool(settings.smtp_user and settings.smtp_password)
+    resend_ready = bool(settings.resend_api_key)
+    backend = settings.email_backend
+
+    if backend == "resend" and not resend_ready:
+        return "RESEND_API_KEY is empty; every message would be skipped"
+    if backend == "smtp" and not smtp_ready:
+        return "SMTP_USER/SMTP_PASSWORD are empty; every message would be skipped"
+    if backend == "fallback" and not (resend_ready or smtp_ready):
+        return "neither Resend nor SMTP is configured; every message would be skipped"
+    return None
+
+
 async def send_bulk_email(
     recipients: list[str],
     subject: str,
@@ -109,21 +132,26 @@ async def send_bulk_email(
                     "email.bulk.chunk_failed",
                     backend="resend", size=len(chunk), subject=subject, error=str(exc),
                 )
-                if settings.email_backend != "fallback":
-                    failed += len(chunk)
-                    continue
+                # Fall through and send the chunk one message at a time. The
+                # batch endpoint takes a narrower payload than the single one,
+                # so a rejection here does not mean the mail itself is
+                # unsendable — and writing off a whole chunk on one provider
+                # blip is how a digest reaches nobody at all.
 
-        # SMTP has no batch endpoint, and it is also where "fallback" lands
-        # when the Resend chunk failed.
+        # One at a time: SMTP has no batch endpoint, and this is also where a
+        # failed Resend chunk lands.
         for address, (body_html, body_text, extra_headers) in rendered.items():
             try:
-                await send_email(
+                delivered = await send_email(
                     to=address, subject=subject, html=body_html, text=body_text,
                     headers=extra_headers or None,
                 )
-                sent += 1
             except Exception as exc:  # noqa: BLE001
                 log.error("email.bulk.failed", to=address, subject=subject, error=str(exc))
+                delivered = False
+            if delivered:
+                sent += 1
+            else:
                 failed += 1
 
     log.info("email.bulk.done", subject=subject, sent=sent, failed=failed)
@@ -153,45 +181,53 @@ async def _send_via_smtp(
 
 async def send_email(
     to: str, subject: str, html: str, text: str, headers: dict | None = None
-) -> None:
+) -> bool:
+    """Send one message. Returns whether a provider actually accepted it.
+
+    Failures are logged rather than raised, so one bad address cannot abort a
+    caller's loop. The return value is what lets a bulk sender tell "delivered"
+    from "skipped or rejected" — counting a skip as a send is how a digest came
+    to report sent=N while nobody received anything.
+    """
     settings = get_settings()
     backend = settings.email_backend
 
     if backend == "fallback":
-        await _send_with_fallback(settings, to, subject, html, text, headers)
-        return
+        return await _send_with_fallback(settings, to, subject, html, text, headers)
 
     if backend == "resend":
         if not settings.resend_api_key:
             log.warning("email.skipped", reason="RESEND_API_KEY not configured", to=to)
-            return
+            return False
         send_fn = _send_via_resend(settings, to, subject, html, text, headers)
     else:
         if not settings.smtp_user or not settings.smtp_password:
             log.warning("email.skipped", reason="SMTP credentials not configured", to=to)
-            return
+            return False
         send_fn = _send_via_smtp(settings, to, subject, html, text, headers)
 
     try:
         await send_fn
         log.info("email.sent", to=to, subject=subject, backend=backend)
+        return True
     except httpx.HTTPStatusError as exc:
         log.error("email.failed", to=to, subject=subject, backend=backend,
                   status=exc.response.status_code, body=exc.response.text)
     except Exception as exc:
         log.error("email.failed", to=to, subject=subject, backend=backend, error=str(exc))
+    return False
 
 
 async def _send_with_fallback(
     settings, to: str, subject: str, html: str, text: str, headers: dict | None = None
-) -> None:
+) -> bool:
     if not settings.resend_api_key:
         log.warning("email.fallback.resend_skipped", reason="RESEND_API_KEY not configured", to=to)
     else:
         try:
             await _send_via_resend(settings, to, subject, html, text, headers)
             log.info("email.sent", to=to, subject=subject, backend="resend")
-            return
+            return True
         except httpx.HTTPStatusError as exc:
             log.warning("email.fallback.resend_failed", to=to,
                         status=exc.response.status_code, body=exc.response.text)
@@ -201,13 +237,15 @@ async def _send_with_fallback(
     if not settings.smtp_user or not settings.smtp_password:
         log.error("email.failed", to=to, subject=subject,
                   reason="Resend failed and SMTP credentials not configured")
-        return
+        return False
 
     try:
         await _send_via_smtp(settings, to, subject, html, text, headers)
         log.info("email.sent", to=to, subject=subject, backend="smtp")
+        return True
     except Exception as exc:
         log.error("email.failed", to=to, subject=subject, backend="smtp", error=str(exc))
+    return False
 
 
 # ── Shared footer snippets ─────────────────────────────────────────────────────

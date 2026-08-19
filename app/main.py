@@ -1,4 +1,6 @@
 import json
+from contextlib import asynccontextmanager
+
 import sentry_sdk
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
@@ -36,6 +38,26 @@ if settings.sentry_dsn:
         integrations=[StarletteIntegration(), FastApiIntegration()],
     )
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Start the digest's safety net alongside the API.
+
+    The daily mail is scheduled in celery beat, a separate process that serves
+    no traffic — so a deployment without one looks entirely healthy while no
+    digest is ever sent. The API checks the same schedule and sends the digest
+    itself if nothing else has; the run is claimed through a unique row, so beat
+    and any number of replicas still produce one email.
+    """
+    from app.services import digest_scheduler
+
+    digest_scheduler.start()
+    try:
+        yield
+    finally:
+        await digest_scheduler.stop()
+
+
 _tags_metadata = [
     {"name": "auth", "description": "Registration, login, token refresh, and OAuth (Google, Apple)."},
     {"name": "loops", "description": "Browse and download individual audio loops."},
@@ -72,6 +94,7 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc",
     openapi_tags=_tags_metadata,
+    lifespan=lifespan,
     swagger_ui_parameters={
         "persistAuthorization": True,
         "tryItOutEnabled": True,

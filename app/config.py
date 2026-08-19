@@ -58,6 +58,18 @@ class Settings(BaseSettings):
     # How many addresses go in one provider request. Resend's batch endpoint
     # caps at 100.
     email_batch_size: int = 100
+    # The API process also checks whether the day's digest has gone out, and
+    # sends it if nothing else did. Celery beat is a separate process that
+    # serves no traffic, so a deployment missing it looks perfectly healthy
+    # while no daily mail is ever sent — this is the safety net for that.
+    # Runs are claimed through a unique row in digest_runs, so beat, several API
+    # replicas and a manual trigger cannot between them send two copies.
+    content_digest_scheduler_enabled: bool = True
+    content_digest_scheduler_interval_seconds: int = 300
+    # How late a missed digest may still go out. Catching up an hour after the
+    # scheduled time is a fix; delivering "today's drops" at 4am is not, so
+    # beyond this the run is left for the next day's slot.
+    content_digest_catch_up_hours: int = 6
 
     # Email
     email_backend: str = "resend"  # "resend" | "smtp"

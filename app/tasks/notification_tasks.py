@@ -219,79 +219,21 @@ def send_purchase_confirmation(user_id: str, purchase_id: str):
 
 
 @celery_app.task
-def send_content_digest():
+def send_content_digest(trigger: str = "beat", force: bool = False):
     """One email listing everything that went live since the last run.
 
-    Replaces the old per-item blast, which cost recipients x items and fired at
-    upload time — before the processing job had finished, so a failed encode
-    still reached the whole list. Push notifications still go out per item the
-    moment it is ready; this is the roundup, not the alert.
+    The work itself lives in ``digest_sender.run_digest``, because beat is not
+    the only thing that starts it: the API runs the same function on a catch-up
+    schedule, and an admin can trigger it by hand. Whichever gets there first
+    claims the slot; the others find it taken and do nothing.
+
+    ``trigger`` is recorded on the run row, so "is beat actually firing?" is a
+    question the digest history can answer.
     """
     async def _run():
-        from app.config import get_settings
-        from app.database import AsyncSessionLocal
-        from app.schemas.broadcast import BroadcastAudience
-        from app.services import (
-            broadcast_service, content_digest_service, unsubscribe_service,
-        )
-        from app.services.email_service import (
-            content_digest_html, content_digest_text, send_bulk_email,
-        )
+        from app.services.digest_sender import run_digest
 
-        settings = get_settings()
-        if not settings.content_digest_enabled:
-            log.info("content_digest.disabled")
-            return
-
-        async with AsyncSessionLocal() as db:
-            digest, claim_ids = await content_digest_service.collect(db)
-            if digest.is_empty():
-                log.info("content_digest.nothing_new")
-                return
-
-            # Everyone who gets marketing mail: users and newsletter
-            # subscribers, minus anyone who unsubscribed. The old per-item task
-            # emailed every user regardless of that opt-out.
-            recipients = await broadcast_service.resolve_recipients(
-                db, BroadcastAudience.all
-            )
-            if not recipients:
-                log.info("content_digest.no_recipients", items=digest.total)
-                return
-
-            sections = digest.sections()
-            total = digest.total
-
-            # Claimed before sending: a crashed send must not re-blast the same
-            # digest to the whole list on the next run. The ids are logged so a
-            # lost digest can be reconstructed.
-            claimed = await content_digest_service.claim(db, claim_ids)
-            log.info(
-                "content_digest.claimed",
-                items=claimed,
-                recipients=len(recipients),
-                ids={k: [str(i) for i in v] for k, v in claim_ids.items() if v},
-            )
-
-        subject = (
-            "1 new drop on Kida" if total == 1 else f"{total} new drops on Kida"
-        )
-
-        # Rendered per address: the unsubscribe link and its List-Unsubscribe
-        # headers are signed for one recipient, so one shared body would let
-        # anybody unsubscribe everybody.
-        def _build(address: str):
-            url = unsubscribe_service.unsubscribe_url(address)
-            return (
-                content_digest_html(sections, total, url),
-                content_digest_text(sections, total, url),
-                unsubscribe_service.list_unsubscribe_headers(address),
-            )
-
-        sent, failed = await send_bulk_email(
-            recipients=recipients, subject=subject, build=_build
-        )
-        log.info("content_digest.sent", items=total, sent=sent, failed=failed)
+        await run_digest(trigger=trigger, force=force)
 
     asyncio.run(_run())
 

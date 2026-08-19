@@ -51,25 +51,75 @@ async def test_recipients_are_chunked_to_the_batch_size(resend_settings):
     assert [len(call.args[1]) for call in batch.await_args_list] == [100, 100, 50]
 
 
+def _flaky_batch(fail_on=(1,)):
+    """A batch sender that rejects the given chunk numbers."""
+    calls = {"n": 0}
+
+    async def _send(settings, messages):
+        calls["n"] += 1
+        if calls["n"] in fail_on:
+            raise httpx.ConnectError("provider down")
+
+    return _send
+
+
 @pytest.mark.asyncio
 async def test_a_failing_chunk_does_not_stop_the_rest(resend_settings):
     resend_settings.email_batch_size = 2
     recipients = ["a@test.com", "b@test.com", "c@test.com", "d@test.com"]
 
-    calls = {"n": 0}
-
-    async def _flaky(settings, messages):
-        calls["n"] += 1
-        if calls["n"] == 1:
-            raise httpx.ConnectError("provider down")
-
-    with patch.object(email_service, "_send_batch_via_resend", new=_flaky):
+    with patch.object(email_service, "_send_batch_via_resend", new=_flaky_batch()), \
+            patch.object(
+                email_service, "_send_via_resend",
+                new=AsyncMock(side_effect=httpx.ConnectError("still down")),
+            ):
         sent, failed = await email_service.send_bulk_email(
             recipients, "subject", "<p>html</p>", "text"
         )
 
     assert sent == 2
     assert failed == 2
+
+
+@pytest.mark.asyncio
+async def test_a_failed_chunk_is_retried_one_message_at_a_time(resend_settings):
+    """The batch endpoint takes a narrower payload than the single one.
+
+    A chunk it rejects is not necessarily mail the provider will not send, and
+    writing the chunk off is how a whole digest reaches nobody — so the failed
+    chunk goes out address by address instead.
+    """
+    resend_settings.email_batch_size = 2
+    recipients = ["a@test.com", "b@test.com", "c@test.com", "d@test.com"]
+
+    with patch.object(email_service, "_send_batch_via_resend", new=_flaky_batch()), \
+            patch.object(email_service, "_send_via_resend", new=AsyncMock()) as single:
+        sent, failed = await email_service.send_bulk_email(
+            recipients, "subject", "<p>html</p>", "text"
+        )
+
+    assert (sent, failed) == (4, 0)
+    # Only the rejected chunk is retried; the chunk that went out is not re-sent.
+    assert single.await_count == 2
+    assert [call.args[1] for call in single.await_args_list] == ["a@test.com", "b@test.com"]
+
+
+@pytest.mark.asyncio
+async def test_messages_skipped_for_want_of_credentials_are_not_counted_as_sent(
+    resend_settings,
+):
+    """The failure that used to look healthiest in the log.
+
+    Without a key every message is skipped, and counting a skip as a send is
+    what let a digest report sent=N while nobody received anything.
+    """
+    resend_settings.resend_api_key = ""
+
+    sent, failed = await email_service.send_bulk_email(
+        ["a@test.com", "b@test.com"], "subject", "<p>html</p>", "text"
+    )
+
+    assert (sent, failed) == (0, 2)
 
 
 @pytest.mark.asyncio

@@ -183,3 +183,26 @@ async def claim(db: AsyncSession, claim_ids: dict[str, list[uuid.UUID]]) -> int:
         claimed += len(ids)
     await db.commit()
     return claimed
+
+
+async def release(db: AsyncSession, claim_ids: dict[str, list[uuid.UUID]]) -> int:
+    """Undo a claim: clear announced_at so the items return to the next digest.
+
+    Stamping happens before the send, which is right — a crashed send must not
+    re-blast the list. But when the send delivered nothing at all, the stamp is
+    simply wrong, and without this the content would be marked announced and
+    never mentioned again.
+    """
+    released = 0
+    for key, ids in claim_ids.items():
+        if not ids:
+            continue
+        model = _MODELS[key]
+        result = await db.execute(
+            update(model)
+            .where(model.id.in_(ids), model.announced_at.is_not(None))
+            .values(announced_at=None)
+        )
+        released += result.rowcount or 0
+    await db.commit()
+    return released
