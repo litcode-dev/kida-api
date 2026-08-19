@@ -5,15 +5,16 @@ everything that is live and not yet announced, stamps each item, and sends one
 email. When something is uploaded and no mail arrives, the cause is always one
 of a handful of things, and none of them are visible from outside the database:
 
-  * beat never fired, so the sweep did not run at all
+  * nothing triggered the sweep, so it did not run at all
   * the item is not "ready" yet, so the sweep skipped it
   * the item was uploaded after the hour, and goes out on the next run
   * the item predates the digest deploy and was backfilled as already announced
   * the sweep ran and claimed the item, but the send then failed
-  * the mail backend has no credentials, so every message was skipped while the
-    run still logged sent=N, failed=0
+  * the mail backend has no credentials, so nothing could be delivered
 
-This prints all six, plus what the next digest currently holds.
+This prints all six, plus the digest's own run history and what the next digest
+currently holds. Every run writes a digest_runs row, so "did it even fire, and
+what did it decide" is a question this can answer directly.
 
 Nothing here writes to the database unless --release or --send-now is passed.
 
@@ -36,7 +37,9 @@ from app.models.drum_kit import DrumKit, DrumSample
 from app.models.loop import Loop
 from app.models.stem_pack import Stem, StemPack
 from app.schemas.broadcast import BroadcastAudience
-from app.services import broadcast_service, content_digest_service
+from app.services import (
+    broadcast_service, content_digest_service, digest_run_service, email_service,
+)
 
 # Lagos, which is what the default 17:00 UTC was chosen against.
 WAT = timezone(timedelta(hours=1), "WAT")
@@ -62,11 +65,12 @@ def _both_zones(moment: datetime) -> str:
 
 
 def _run_window(hour: int, now: datetime) -> tuple[datetime, datetime]:
-    """The most recent scheduled fire time, and the next one."""
-    today = now.replace(hour=hour, minute=0, second=0, microsecond=0)
-    if today <= now:
-        return today, today + timedelta(days=1)
-    return today - timedelta(days=1), today
+    """The most recent scheduled fire time, and the next one.
+
+    Shared with the sender so this report and the digest itself can never
+    disagree about which run was due.
+    """
+    return digest_run_service.due_slot(hour, now), digest_run_service.next_slot(hour, now)
 
 
 async def _digest_columns(db) -> set[str]:
@@ -165,22 +169,25 @@ def _section(title: str, lines: list[str], empty: str) -> None:
 def _delivery_problem(settings) -> str | None:
     """Why the configured backend would drop every message, if it would.
 
-    send_email logs "email.skipped" and returns when its backend has no
-    credentials, and send_bulk_email counts that as sent. So a missing key
-    produces a run that claims every item and reports sent=N, failed=0, while
-    delivering nothing — the one failure that looks healthy in the log.
+    The digest refuses to claim anything when this is set — a run that reported
+    sent=N while delivering nothing was the failure that looked healthiest in
+    the log, and is now recorded as ``not_configured`` instead.
     """
-    backend = settings.email_backend
-    smtp_ready = bool(settings.smtp_user and settings.smtp_password)
-    resend_ready = bool(settings.resend_api_key)
+    problem = email_service.delivery_problem(settings)
+    return f"MISSING — {problem}" if problem else None
 
-    if backend == "resend" and not resend_ready:
-        return "MISSING — RESEND_API_KEY is empty, every message is skipped"
-    if backend == "smtp" and not smtp_ready:
-        return "MISSING — SMTP_USER/SMTP_PASSWORD empty, every message is skipped"
-    if backend == "fallback" and not (resend_ready or smtp_ready):
-        return "MISSING — neither Resend nor SMTP is configured"
-    return None
+
+async def _runs(db, limit: int = 10) -> list[str]:
+    """The digest's own history: who ran it, and what came of it."""
+    lines = []
+    for run in await digest_run_service.recent(db, limit):
+        counts = f"items={run.items} recipients={run.recipients} sent={run.sent} failed={run.failed}"
+        detail = f" — {run.detail}" if run.detail else ""
+        lines.append(
+            f"{run.run_key:<24} {run.status:<15} via {run.trigger:<7} "
+            f"{_both_zones(run.started_at)}  {counts}{detail}"
+        )
+    return lines
 
 
 async def report() -> None:
@@ -195,6 +202,9 @@ async def report() -> None:
     print(f"  now                {_both_zones(now)}")
     print(f"  last due run       {_both_zones(last_run)}")
     print(f"  next due run       {_both_zones(next_run)}")
+    print(f"  api scheduler      {settings.content_digest_scheduler_enabled} "
+          f"(every {settings.content_digest_scheduler_interval_seconds}s, "
+          f"catch-up window {settings.content_digest_catch_up_hours}h)")
     print(f"  email backend      {settings.email_backend}")
     delivery = _delivery_problem(settings)
     print(f"  credentials        {delivery or 'present for this backend'}")
@@ -240,33 +250,50 @@ async def report() -> None:
             "Nothing was stamped. Either there was nothing new, or the sweep did not run.",
         )
 
+        due_run = await digest_run_service.find_by_key(
+            db, digest_run_service.slot_key(last_run)
+        )
+        _section(
+            "Runs (most recent first)",
+            await _runs(db),
+            "No run has ever been recorded. Nothing has triggered the digest at all.",
+        )
+
         recipients = await broadcast_service.resolve_recipients(db, BroadcastAudience.all)
         print(f"\nRecipients: {len(recipients)} address(es) would receive the next digest.")
 
     print("\nVerdict")
     print("-------")
     if not settings.content_digest_enabled:
-        print("  CONTENT_DIGEST_ENABLED is false — the task returns before doing anything.")
+        print("  CONTENT_DIGEST_ENABLED is false — every run returns before doing anything.")
     elif missing:
         print("  The migration has not run on this database. Every sweep is erroring.")
         print("  Fix: alembic upgrade head")
     elif delivery:
         print(f"  The mail backend has no credentials: {delivery}.")
-        print("  A sweep still claims every item and still logs sent=N, failed=0, so the")
-        print("  log looks healthy while nothing is delivered. Set the credentials, then")
-        print("  release anything already claimed:")
+        print("  The digest refuses to claim anything in this state, so nothing has been")
+        print("  lost — set the credentials and the next run sends the backlog. Release")
+        print("  anything an older build already claimed:")
         print("    python -m scripts.digest_status --release <type>:<id>")
     elif not recipients:
-        print("  No recipients resolve. The sweep exits before sending and claims nothing.")
-    elif digest.total and not claimed:
-        print(f"  {digest.total} item(s) are ready and were NOT claimed at {last_run:%H:%M} UTC.")
-        print("  The sweep did not run. Check that the celery beat process is alive:")
+        print("  No recipients resolve. The run exits before sending and claims nothing.")
+    elif due_run is None and digest.total:
+        print(f"  {digest.total} item(s) were ready at {_both_zones(last_run)} and no run")
+        print("  was recorded for that slot — nothing triggered the digest. Check that the")
+        print("  API is up (it runs the digest itself when beat does not) and that beat is")
+        print("  alive:")
         print("    docker compose ps beat && docker compose logs --tail=50 beat")
-    elif claimed and not digest.total:
-        print("  The sweep ran and claimed these items, so any missing mail failed during")
-        print("  sending, after the claim. Check the worker log for content_digest.sent /")
-        print("  email.bulk.chunk_failed, then re-queue with:")
+        print("  Or send it now:")
+        print("    python -m scripts.digest_status --send-now --yes")
+    elif due_run is not None and due_run.status == "failed":
+        print(f"  The last due run failed: {due_run.detail}")
+        print("  Content it released is back in the queue above; content it kept is listed")
+        print("  in its claimed_ids and can be released by id:")
         print("    python -m scripts.digest_status --release <type>:<id>")
+    elif due_run is not None and due_run.status == "sent":
+        print(f"  The last due run sent {due_run.sent} message(s) to {due_run.recipients}")
+        print(f"  recipient(s), {due_run.failed} of which failed. Anything queued above")
+        print(f"  arrived after {last_run:%H:%M} UTC and goes out at {_both_zones(next_run)}.")
     elif digest.total:
         print(f"  {digest.total} item(s) are queued and will go out at {_both_zones(next_run)}.")
     elif blocked:
@@ -369,13 +396,25 @@ def main() -> None:
             print("\n--send-now needs --yes. It emails every recipient listed above.")
             return
         print("\nRunning the digest now...")
-        # Imported here so a plain report never needs a broker connection. The
-        # task body is an ordinary function; calling it runs the sweep inline in
-        # this process rather than queueing it for a worker.
-        from app.tasks.notification_tasks import send_content_digest
+        # Imported here so a plain report never needs a broker connection. This
+        # runs the sweep inline in this process rather than queueing it for a
+        # worker, and takes its own manual run key so it cannot consume the
+        # day's scheduled digest.
+        from app.services.digest_sender import run_digest
 
-        send_content_digest()
-        print("Done — see the log lines above for what was sent.")
+        async def _send() -> None:
+            run = await run_digest(trigger="manual", force=True)
+            if run is None:
+                print("Nothing ran — CONTENT_DIGEST_ENABLED is false.")
+                return
+            print(
+                f"{run.run_key}: {run.status} — items={run.items} "
+                f"recipients={run.recipients} sent={run.sent} failed={run.failed}"
+            )
+            if run.detail:
+                print(f"  {run.detail}")
+
+        _run(_send())
 
 
 if __name__ == "__main__":

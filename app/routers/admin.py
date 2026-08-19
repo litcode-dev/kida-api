@@ -190,6 +190,128 @@ async def send_broadcast(
     )
 
 
+@router.get(
+    "/email/digest",
+    summary="Daily digest status",
+    description=(
+        "Why the daily new-content email did — or did not — go out.\n\n"
+        "Reports the schedule, whether the mail backend can actually deliver, what "
+        "is queued for the next run, and the last few runs with what each one did. "
+        "A run recorded as `not_configured` or `failed` is the answer to \"nobody "
+        "received anything\"; no run row at all for a past slot means nothing "
+        "triggered it."
+    ),
+    responses={403: {"description": "Admin role required"}},
+)
+@limiter.limit("30/minute")
+async def digest_status(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_admin),
+):
+    from datetime import datetime, timezone
+
+    from app.config import get_settings
+    from app.services import content_digest_service, digest_run_service, email_service
+
+    settings = get_settings()
+    now = datetime.now(timezone.utc)
+    hour = settings.content_digest_hour_utc
+    due = digest_run_service.due_slot(hour, now)
+
+    digest, claim_ids = await content_digest_service.collect(db)
+    runs = await digest_run_service.recent(db, limit=10)
+    due_run = await digest_run_service.find_by_key(
+        db, digest_run_service.slot_key(due)
+    )
+
+    return success({
+        "enabled": settings.content_digest_enabled,
+        "hour_utc": hour,
+        "in_process_scheduler": settings.content_digest_scheduler_enabled,
+        "last_due_run": due.isoformat(),
+        "next_due_run": digest_run_service.next_slot(hour, now).isoformat(),
+        "last_due_run_status": due_run.status if due_run else "never ran",
+        "email_backend": settings.email_backend,
+        "delivery_problem": email_service.delivery_problem(settings),
+        "queued_items": sum(len(ids) for ids in claim_ids.values()),
+        "queued": [
+            {"type": key, "title": item.title}
+            for key, _label, items in digest.sections()
+            for item in items
+        ],
+        "recipients": await broadcast_service.count_recipients(db, BroadcastAudience.all),
+        "runs": [
+            {
+                "run_key": run.run_key,
+                "trigger": run.trigger,
+                "status": run.status,
+                "started_at": run.started_at.isoformat(),
+                "finished_at": run.finished_at.isoformat() if run.finished_at else None,
+                "items": run.items,
+                "recipients": run.recipients,
+                "sent": run.sent,
+                "failed": run.failed,
+                "detail": run.detail,
+            }
+            for run in runs
+        ],
+    })
+
+
+@router.post(
+    "/email/digest/run",
+    summary="Send the daily digest now",
+    description=(
+        "Runs the digest immediately instead of waiting for the scheduled hour, and "
+        "waits for it to finish so the response says what happened.\n\n"
+        "It sends real mail to the full audience. Nothing goes out when there is no "
+        "new content — check `/admin/email/digest` first. A manual run gets its own "
+        "slot, so it never cancels the day's scheduled digest."
+    ),
+    responses={
+        403: {"description": "Admin role required"},
+        422: {"description": "The digest is disabled, or the run was already claimed"},
+    },
+)
+@limiter.limit("2/minute")
+async def run_digest_now(
+    request: Request,
+    admin: User = Depends(require_admin),
+):
+    from app.config import get_settings
+    from app.services.digest_sender import run_digest
+
+    if not get_settings().content_digest_enabled:
+        raise AppError(
+            "Digest not run — CONTENT_DIGEST_ENABLED is false", status_code=422
+        )
+
+    run = await run_digest(trigger="manual", force=True)
+    if run is None:
+        # A manual key is stamped to the second, so this only happens when two
+        # people press the button within the same second.
+        raise AppError(
+            "Digest not run — another run claimed this moment; try again",
+            status_code=422,
+        )
+
+    log.info("admin.digest_run", admin_id=str(admin.id), run_key=run.run_key,
+             status=run.status, sent=run.sent)
+    return success(
+        {
+            "run_key": run.run_key,
+            "status": run.status,
+            "items": run.items,
+            "recipients": run.recipients,
+            "sent": run.sent,
+            "failed": run.failed,
+            "detail": run.detail,
+        },
+        f"Digest run finished: {run.status}",
+    )
+
+
 # --- Loop endpoints ---
 
 @router.delete("/loops/{loop_id}")

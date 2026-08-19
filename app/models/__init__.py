@@ -19,3 +19,4 @@ from app.models.monthly_download_usage import MonthlyDownloadUsage, MonthlyQuota
 from app.models.deletion_audit import (  # noqa: F401
     AccountDeletionAudit, AccountDeletionPropagation, DeletionActor, PropagationStatus,
 )
+from app.models.digest_run import DigestRun, DigestRunStatus  # noqa: F401
