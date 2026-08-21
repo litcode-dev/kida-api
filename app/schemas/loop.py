@@ -2,10 +2,44 @@ import re
 import uuid
 from datetime import datetime
 from decimal import Decimal
+from fractions import Fraction
 from pydantic import BaseModel, Field, field_validator, model_validator
 from app.models.loop import Genre, TempoFeel
 
 TIME_SIGNATURE_RE = re.compile(r"[1-9]\d?/(1|2|4|8|16|32)")
+
+# The denominators the format accepts, and the numerator ceiling, both mirror
+# TIME_SIGNATURE_RE — a spelling this does not generate is one no loop can hold.
+TIME_SIGNATURE_DENOMINATORS = (1, 2, 4, 8, 16, 32)
+TIME_SIGNATURE_MAX_NUMERATOR = 99
+
+
+def equivalent_time_signatures(signature: str) -> list[str]:
+    """Every spelling of the same bar length, `signature` itself included.
+
+    3/4 and 6/8 both fill a bar with six eighth notes, and the catalogue's
+    producers write the two interchangeably, so free-text search treats them as
+    one. Note this is *duration* equivalence, not a musical claim: 3/4 is a
+    waltz and 6/8 a jig, and they differ in where the accent falls. The
+    dedicated `time_signature` filter stays exact for callers who need that
+    distinction.
+
+    Rescaling to each accepted denominator — rather than a hand-kept table —
+    means the set stays right for signatures nobody has thought about yet:
+    3/4 yields 3/4, 6/8, 12/16 and 24/32, and drops 1.5/2 because half an
+    eighth note is not a bar anyone can write down.
+    """
+    numerator, _, denominator = signature.partition("/")
+    bar_length = Fraction(int(numerator), int(denominator))
+    spellings = []
+    for candidate_denominator in TIME_SIGNATURE_DENOMINATORS:
+        scaled = bar_length * candidate_denominator
+        if scaled.denominator != 1:
+            continue
+        if not 1 <= scaled.numerator <= TIME_SIGNATURE_MAX_NUMERATOR:
+            continue
+        spellings.append(f"{scaled.numerator}/{candidate_denominator}")
+    return spellings
 
 # The ceiling was 140, which pre-dates half the catalogue: drill sits around
 # 140-145, seben and soukous run past 150, and anything counted in double time

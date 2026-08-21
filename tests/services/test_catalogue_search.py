@@ -888,8 +888,9 @@ async def test_search_only_joins_a_term_that_is_a_whole_time_signature(db_sessio
     assert await _titles(db_session, search="6") == []
     assert await _titles(db_session, search="68") == []
     assert await _titles(db_session, search="/8") == []
-    # Padding is the caller's, not the catalogue's.
-    assert await _titles(db_session, search=" 6/8 ") == ["Compound"]
+    # Padding is the caller's, not the catalogue's. 3/4 comes along because it
+    # is the same bar length as 6/8 — see the equivalence tests below.
+    assert await _titles(db_session, search=" 6/8 ") == ["Compound", "Waltz"]
 
 
 @pytest.mark.asyncio
@@ -917,3 +918,76 @@ async def test_the_route_searches_the_time_signature(client, db_session):
 
     assert resp.status_code == 200, resp.text
     assert [i["title"] for i in resp.json()["data"]["items"]] == ["Midnight Drive"]
+
+
+# ── equivalent time signatures search as one ─────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_search_treats_equivalent_signatures_as_one(db_session):
+    """3/4 and 6/8 fill a bar with the same six eighth notes, and producers
+    file the same groove under either."""
+    user = await _user(db_session)
+    await _loop(db_session, user.id, title="Waltz", time_signature="3/4")
+    await _loop(db_session, user.id, title="Jig", time_signature="6/8")
+    await _loop(db_session, user.id, title="Straight", time_signature="4/4")
+
+    assert await _titles(db_session, search="3/4") == ["Jig", "Waltz"]
+    # Symmetric: neither spelling is the canonical one.
+    assert await _titles(db_session, search="6/8") == ["Jig", "Waltz"]
+
+
+@pytest.mark.asyncio
+async def test_search_equivalence_covers_the_rarer_spellings(db_session):
+    """The set is computed, not hand-kept, so a signature nobody planned for
+    still lands with its equals."""
+    user = await _user(db_session)
+    await _loop(db_session, user.id, title="Waltz", time_signature="3/4")
+    await _loop(db_session, user.id, title="Fine Grained", time_signature="12/16")
+    await _loop(db_session, user.id, title="Finer Still", time_signature="24/32")
+
+    assert await _titles(db_session, search="3/4") == [
+        "Fine Grained", "Finer Still", "Waltz",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_search_does_not_merge_different_bar_lengths(db_session):
+    """Equivalence is same-bar-length, not same-family: 4/4 and 12/8 hold a
+    different number of beats and stay apart."""
+    user = await _user(db_session)
+    await _loop(db_session, user.id, title="Four Four", time_signature="4/4")
+    await _loop(db_session, user.id, title="Twelve Eight", time_signature="12/8")
+    await _loop(db_session, user.id, title="Seven Eight", time_signature="7/8")
+
+    assert await _titles(db_session, search="4/4") == ["Four Four"]
+    assert await _titles(db_session, search="12/8") == ["Twelve Eight"]
+    assert await _titles(db_session, search="7/8") == ["Seven Eight"]
+
+
+@pytest.mark.asyncio
+async def test_the_filter_stays_exact_while_search_forgives(db_session):
+    """The pair has to keep working in both directions: search is the
+    forgiving half, the filter the precise one. Losing the filter's precision
+    would leave no way to ask for a waltz and mean it."""
+    user = await _user(db_session)
+    await _loop(db_session, user.id, title="Waltz", time_signature="3/4")
+    await _loop(db_session, user.id, title="Jig", time_signature="6/8")
+
+    assert await _titles(db_session, time_signature="3/4") == ["Waltz"]
+    assert await _titles(db_session, time_signature="6/8") == ["Jig"]
+    assert await _titles(db_session, search="3/4") == ["Jig", "Waltz"]
+    # And the two compose: the filter narrows what the search widened.
+    assert await _titles(db_session, search="3/4", time_signature="6/8") == ["Jig"]
+
+
+def test_equivalent_time_signatures_is_symmetric_and_self_inclusive():
+    from app.schemas.loop import equivalent_time_signatures as equivalents
+
+    assert equivalents("3/4") == ["3/4", "6/8", "12/16", "24/32"]
+    assert equivalents("6/8") == equivalents("3/4")
+    # Never drops the term it was given, whichever spelling that was.
+    for signature in ("3/4", "6/8", "4/4", "7/8", "12/8", "24/32"):
+        assert signature in equivalents(signature)
+    # A rescaling that would need a fractional numerator is not a spelling.
+    assert "1/2" not in equivalents("3/4")

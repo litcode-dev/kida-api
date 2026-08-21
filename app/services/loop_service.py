@@ -7,6 +7,7 @@ from app.models.purchase import Purchase
 from app.models.user import User
 from app.schemas.loop import (
     TIME_SIGNATURE_RE, LoopCreate, LoopUpdate, LoopFilter,
+    equivalent_time_signatures,
 )
 from app.exceptions import AppError, NotFoundError, EntitlementError
 from app.services import price_sync_service, s3_service
@@ -92,7 +93,10 @@ def _search_clause(query: str):
     Time signature joins only when the whole term parses as one. Anything
     looser would be worse than not matching: "6" alone would drag in 6/8 and
     6/4 alongside every title with a 6 in it, and the column is exact enough
-    that a partial match has no sensible meaning.
+    that a partial match has no sensible meaning. The term is widened to every
+    spelling of the same bar length, so searching 3/4 also surfaces the 6/8
+    loops the same producers would have filed either way. Searching is the
+    forgiving half of the pair — the `time_signature` filter stays exact.
     """
     like = f"%{query}%"
     clauses = [Loop.title.ilike(like), Loop.description.ilike(like)]
@@ -101,7 +105,9 @@ def _search_clause(query: str):
         clauses.append(Loop.genre.in_(genres))
     signature = query.strip()
     if TIME_SIGNATURE_RE.fullmatch(signature):
-        clauses.append(Loop.time_signature == signature)
+        clauses.append(
+            Loop.time_signature.in_(equivalent_time_signatures(signature))
+        )
     return or_(*clauses)
 
 
