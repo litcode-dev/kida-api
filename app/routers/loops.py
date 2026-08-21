@@ -8,7 +8,9 @@ from app.services import (
     loop_service, s3_service, like_service, free_tier_service, monthly_quota_service,
 )
 from app.models.monthly_download_usage import MonthlyQuotaType
-from app.schemas.loop import LoopFilter, LoopResponse
+from app.schemas.loop import (
+    TIME_SIGNATURE_QUERY_PATTERN, LoopFilter, LoopResponse,
+)
 from app.schemas.common import success
 from app.models.loop import Genre, TempoFeel
 import uuid
@@ -25,7 +27,9 @@ router = APIRouter(prefix="/loops", tags=["loops"])
         "says the word. Genre matching ignores case and punctuation, so `lofi` finds "
         "Lo-fi and `hip hop` finds Hip Hop.\n\n"
         "Every other parameter is an exact filter and is ANDed with the search: "
-        "`?search=piano&genre=Trap` means a piano match *within* Trap."
+        "`?search=piano&genre=Trap` means a piano match *within* Trap. `tags` "
+        "is the one many-valued filter — a loop matches when it carries any of "
+        "the tags listed."
     ),
 )
 async def list_loops(
@@ -36,9 +40,22 @@ async def list_loops(
     bpm_min: int | None = None,
     bpm_max: int | None = None,
     key: str | None = None,
-    tempo_feel: TempoFeel | None = None,
+    time_signature: str | None = Query(
+        None,
+        pattern=TIME_SIGNATURE_QUERY_PATTERN,
+        description="Exact time signature, e.g. `4/4` or `6/8`",
+    ),
+    tempo_feel: TempoFeel | None = Query(
+        None, description="`slow`, `mid` or `fast`"
+    ),
     is_free: bool | None = None,
-    tags: str | None = Query(None, description="Comma-separated tags, e.g. `808,dark`"),
+    tags: str | None = Query(
+        None,
+        description=(
+            "Comma-separated tags, e.g. `808,dark`. A loop matches when it "
+            "carries **any** of them."
+        ),
+    ),
     sort: str = "newest",
     page: int = 1,
     page_size: int = 20,
@@ -48,7 +65,8 @@ async def list_loops(
     filters = LoopFilter(
         ready_only=True,
         search=search, genre=genre, bpm_min=bpm_min, bpm_max=bpm_max,
-        key=key, tempo_feel=tempo_feel, is_free=is_free,
+        key=key, time_signature=time_signature, tempo_feel=tempo_feel,
+        is_free=is_free,
         tags=[t.strip() for t in tags.split(",") if t.strip()] if tags else None,
         sort=sort, page=page, page_size=page_size,
     )
