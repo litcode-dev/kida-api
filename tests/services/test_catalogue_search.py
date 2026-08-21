@@ -34,16 +34,18 @@ async def _user(db):
 
 
 async def _loop(db, user_id, *, title, genre=Genre.afrobeat, description=None, bpm=100,
-                status="ready"):
+                status="ready", time_signature="4/4", tempo_feel=TempoFeel.mid,
+                tags=None):
     loop = Loop(
         id=uuid.uuid4(),
         title=title,
         slug=f"{uuid.uuid4().hex[:12]}",
         genre=genre,
         bpm=bpm,
+        time_signature=time_signature,
         duration=30,
-        tempo_feel=TempoFeel.mid,
-        tags=[],
+        tempo_feel=tempo_feel,
+        tags=tags or [],
         price=Decimal("10.00"),
         description=description,
         status=status,
@@ -671,3 +673,123 @@ async def test_tag_filtering_works_on_every_catalogue(db_session):
     assert [l.title for l in loops] == ["Tagged Loop"]
     assert [k.title for k in kits] == ["Tagged Kit"]
     assert [p.title for p in packs] == ["Tagged Pack"]
+
+
+# ── tags, time signature and tempo feel as first-class search params ──────────
+
+
+@pytest.mark.asyncio
+async def test_loops_can_be_filtered_by_time_signature(db_session):
+    user = await _user(db_session)
+    await _loop(db_session, user.id, title="Waltz Loop", time_signature="3/4")
+    await _loop(db_session, user.id, title="Six Eight Loop", time_signature="6/8")
+    await _loop(db_session, user.id, title="Straight Loop", time_signature="4/4")
+
+    assert await _titles(db_session, time_signature="6/8") == ["Six Eight Loop"]
+    assert await _titles(db_session, time_signature="3/4") == ["Waltz Loop"]
+
+
+@pytest.mark.asyncio
+async def test_time_signature_ands_with_the_other_filters(db_session):
+    user = await _user(db_session)
+    await _loop(
+        db_session, user.id, title="Fast Six Eight",
+        time_signature="6/8", tempo_feel=TempoFeel.fast, tags=["808"],
+    )
+    await _loop(
+        db_session, user.id, title="Slow Six Eight",
+        time_signature="6/8", tempo_feel=TempoFeel.slow, tags=["808"],
+    )
+    await _loop(
+        db_session, user.id, title="Fast Four Four",
+        time_signature="4/4", tempo_feel=TempoFeel.fast, tags=["808"],
+    )
+
+    titles = await _titles(
+        db_session, time_signature="6/8", tempo_feel=TempoFeel.fast, tags=["808"]
+    )
+
+    assert titles == ["Fast Six Eight"]
+
+
+@pytest.mark.asyncio
+async def test_a_padded_time_signature_still_matches(db_session):
+    """Query strings pick up stray whitespace; the stored value never has any."""
+    user = await _user(db_session)
+    await _loop(db_session, user.id, title="Six Eight Loop", time_signature="6/8")
+
+    assert await _titles(db_session, time_signature=" 6/8 ") == ["Six Eight Loop"]
+    # An all-whitespace value is not a filter at all, so it must not drop rows.
+    assert await _titles(db_session, time_signature="   ") == ["Six Eight Loop"]
+
+
+@pytest.mark.asyncio
+async def test_the_public_route_filters_by_time_signature_and_tempo_feel(
+    client, db_session
+):
+    user = await _user(db_session)
+    await _loop(
+        db_session, user.id, title="Six Eight Loop",
+        time_signature="6/8", tempo_feel=TempoFeel.fast, tags=["dark"],
+    )
+    await _loop(
+        db_session, user.id, title="Straight Loop",
+        time_signature="4/4", tempo_feel=TempoFeel.slow, tags=["bright"],
+    )
+    headers = {"Authorization": f"Bearer {_token(user)}"}
+
+    async def _items(query):
+        resp = await client.get(f"/api/v1/loops?{query}", headers=headers)
+        assert resp.status_code == 200, resp.text
+        return [i["title"] for i in resp.json()["data"]["items"]]
+
+    assert await _items("time_signature=6/8") == ["Six Eight Loop"]
+    assert await _items("tempo_feel=fast") == ["Six Eight Loop"]
+    assert await _items("tags=dark") == ["Six Eight Loop"]
+    assert await _items("time_signature=6/8&tempo_feel=fast&tags=dark") == [
+        "Six Eight Loop"
+    ]
+    # ANDed, so a combination nothing satisfies comes back empty rather than
+    # falling back to either half.
+    assert await _items("time_signature=4/4&tempo_feel=fast") == []
+
+
+@pytest.mark.asyncio
+async def test_a_malformed_time_signature_filter_is_rejected(client, db_session):
+    """Not a silent empty page: the route carries the same format rule as upload."""
+    user = await _user(db_session)
+    await _loop(db_session, user.id, title="Any Loop")
+
+    resp = await client.get(
+        "/api/v1/loops?time_signature=common",
+        headers={"Authorization": f"Bearer {_token(user)}"},
+    )
+
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_the_producer_route_takes_the_same_three_filters(client, db_session):
+    producer = await _user(db_session)
+    await _loop(
+        db_session, producer.id, title="Six Eight Loop",
+        time_signature="6/8", tempo_feel=TempoFeel.fast, tags=["dark", "808"],
+    )
+    await _loop(
+        db_session, producer.id, title="Straight Loop",
+        time_signature="4/4", tempo_feel=TempoFeel.slow, tags=["bright"],
+    )
+    headers = {"Authorization": f"Bearer {_token(producer)}"}
+
+    resp = await client.get(
+        "/api/v1/producer/loops?time_signature=6/8&tempo_feel=fast&tags=808,dark",
+        headers=headers,
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert [i["title"] for i in resp.json()["data"]["items"]] == ["Six Eight Loop"]
+
+    bad = await client.get(
+        "/api/v1/producer/loops?time_signature=4%2F3", headers=headers
+    )
+    assert bad.status_code == 422

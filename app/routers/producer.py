@@ -18,7 +18,9 @@ from app.schemas.drone_pad import (
     DronePadUpdate,
     DroneResponse,
 )
-from app.schemas.loop import LoopCreate, LoopFilter, LoopUpdate, LoopResponse
+from app.schemas.loop import (
+    TIME_SIGNATURE_QUERY_PATTERN, LoopCreate, LoopFilter, LoopUpdate, LoopResponse,
+)
 from app.schemas.producer_analytics import AnalyticsParams, AnalyticsPeriod
 from app.routers.stem_pack_management import build_stem_pack_router
 from app.models.drone_pad import MusicalKey
@@ -79,9 +81,20 @@ async def list_producer_loops(
     bpm_min: int | None = None,
     bpm_max: int | None = None,
     key: str | None = None,
+    time_signature: str | None = Query(
+        None,
+        pattern=TIME_SIGNATURE_QUERY_PATTERN,
+        description="Exact time signature, e.g. `4/4` or `6/8`",
+    ),
     tempo_feel: TempoFeel | None = None,
     is_free: bool | None = None,
-    tags: str | None = None,
+    tags: str | None = Query(
+        None,
+        description=(
+            "Comma-separated tags, e.g. `808,dark`. A loop matches when it "
+            "carries **any** of them."
+        ),
+    ),
     sort: str = "newest",
     page: int = 1,
     page_size: int = 20,
@@ -90,7 +103,8 @@ async def list_producer_loops(
 ):
     filters = LoopFilter(
         search=search, genre=genre, bpm_min=bpm_min, bpm_max=bpm_max,
-        key=key, tempo_feel=tempo_feel, is_free=is_free, sort=sort,
+        key=key, time_signature=time_signature, tempo_feel=tempo_feel,
+        is_free=is_free, sort=sort,
         tags=[t.strip() for t in tags.split(",") if t.strip()] if tags else None,
         page=page, page_size=page_size, created_by=producer.id,
     )
