@@ -59,7 +59,14 @@ async def _loop(db, user_id, *, title, genre=Genre.afrobeat, description=None, b
 
 async def _titles(db, **kwargs):
     loops, _total = await loop_service.list_loops(db, LoopFilter(**kwargs))
-    return sorted(l.title for l in loops)
+    return sorted(loop.title for loop in loops)
+
+
+async def _ranked(db, **kwargs):
+    """Titles in the order the service returned them — for the cases where the
+    ordering *is* the behaviour under test."""
+    loops, _total = await loop_service.list_loops(db, LoopFilter(**kwargs))
+    return [loop.title for loop in loops]
 
 
 # ── genre matching ────────────────────────────────────────────────────────────
@@ -991,3 +998,79 @@ def test_equivalent_time_signatures_is_symmetric_and_self_inclusive():
         assert signature in equivalents(signature)
     # A rescaling that would need a fractional numerator is not a spelling.
     assert "1/2" not in equivalents("3/4")
+
+
+# ── the searched signature outranks the ones merely equivalent to it ──────────
+
+
+@pytest.mark.asyncio
+async def test_the_searched_signature_comes_first(db_session):
+    user = await _user(db_session)
+    await _loop(db_session, user.id, title="Jig", time_signature="6/8")
+    await _loop(db_session, user.id, title="Waltz", time_signature="3/4")
+
+    assert await _ranked(db_session, search="6/8") == ["Jig", "Waltz"]
+    # And the other way round, from the same two rows.
+    assert await _ranked(db_session, search="3/4") == ["Waltz", "Jig"]
+
+
+@pytest.mark.asyncio
+async def test_ranking_holds_when_the_equivalents_are_newer(db_session):
+    """Recency is the default sort, so an equivalent uploaded later would win
+    on it — relevance has to be the outer key, not a tiebreak after it."""
+    user = await _user(db_session)
+    await _loop(db_session, user.id, title="Older Jig", time_signature="6/8")
+    await _loop(db_session, user.id, title="Newer Waltz", time_signature="3/4")
+
+    assert await _ranked(db_session, search="6/8") == ["Older Jig", "Newer Waltz"]
+
+
+@pytest.mark.asyncio
+async def test_the_chosen_sort_still_orders_within_each_group(db_session):
+    user = await _user(db_session)
+    quiet_jig = await _loop(db_session, user.id, title="Quiet Jig",
+                            time_signature="6/8")
+    loud_jig = await _loop(db_session, user.id, title="Loud Jig",
+                           time_signature="6/8")
+    loud_waltz = await _loop(db_session, user.id, title="Loud Waltz",
+                             time_signature="3/4")
+    quiet_jig.download_count = 1
+    loud_jig.download_count = 50
+    loud_waltz.download_count = 900
+    await db_session.commit()
+
+    # The 900-download waltz is the most downloaded row by a distance and
+    # still ranks below both jigs.
+    assert await _ranked(db_session, search="6/8", sort="most_downloaded") == [
+        "Loud Jig", "Quiet Jig", "Loud Waltz",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_text_match_ranks_with_the_equivalents(db_session):
+    """A loop that only mentions the term is not in the searched signature, so
+    it sits in the same group as the equivalents rather than leading."""
+    user = await _user(db_session)
+    await _loop(db_session, user.id, title="Sounds like 6/8", time_signature="4/4")
+    await _loop(db_session, user.id, title="Actual Jig", time_signature="6/8")
+
+    assert await _ranked(db_session, search="6/8") == [
+        "Actual Jig", "Sounds like 6/8",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_non_signature_search_keeps_the_plain_sort(db_session):
+    """No relevance key when the term is not a signature — the sort is the
+    only ordering, untouched."""
+    user = await _user(db_session)
+    cheap = await _loop(db_session, user.id, title="Piano One", time_signature="6/8")
+    popular = await _loop(db_session, user.id, title="Piano Two",
+                          time_signature="3/4")
+    cheap.download_count = 2
+    popular.download_count = 80
+    await db_session.commit()
+
+    assert await _ranked(db_session, search="Piano", sort="most_downloaded") == [
+        "Piano Two", "Piano One",
+    ]

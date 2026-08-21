@@ -28,9 +28,10 @@ router = APIRouter(prefix="/loops", tags=["loops"])
         "well as one that mentions it. Genre matching ignores case and punctuation, "
         "so `lofi` finds Lo-fi and `hip hop` finds Hip Hop; time signature joins in "
         "only when the whole term is one, like `6/8`, and widens to every spelling "
-        "of the same bar length, so `3/4` also returns the 6/8 loops. Use the "
-        "`time_signature` filter instead when you need 3/4 and 6/8 kept apart."
-        "\n\n"
+        "of the same bar length, so `3/4` also returns the 6/8 loops — the searched "
+        "signature first, the equivalents after it, `sort` ordering within each "
+        "group. Use the `time_signature` filter instead when you need 3/4 and 6/8 "
+        "kept apart.\n\n"
         "Every other parameter is a filter and is ANDed with the search: "
         "`?search=piano&genre=Trap` means a piano match *within* Trap. `tags` and "
         "`time_signature` are the many-valued ones — a loop matches when it carries "
@@ -42,7 +43,8 @@ async def list_loops(
         None,
         description=(
             "Free text over title, description, genre and time signature. "
-            "Equivalent signatures match together — `3/4` also finds 6/8."
+            "Equivalent signatures match together — `3/4` also finds 6/8, "
+            "ranked below the 3/4 loops."
         ),
     ),
     genre: Genre | None = None,

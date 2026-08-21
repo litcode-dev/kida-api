@@ -1,7 +1,7 @@
 import uuid
 import re
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import func, or_, select
+from sqlalchemy import case, func, or_, select
 from app.models.loop import Genre, Loop
 from app.models.purchase import Purchase
 from app.models.user import User
@@ -77,6 +77,16 @@ async def get_loop(db: AsyncSession, loop_id: uuid.UUID) -> Loop:
     return loop
 
 
+def _searched_time_signature(query: str) -> str | None:
+    """The search term as a time signature, or None if it is not one.
+
+    Shared by the WHERE and the ORDER BY so the two can never disagree about
+    what counts as a signature search.
+    """
+    signature = query.strip()
+    return signature if TIME_SIGNATURE_RE.fullmatch(signature) else None
+
+
 def _search_clause(query: str):
     """Free text over the fields a person would search by.
 
@@ -103,8 +113,8 @@ def _search_clause(query: str):
     genres = Genre.matching(query)
     if genres:
         clauses.append(Loop.genre.in_(genres))
-    signature = query.strip()
-    if TIME_SIGNATURE_RE.fullmatch(signature):
+    signature = _searched_time_signature(query)
+    if signature:
         clauses.append(
             Loop.time_signature.in_(equivalent_time_signatures(signature))
         )
@@ -147,7 +157,18 @@ async def list_loops(db: AsyncSession, filters: LoopFilter) -> tuple[list[Loop],
         "most_downloaded": Loop.download_count.desc(),
         "most_played": Loop.play_count.desc(),
     }
-    q = q.order_by(sort_map.get(filters.sort, Loop.created_at.desc()))
+    order_by = []
+    if filters.search:
+        searched = _searched_time_signature(filters.search)
+        if searched:
+            # Widening 6/8 to take in 3/4 must not bury what was actually
+            # asked for: the loops in the searched signature lead, the ones
+            # merely equivalent to it follow. Only a tiebreak — `sort` still
+            # orders within each group, so an explicit most_downloaded is
+            # honoured, just downloads-within-relevance.
+            order_by.append(case((Loop.time_signature == searched, 0), else_=1))
+    order_by.append(sort_map.get(filters.sort, Loop.created_at.desc()))
+    q = q.order_by(*order_by)
     q = q.offset((filters.page - 1) * filters.page_size).limit(filters.page_size)
     result = await db.scalars(q)
     return list(result.all()), total or 0
