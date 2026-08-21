@@ -114,7 +114,7 @@ async def list_loops(db: AsyncSession, filters: LoopFilter) -> tuple[list[Loop],
     if filters.key:
         q = q.where(Loop.key.ilike(f"%{filters.key}%"))
     if filters.time_signature:
-        q = q.where(Loop.time_signature == filters.time_signature)
+        q = q.where(Loop.time_signature.in_(filters.time_signature))
     if filters.tempo_feel:
         q = q.where(Loop.tempo_feel == filters.tempo_feel)
     if filters.is_free is not None:

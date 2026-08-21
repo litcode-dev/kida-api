@@ -110,3 +110,19 @@ async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
         status_code=exc.status_code,
         content={"status": "error", "data": exc.data, "message": exc.message},
     )
+
+
+def validation_error_422(exc) -> AppError:
+    """Render a pydantic ValidationError as the API's own 422 envelope.
+
+    Filter models are built inside the handler rather than declared as the
+    signature, so a failure arrives as a bare ValidationError — which the
+    catch-all handler would log and return as a 500. Reporting the first
+    error's original message keeps the body readable ("Time signature ..."
+    rather than pydantic's "Value error, Time signature ...").
+    """
+    err = exc.errors()[0]
+    return AppError(
+        str(err.get("ctx", {}).get("error", err["msg"])),
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+    )
