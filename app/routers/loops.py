@@ -22,19 +22,22 @@ router = APIRouter(prefix="/loops", tags=["loops"])
     "",
     summary="List loops",
     description=(
-        "Paginated loops. `search` is free text across **title, description and "
-        "genre** — searching `worship` finds a worship-genre loop whose title never "
-        "says the word. Genre matching ignores case and punctuation, so `lofi` finds "
-        "Lo-fi and `hip hop` finds Hip Hop.\n\n"
-        "Every other parameter is an exact filter and is ANDed with the search: "
-        "`?search=piano&genre=Trap` means a piano match *within* Trap. `tags` "
-        "is the one many-valued filter — a loop matches when it carries any of "
-        "the tags listed."
+        "Paginated loops. `search` is free text across **title, description, "
+        "genre and time signature** — searching `worship` finds a worship-genre loop "
+        "whose title never says the word, and `6/8` finds a loop counted in 6/8 as "
+        "well as one that mentions it. Genre matching ignores case and punctuation, "
+        "so `lofi` finds Lo-fi and `hip hop` finds Hip Hop; time signature joins in "
+        "only when the whole term is one, like `6/8`.\n\n"
+        "Every other parameter is a filter and is ANDed with the search: "
+        "`?search=piano&genre=Trap` means a piano match *within* Trap. `tags` and "
+        "`time_signature` are the many-valued ones — a loop matches when it carries "
+        "any of the values listed — and both still AND against everything else."
     ),
 )
 async def list_loops(
     search: str | None = Query(
-        None, description="Free text over title, description and genre"
+        None,
+        description="Free text over title, description, genre and time signature",
     ),
     genre: Genre | None = None,
     bpm_min: int | None = None,

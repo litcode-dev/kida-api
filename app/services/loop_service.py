@@ -5,7 +5,9 @@ from sqlalchemy import func, or_, select
 from app.models.loop import Genre, Loop
 from app.models.purchase import Purchase
 from app.models.user import User
-from app.schemas.loop import LoopCreate, LoopUpdate, LoopFilter
+from app.schemas.loop import (
+    TIME_SIGNATURE_RE, LoopCreate, LoopUpdate, LoopFilter,
+)
 from app.exceptions import AppError, NotFoundError, EntitlementError
 from app.services import price_sync_service, s3_service
 from app.utils.audio_validator import validate_wav_upload
@@ -77,20 +79,29 @@ async def get_loop(db: AsyncSession, loop_id: uuid.UUID) -> Loop:
 def _search_clause(query: str):
     """Free text over the fields a person would search by.
 
-    Title, description and genre, ORed — searching "worship" should surface a
-    worship-genre loop whose title never says the word, and a loop whose
-    description mentions it. The dedicated `genre` parameter still exists for
-    exact filtering and ANDs with this.
+    Title, description, genre and time signature, ORed — searching "worship"
+    should surface a worship-genre loop whose title never says the word, and a
+    loop whose description mentions it. The dedicated `genre` and
+    `time_signature` parameters still exist for exact filtering and AND with
+    this.
 
     Genre is matched by resolving the term to enum members first, so the
     comparison runs against the display value ("Afrobeat Worship") rather than
     the stored label, and against an indexed equality rather than a cast.
+
+    Time signature joins only when the whole term parses as one. Anything
+    looser would be worse than not matching: "6" alone would drag in 6/8 and
+    6/4 alongside every title with a 6 in it, and the column is exact enough
+    that a partial match has no sensible meaning.
     """
     like = f"%{query}%"
     clauses = [Loop.title.ilike(like), Loop.description.ilike(like)]
     genres = Genre.matching(query)
     if genres:
         clauses.append(Loop.genre.in_(genres))
+    signature = query.strip()
+    if TIME_SIGNATURE_RE.fullmatch(signature):
+        clauses.append(Loop.time_signature == signature)
     return or_(*clauses)
 
 

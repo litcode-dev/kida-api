@@ -1,4 +1,5 @@
-"""Free-text search over the catalogue: title, description and genre in one box.
+"""Free-text search over the catalogue: title, description, genre — and, for
+loops, time signature — in one box.
 
 Searching used to hit the title alone, so a worship-genre loop called
 "Midnight Drive" was unfindable by the word a person would actually type.
@@ -845,3 +846,74 @@ async def test_the_producer_route_takes_the_same_three_filters(client, db_sessio
         "/api/v1/producer/loops?time_signature=4%2F3", headers=headers
     )
     assert bad.status_code == 422
+
+
+# ── free text reaches the time signature too ─────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_search_finds_a_loop_by_its_time_signature(db_session):
+    """A 6/8 loop called "Midnight Drive" was unfindable by the term a person
+    types: search hit the text, and the text never says 6/8."""
+    user = await _user(db_session)
+    await _loop(db_session, user.id, title="Midnight Drive",
+                description="rolling compound groove", time_signature="6/8")
+    await _loop(db_session, user.id, title="Straight Ahead", time_signature="4/4")
+
+    assert await _titles(db_session, search="6/8") == ["Midnight Drive"]
+
+
+@pytest.mark.asyncio
+async def test_search_ors_the_time_signature_with_the_text(db_session):
+    """Same shape as genre: an exact column match ORed with the text, so a loop
+    that only mentions the term in its title still comes back."""
+    user = await _user(db_session)
+    await _loop(db_session, user.id, title="Midnight Drive", time_signature="6/8")
+    await _loop(db_session, user.id, title="Not Actually 6/8", time_signature="4/4")
+    await _loop(db_session, user.id, title="Unrelated", time_signature="4/4")
+
+    assert await _titles(db_session, search="6/8") == [
+        "Midnight Drive", "Not Actually 6/8",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_search_only_joins_a_term_that_is_a_whole_time_signature(db_session):
+    """A partial term must not reach the column: "6" would drag in every 6/x
+    loop alongside every title containing a 6."""
+    user = await _user(db_session)
+    await _loop(db_session, user.id, title="Compound", time_signature="6/8")
+    await _loop(db_session, user.id, title="Waltz", time_signature="3/4")
+
+    assert await _titles(db_session, search="6") == []
+    assert await _titles(db_session, search="68") == []
+    assert await _titles(db_session, search="/8") == []
+    # Padding is the caller's, not the catalogue's.
+    assert await _titles(db_session, search=" 6/8 ") == ["Compound"]
+
+
+@pytest.mark.asyncio
+async def test_search_by_time_signature_still_ands_with_the_filters(db_session):
+    user = await _user(db_session)
+    await _loop(db_session, user.id, title="Compound Trap",
+                genre=Genre.trap, time_signature="6/8")
+    await _loop(db_session, user.id, title="Compound Gospel",
+                genre=Genre.gospel, time_signature="6/8")
+
+    assert await _titles(db_session, search="6/8", genre=Genre.trap) == [
+        "Compound Trap",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_the_route_searches_the_time_signature(client, db_session):
+    user = await _user(db_session)
+    await _loop(db_session, user.id, title="Midnight Drive", time_signature="6/8")
+    await _loop(db_session, user.id, title="Straight Ahead", time_signature="4/4")
+
+    resp = await client.get(
+        "/api/v1/loops?search=6/8", headers={"Authorization": f"Bearer {_token(user)}"}
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert [i["title"] for i in resp.json()["data"]["items"]] == ["Midnight Drive"]
