@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
-from app.exceptions import AppError, ForbiddenError
+from app.exceptions import AppError, ForbiddenError, validation_error_422
 from app.middleware.auth_middleware import require_producer
 from app.middleware.rate_limit import limiter
 from app.schemas.common import success
@@ -18,9 +18,7 @@ from app.schemas.drone_pad import (
     DronePadUpdate,
     DroneResponse,
 )
-from app.schemas.loop import (
-    TIME_SIGNATURE_QUERY_PATTERN, LoopCreate, LoopFilter, LoopUpdate, LoopResponse,
-)
+from app.schemas.loop import LoopCreate, LoopFilter, LoopUpdate, LoopResponse
 from app.schemas.producer_analytics import AnalyticsParams, AnalyticsPeriod
 from app.routers.stem_pack_management import build_stem_pack_router
 from app.models.drone_pad import MusicalKey
@@ -62,9 +60,7 @@ async def producer_analytics(
             page_size=page_size,
         )
     except ValidationError as e:
-        err = e.errors()[0]
-        msg = str(err.get("ctx", {}).get("error", err["msg"]))
-        raise AppError(msg, status_code=422)
+        raise validation_error_422(e)
 
     data = await get_producer_analytics(db, producer.id, params)
     return success(data)
@@ -81,10 +77,12 @@ async def list_producer_loops(
     bpm_min: int | None = None,
     bpm_max: int | None = None,
     key: str | None = None,
-    time_signature: str | None = Query(
+    time_signature: list[str] | None = Query(
         None,
-        pattern=TIME_SIGNATURE_QUERY_PATTERN,
-        description="Exact time signature, e.g. `4/4` or `6/8`",
+        description=(
+            "Time signatures, e.g. `6/8` or `6/8,9/8,12/8`. Repeating the "
+            "parameter works too. A loop matches when it carries **any** of them."
+        ),
     ),
     tempo_feel: TempoFeel | None = None,
     is_free: bool | None = None,
@@ -101,13 +99,16 @@ async def list_producer_loops(
     db: AsyncSession = Depends(get_db),
     producer=Depends(require_producer),
 ):
-    filters = LoopFilter(
-        search=search, genre=genre, bpm_min=bpm_min, bpm_max=bpm_max,
-        key=key, time_signature=time_signature, tempo_feel=tempo_feel,
-        is_free=is_free, sort=sort,
-        tags=[t.strip() for t in tags.split(",") if t.strip()] if tags else None,
-        page=page, page_size=page_size, created_by=producer.id,
-    )
+    try:
+        filters = LoopFilter(
+            search=search, genre=genre, bpm_min=bpm_min, bpm_max=bpm_max,
+            key=key, time_signature=time_signature, tempo_feel=tempo_feel,
+            is_free=is_free, sort=sort,
+            tags=[t.strip() for t in tags.split(",") if t.strip()] if tags else None,
+            page=page, page_size=page_size, created_by=producer.id,
+        )
+    except ValidationError as e:
+        raise validation_error_422(e)
     loops, total = await loop_service.list_loops(db, filters)
     return success({
         "items": [LoopResponse.model_validate(l).model_dump() for l in loops],

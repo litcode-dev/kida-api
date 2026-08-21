@@ -1,16 +1,16 @@
 from fastapi import APIRouter, Depends, Query
+from pydantic import ValidationError
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 import httpx
 from app.database import get_db
+from app.exceptions import validation_error_422
 from app.middleware.auth_middleware import get_current_user
 from app.services import (
     loop_service, s3_service, like_service, free_tier_service, monthly_quota_service,
 )
 from app.models.monthly_download_usage import MonthlyQuotaType
-from app.schemas.loop import (
-    TIME_SIGNATURE_QUERY_PATTERN, LoopFilter, LoopResponse,
-)
+from app.schemas.loop import LoopFilter, LoopResponse
 from app.schemas.common import success
 from app.models.loop import Genre, TempoFeel
 import uuid
@@ -22,28 +22,33 @@ router = APIRouter(prefix="/loops", tags=["loops"])
     "",
     summary="List loops",
     description=(
-        "Paginated loops. `search` is free text across **title, description and "
-        "genre** — searching `worship` finds a worship-genre loop whose title never "
-        "says the word. Genre matching ignores case and punctuation, so `lofi` finds "
-        "Lo-fi and `hip hop` finds Hip Hop.\n\n"
-        "Every other parameter is an exact filter and is ANDed with the search: "
-        "`?search=piano&genre=Trap` means a piano match *within* Trap. `tags` "
-        "is the one many-valued filter — a loop matches when it carries any of "
-        "the tags listed."
+        "Paginated loops. `search` is free text across **title, description, "
+        "genre and time signature** — searching `worship` finds a worship-genre loop "
+        "whose title never says the word, and `6/8` finds a loop counted in 6/8 as "
+        "well as one that mentions it. Genre matching ignores case and punctuation, "
+        "so `lofi` finds Lo-fi and `hip hop` finds Hip Hop; time signature joins in "
+        "only when the whole term is one, like `6/8`.\n\n"
+        "Every other parameter is a filter and is ANDed with the search: "
+        "`?search=piano&genre=Trap` means a piano match *within* Trap. `tags` and "
+        "`time_signature` are the many-valued ones — a loop matches when it carries "
+        "any of the values listed — and both still AND against everything else."
     ),
 )
 async def list_loops(
     search: str | None = Query(
-        None, description="Free text over title, description and genre"
+        None,
+        description="Free text over title, description, genre and time signature",
     ),
     genre: Genre | None = None,
     bpm_min: int | None = None,
     bpm_max: int | None = None,
     key: str | None = None,
-    time_signature: str | None = Query(
+    time_signature: list[str] | None = Query(
         None,
-        pattern=TIME_SIGNATURE_QUERY_PATTERN,
-        description="Exact time signature, e.g. `4/4` or `6/8`",
+        description=(
+            "Time signatures, e.g. `6/8` or `6/8,9/8,12/8`. Repeating the "
+            "parameter works too. A loop matches when it carries **any** of them."
+        ),
     ),
     tempo_feel: TempoFeel | None = Query(
         None, description="`slow`, `mid` or `fast`"
@@ -62,14 +67,17 @@ async def list_loops(
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
 ):
-    filters = LoopFilter(
-        ready_only=True,
-        search=search, genre=genre, bpm_min=bpm_min, bpm_max=bpm_max,
-        key=key, time_signature=time_signature, tempo_feel=tempo_feel,
-        is_free=is_free,
-        tags=[t.strip() for t in tags.split(",") if t.strip()] if tags else None,
-        sort=sort, page=page, page_size=page_size,
-    )
+    try:
+        filters = LoopFilter(
+            ready_only=True,
+            search=search, genre=genre, bpm_min=bpm_min, bpm_max=bpm_max,
+            key=key, time_signature=time_signature, tempo_feel=tempo_feel,
+            is_free=is_free,
+            tags=[t.strip() for t in tags.split(",") if t.strip()] if tags else None,
+            sort=sort, page=page, page_size=page_size,
+        )
+    except ValidationError as e:
+        raise validation_error_422(e)
     loops, total = await loop_service.list_loops(db, filters)
     return success({
         "items": [LoopResponse.model_validate(l).model_dump() for l in loops],

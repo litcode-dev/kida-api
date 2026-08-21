@@ -5,11 +5,7 @@ from decimal import Decimal
 from pydantic import BaseModel, Field, field_validator, model_validator
 from app.models.loop import Genre, TempoFeel
 
-# Anchored form is handed to FastAPI as a query-parameter pattern, so a
-# malformed filter comes back as a 422 instead of silently matching nothing.
-TIME_SIGNATURE_PATTERN = r"[1-9]\d?/(1|2|4|8|16|32)"
-TIME_SIGNATURE_QUERY_PATTERN = rf"^{TIME_SIGNATURE_PATTERN}$"
-TIME_SIGNATURE_RE = re.compile(TIME_SIGNATURE_PATTERN)
+TIME_SIGNATURE_RE = re.compile(r"[1-9]\d?/(1|2|4|8|16|32)")
 
 # The ceiling was 140, which pre-dates half the catalogue: drill sits around
 # 140-145, seben and soukous run past 150, and anything counted in double time
@@ -127,7 +123,10 @@ class LoopFilter(BaseModel):
     bpm_min: int | None = None
     bpm_max: int | None = None
     key: str | None = None
-    time_signature: str | None = None
+    # Many-valued, like tags: a compound-meter filter wants 6/8, 9/8 and 12/8
+    # in one request. Accepts a comma-separated string, a repeated query
+    # parameter, or a list built in code.
+    time_signature: list[str] | None = None
     tempo_feel: TempoFeel | None = None
     tags: list[str] | None = None
     is_free: bool | None = None
@@ -136,17 +135,39 @@ class LoopFilter(BaseModel):
     page_size: int = 20
     created_by: uuid.UUID | None = None
 
-    @field_validator("time_signature")
+    @field_validator("time_signature", mode="before")
     @classmethod
-    def normalise_time_signature(cls, v: str | None) -> str | None:
-        # Stored values are exactly what the upload sent ("6/8"), so the filter
-        # is an equality test and only needs the surrounding whitespace gone.
-        # Deliberately not rejecting a malformed value the way LoopCreate does:
-        # the routes carry the pattern, so a bad filter is a 422 before it gets
-        # here, and the service is also called with filters built in code.
+    def parse_time_signatures(cls, v) -> list[str] | None:
+        """Flatten and validate however the caller spelled the filter.
+
+        `6/8`, `6/8,9/8`, a repeated `?time_signature=` and a list built in
+        code all arrive here and leave as a list of stored-form signatures.
+        Malformed entries are rejected rather than dropped: silently ignoring
+        one turns a client typo into a page of results for the *other* values,
+        which reads as real data. Handlers turn the resulting ValidationError
+        into a 422 (see validation_error_422).
+        """
         if v is None:
-            return v
-        return v.strip() or None
+            return None
+        raw_values = v if isinstance(v, (list, tuple)) else [v]
+        signatures: list[str] = []
+        for raw in raw_values:
+            for part in str(raw).split(","):
+                signature = part.strip()
+                if not signature:
+                    continue
+                if not TIME_SIGNATURE_RE.fullmatch(signature):
+                    raise ValueError(
+                        f"Time signature {signature!r} must be in "
+                        "numerator/denominator format, e.g. 4/4"
+                    )
+                # Deduplicated so a repeated value cannot skew the IN list;
+                # order is kept so the message above names them as sent.
+                if signature not in signatures:
+                    signatures.append(signature)
+        # An all-whitespace value is not a filter at all — it must not turn
+        # into an empty IN list, which matches no row.
+        return signatures or None
 
     @field_validator("page_size")
     @classmethod
