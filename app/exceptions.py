@@ -1,5 +1,14 @@
+import socket
+
+import asyncpg
+import redis.exceptions
+import sentry_sdk
+import sqlalchemy.exc
+import structlog
 from fastapi import Request, status
 from fastapi.responses import JSONResponse
+
+log = structlog.get_logger()
 
 
 class AppError(Exception):
@@ -102,6 +111,92 @@ async def free_tier_limit_handler(request: Request, exc: FreeTierLimitError) -> 
     return JSONResponse(
         status_code=exc.status_code,
         content={"error": "free_tier_limit", "type": exc.item_type, "limit": exc.limit},
+    )
+
+
+# Losing Redis or Postgres is not a bug in the request — it is the API being
+# unable to serve anything — so it gets a 503 the client can retry rather than
+# the catch-all's "An unexpected error occurred".
+#
+# Which exceptions actually arrive was measured, not assumed, because with
+# asyncpg most of them never become a SQLAlchemy error at all:
+#
+#   Postgres refusing connections  -> builtins.ConnectionRefusedError
+#   Postgres host unresolvable     -> socket.gaierror
+#   Postgres backend killed        -> asyncpg InternalClientError
+#   Postgres shutting down/starting-> asyncpg OperatorInterventionError
+#   connect() hanging              -> builtins.TimeoutError (asyncio's)
+#   Redis unreachable              -> redis.exceptions.ConnectionError
+#
+# Deliberately absent: sqlalchemy.exc.DBAPIError and ProgrammingError, and
+# redis.exceptions.ResponseError. A statement timeout, a value too long for its
+# column, a malformed query and a bad command all land there — those are bugs
+# in our code, and they must keep failing loudly as 500s instead of being
+# dressed up as an outage.
+SERVICE_UNAVAILABLE_ERRORS = (
+    # Connection-level failures from any driver that wraps its own.
+    sqlalchemy.exc.InterfaceError,
+    sqlalchemy.exc.OperationalError,
+    asyncpg.exceptions.PostgresConnectionError,
+    # The server is going away or not yet accepting: shutting down, crash
+    # recovery, still starting up.
+    asyncpg.exceptions.OperatorInterventionError,
+    # Out of connections, memory or disk — the database cannot serve this now,
+    # which is the same answer to the client as being down.
+    asyncpg.exceptions.InsufficientResourcesError,
+    asyncpg.exceptions.InternalClientError,
+    redis.exceptions.ConnectionError,  # BusyLoadingError included
+    redis.exceptions.TimeoutError,
+    # Raw socket failures, which is how asyncpg reports an unreachable server.
+    # Narrower than OSError on purpose: FileNotFoundError is a bug, not an outage.
+    ConnectionError,
+    socket.gaierror,
+    TimeoutError,
+)
+
+
+def _failed_dependency(exc: Exception) -> str:
+    if isinstance(exc, (redis.exceptions.ConnectionError, redis.exceptions.TimeoutError)):
+        return "redis"
+    if isinstance(exc, (
+        sqlalchemy.exc.SQLAlchemyError,
+        asyncpg.exceptions.PostgresError,
+        asyncpg.exceptions.InternalClientError,
+    )):
+        return "database"
+    # A raw socket error, which reaches here almost only from asyncpg: redis-py
+    # and httpx both wrap theirs in their own types. Not called "database"
+    # because nothing here proves it — the address is in the logged message.
+    return "network"
+
+
+async def service_unavailable_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Render a lost backing service as a retryable 503.
+
+    Sentry is notified explicitly: its Starlette integration auto-reports a
+    handled exception only when the exception itself carries a 5xx status_code
+    attribute, which none of these do, so registering a handler for them would
+    otherwise take outages out of alerting entirely.
+    """
+    dependency = _failed_dependency(exc)
+    log.error(
+        "service_unavailable",
+        dependency=dependency,
+        path=request.url.path,
+        method=request.method,
+        exc_type=type(exc).__name__,
+        exc=str(exc),
+        exc_info=True,
+    )
+    sentry_sdk.capture_exception(exc)
+    return JSONResponse(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        content={
+            "status": "error",
+            "data": None,
+            "message": "Service temporarily unavailable. Please try again in a moment.",
+        },
+        headers={"Retry-After": "5"},
     )
 
 

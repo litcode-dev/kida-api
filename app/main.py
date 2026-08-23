@@ -15,7 +15,9 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.config import get_settings
 from app.exceptions import (
     AppError, FreeTierLimitError, MonthlyDownloadLimitError,
+    SERVICE_UNAVAILABLE_ERRORS,
     app_error_handler, free_tier_limit_handler, monthly_limit_handler,
+    service_unavailable_handler,
 )
 from app.middleware.logging_middleware import LoggingMiddleware
 from app.middleware.rate_limit import limiter
@@ -132,6 +134,12 @@ app.add_exception_handler(AppError, app_error_handler)
 # app parses to show the paywall (most-derived handler wins over AppError's).
 app.add_exception_handler(FreeTierLimitError, free_tier_limit_handler)
 app.add_exception_handler(MonthlyDownloadLimitError, monthly_limit_handler)
+
+# Redis or Postgres being unreachable answers 503 instead of falling through to
+# the catch-all below. See SERVICE_UNAVAILABLE_ERRORS for what does and does not
+# count as an outage.
+for _exc in SERVICE_UNAVAILABLE_ERRORS:
+    app.add_exception_handler(_exc, service_unavailable_handler)
 
 
 @app.exception_handler(StarletteHTTPException)
