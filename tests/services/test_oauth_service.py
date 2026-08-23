@@ -1,3 +1,6 @@
+import time
+from types import SimpleNamespace
+
 import httpx
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -232,3 +235,112 @@ async def test_get_google_user_info_unreadable_body_raises_502():
         with pytest.raises(AppError, match="Google could not complete") as exc:
             await oauth_service.get_google_user_info("ya29.token")
     assert exc.value.status_code == 502
+
+
+@pytest.mark.asyncio
+async def test_get_google_user_info_unverified_email_is_403():
+    """Linking is by email address, so an address Google has not verified is
+    enough to take over an existing account."""
+    payload = {"sub": "uid", "email": "victim@example.com", "email_verified": False}
+    client = _mock_client(get=AsyncMock(return_value=_mock_response(200, payload)))
+    with patch("app.services.oauth_service.httpx.AsyncClient", return_value=client):
+        with pytest.raises(AppError, match="has not verified this email address") as exc:
+            await oauth_service.get_google_user_info("token")
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_get_google_user_info_absent_verified_claim_is_allowed():
+    """Only an explicit false is refused — a provider that stops sending the
+    claim must not lock everyone out."""
+    payload = {"sub": "uid", "email": "user@example.com", "name": "U"}
+    client = _mock_client(get=AsyncMock(return_value=_mock_response(200, payload)))
+    with patch("app.services.oauth_service.httpx.AsyncClient", return_value=client):
+        result = await oauth_service.get_google_user_info("token")
+    assert result["email"] == "user@example.com"
+
+
+@pytest.mark.parametrize("claim,rejected", [
+    (False, True), ("false", True), ("FALSE", True),
+    (True, False), ("true", False), (None, False), ("unknown", False),
+])
+def test_reject_unverified_provider_email(claim, rejected):
+    """Apple sends the claim as a string in some tokens and a bool in others."""
+    if rejected:
+        with pytest.raises(AppError):
+            oauth_service.reject_unverified_provider_email("apple", claim)
+    else:
+        oauth_service.reject_unverified_provider_email("apple", claim)
+
+
+def _apple_token(private_key, **claims):
+    """Mint a token signed the way Apple signs one."""
+    import jwt as pyjwt
+    from app.config import get_settings
+
+    payload = {
+        "iss": "https://appleid.apple.com",
+        "aud": get_settings().apple_client_id,
+        "iat": int(time.time()),
+        **claims,
+    }
+    return pyjwt.encode(payload, private_key, algorithm="RS256")
+
+
+@pytest.fixture
+def apple_keypair(monkeypatch):
+    """Stand in for Apple's signing key, so tokens can be minted locally."""
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    from app.config import get_settings
+
+    get_settings.cache_clear()
+    monkeypatch.setenv("APPLE_CLIENT_ID", "app.kida.test")
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    monkeypatch.setattr(
+        oauth_service._apple_jwks_client,
+        "get_signing_key_from_jwt",
+        lambda token: SimpleNamespace(key=private_key.public_key()),
+    )
+    yield private_key
+    get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_apple_token_without_sub_is_401(apple_keypair):
+    """The router indexes claims["sub"], so a token without it used to arrive
+    as a KeyError and a 500."""
+    token = _apple_token(apple_keypair, exp=int(time.time()) + 600)
+    with pytest.raises(UnauthorizedError, match="Invalid Apple identity token"):
+        await oauth_service.verify_apple_identity_token(token)
+
+
+@pytest.mark.asyncio
+async def test_apple_token_without_exp_is_401(apple_keypair):
+    """PyJWT only checks an expiry that is present, so a token without one
+    would have been accepted forever."""
+    token = _apple_token(apple_keypair, sub="apple-uid-1")
+    with pytest.raises(UnauthorizedError, match="Invalid Apple identity token"):
+        await oauth_service.verify_apple_identity_token(token)
+
+
+@pytest.mark.asyncio
+async def test_apple_token_with_required_claims_is_accepted(apple_keypair):
+    token = _apple_token(apple_keypair, sub="apple-uid-1", exp=int(time.time()) + 600)
+    claims = await oauth_service.verify_apple_identity_token(token)
+    assert claims["sub"] == "apple-uid-1"
+
+
+@pytest.mark.asyncio
+async def test_apple_login_unconfigured_is_503(monkeypatch):
+    """An unset APPLE_CLIENT_ID made every token fail as invalid."""
+    from app.config import get_settings
+
+    get_settings.cache_clear()
+    monkeypatch.setenv("APPLE_CLIENT_ID", "")
+    try:
+        with pytest.raises(AppError, match="Apple login is not configured") as exc:
+            await oauth_service.verify_apple_identity_token("any.token.here")
+        assert exc.value.status_code == 503
+    finally:
+        get_settings.cache_clear()

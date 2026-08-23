@@ -1,6 +1,7 @@
 import socket
 
 import asyncpg
+import kombu.exceptions
 import redis.exceptions
 import sentry_sdk
 import sqlalchemy.exc
@@ -127,6 +128,7 @@ async def free_tier_limit_handler(request: Request, exc: FreeTierLimitError) -> 
 #   Postgres shutting down/starting-> asyncpg OperatorInterventionError
 #   connect() hanging              -> builtins.TimeoutError (asyncio's)
 #   Redis unreachable              -> redis.exceptions.ConnectionError
+#   Celery broker unreachable      -> kombu.exceptions.OperationalError
 #
 # Deliberately absent: sqlalchemy.exc.DBAPIError and ProgrammingError, and
 # redis.exceptions.ResponseError. A statement timeout, a value too long for its
@@ -147,6 +149,10 @@ SERVICE_UNAVAILABLE_ERRORS = (
     asyncpg.exceptions.InternalClientError,
     redis.exceptions.ConnectionError,  # BusyLoadingError included
     redis.exceptions.TimeoutError,
+    # Celery cannot reach its broker, so .delay() raises instead of queueing.
+    # Catching it here means a handler that queues work reports an honest
+    # "try again" rather than a 500, without every call site guarding itself.
+    kombu.exceptions.OperationalError,
     # Raw socket failures, which is how asyncpg reports an unreachable server.
     # Narrower than OSError on purpose: FileNotFoundError is a bug, not an outage.
     ConnectionError,
@@ -156,6 +162,8 @@ SERVICE_UNAVAILABLE_ERRORS = (
 
 
 def _failed_dependency(exc: Exception) -> str:
+    if isinstance(exc, kombu.exceptions.OperationalError):
+        return "celery-broker"
     if isinstance(exc, (redis.exceptions.ConnectionError, redis.exceptions.TimeoutError)):
         return "redis"
     if isinstance(exc, (
@@ -198,6 +206,76 @@ async def service_unavailable_handler(request: Request, exc: Exception) -> JSONR
         },
         headers={"Retry-After": "5"},
     )
+
+
+# SQLSTATE 22001 (string_data_right_truncation): a value was longer than its
+# column. Matched on the SQLSTATE rather than a driver's exception class
+# because asyncpg's error arrives wrapped twice — SQLAlchemy's DBAPIError holds
+# the dialect's Error, which holds the asyncpg one as its __cause__.
+_STRING_TRUNCATION_SQLSTATE = "22001"
+
+
+def _sqlstate(exc: Exception) -> str | None:
+    orig = getattr(exc, "orig", None)
+    for candidate in (exc, orig, getattr(orig, "__cause__", None)):
+        state = getattr(candidate, "sqlstate", None) or getattr(candidate, "pgcode", None)
+        if state:
+            return str(state)
+    return None
+
+
+def unexpected_error_response(
+    request: Request, exc: Exception, capture: bool = False
+) -> JSONResponse:
+    """The 500 of last resort. `capture` is for callers reached through a
+    registered handler, which Sentry does not report on its own."""
+    log.error(
+        "unhandled_exception",
+        path=request.url.path,
+        method=request.method,
+        exc_type=type(exc).__name__,
+        exc=str(exc),
+        exc_info=True,
+    )
+    if capture:
+        sentry_sdk.capture_exception(exc)
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={"status": "error", "data": None, "message": "An unexpected error occurred"},
+    )
+
+
+async def dbapi_error_handler(
+    request: Request, exc: sqlalchemy.exc.DBAPIError
+) -> JSONResponse:
+    """Answer 422 for a value too long for its column; 500 for everything else.
+
+    The request schemas carry max_length wherever a field maps to a bounded
+    column, so this is the backstop for what they cannot cover: a field added
+    later, or a value the API derives rather than receives. It cannot name the
+    offending field — Postgres reports the column type and nothing else — which
+    is why the schema bounds stay the first line of defence and this is only
+    the net beneath them.
+
+    Every other DBAPIError still returns 500. A statement timeout, a malformed
+    query, a constraint violation: those are our bugs, and dressing them as
+    client errors would hide them.
+    """
+    if _sqlstate(exc) == _STRING_TRUNCATION_SQLSTATE:
+        log.warning(
+            "value_too_long_for_column",
+            path=request.url.path,
+            method=request.method,
+        )
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            content={
+                "status": "error",
+                "data": None,
+                "message": "One of the submitted values is too long.",
+            },
+        )
+    return unexpected_error_response(request, exc, capture=True)
 
 
 async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:

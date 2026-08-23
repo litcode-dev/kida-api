@@ -1,5 +1,7 @@
 import secrets
-from fastapi import APIRouter, Depends, Request
+
+import structlog
+from fastapi import APIRouter, Depends, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from redis.asyncio import Redis
 from app.database import get_db
@@ -16,8 +18,39 @@ from app.schemas.user import (
     DeletionRequestCreate, DeletionRequestConfirm,
 )
 from app.schemas.common import success
+from app.config import get_settings
+
+log = structlog.get_logger()
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+OAUTH_STATE_COOKIE = "oauth_state"
+
+
+def _verify_oauth_state(request: Request, submitted: str | None) -> None:
+    """Check the callback against the state issued by /oauth/google.
+
+    Without this the endpoint accepts any authorization code from anyone, which
+    is the CSRF the state parameter exists to prevent: an attacker who gets a
+    victim's browser to post their own code has the victim's session signed in
+    as the attacker's account. The cookie is httponly, so only the browser that
+    started the flow can echo it back.
+
+    Native apps do not go through this route at all — they hold the token flow
+    at /oauth/google/token — so requiring the cookie here costs them nothing.
+    """
+    issued = request.cookies.get(OAUTH_STATE_COOKIE)
+    if not issued or not submitted or not secrets.compare_digest(issued, submitted):
+        log.warning(
+            "oauth_state_mismatch",
+            has_cookie=bool(issued),
+            has_state=bool(submitted),
+        )
+        raise AppError(
+            "This sign-in link has expired or is not valid. Start again from the "
+            "sign-in page.",
+            status_code=400,
+        )
 
 
 @router.post("/register")
@@ -29,8 +62,14 @@ async def register(
     redis: Redis = Depends(get_redis),
 ):
     user, code = await auth_service.register_user(db, redis, body.email, body.password, body.full_name)
-    from app.tasks.notification_tasks import send_verification_email
-    send_verification_email.delay(str(user.id), code, auth_service.VERIFY_CODE_TTL_MINUTES)
+    # The account is committed by now. If the broker is down, saying so would
+    # send the client to retry a registration that would then collide on the
+    # email — /auth/resend-verification is the recovery path instead.
+    try:
+        from app.tasks.notification_tasks import send_verification_email
+        send_verification_email.delay(str(user.id), code, auth_service.VERIFY_CODE_TTL_MINUTES)
+    except Exception as exc:  # noqa: BLE001 - the account is already created
+        log.error("verification_email.enqueue_failed", user_id=str(user.id), error=str(exc))
     return success(
         UserResponse.model_validate(user).model_dump(),
         "Registration successful. Check your email for a verification code.",
@@ -235,24 +274,30 @@ async def confirm_deletion_request(
 
 
 @router.get("/oauth/google")
-async def google_oauth_redirect():
+@limiter.limit("20/minute")
+async def google_oauth_redirect(request: Request):
     """Redirect the browser directly to Google's OAuth2 authorization page."""
     from fastapi.responses import RedirectResponse
     state = secrets.token_urlsafe(16)
     url = oauth_service.get_google_auth_url(state)
     response = RedirectResponse(url=url, status_code=302)
     response.set_cookie(
-        key="oauth_state",
+        key=OAUTH_STATE_COOKIE,
         value=state,
         httponly=True,
         max_age=300,  # 5 minutes
         samesite="lax",
+        # Only over TLS wherever the flow itself runs over TLS; a local http
+        # redirect_uri would never receive a secure cookie back.
+        secure=get_settings().google_redirect_uri.startswith("https://"),
     )
     return response
 
 
 @router.post("/oauth/google/token")
+@limiter.limit("20/minute")
 async def google_oauth_mobile(
+    request: Request,
     body: GoogleTokenRequest,
     db: AsyncSession = Depends(get_db),
     redis: Redis = Depends(get_redis),
@@ -285,13 +330,17 @@ async def google_oauth_mobile(
 
 
 @router.post("/oauth/apple/token")
+@limiter.limit("20/minute")
 async def apple_oauth_mobile(
+    request: Request,
     body: AppleTokenRequest,
     db: AsyncSession = Depends(get_db),
     redis: Redis = Depends(get_redis),
 ):
     """Exchange an Apple identity_token (from iOS Sign In with Apple) for LitMusic JWT tokens."""
     claims = await oauth_service.verify_apple_identity_token(body.identity_token)
+    oauth_service.reject_unverified_provider_email("apple", claims.get("email_verified"))
+    # Guaranteed present: verify_apple_identity_token requires the claim.
     provider_id = claims["sub"]
     email = claims.get("email") or body.email
     if not email:
@@ -322,12 +371,19 @@ async def apple_oauth_mobile(
 
 
 @router.post("/oauth/google/callback")
+@limiter.limit("20/minute")
 async def google_oauth_callback(
+    request: Request,
+    response: Response,
     body: OAuthCallbackRequest,
     db: AsyncSession = Depends(get_db),
     redis: Redis = Depends(get_redis),
 ):
     """Exchange a Google authorization code for LitMusic JWT tokens."""
+    _verify_oauth_state(request, body.state)
+    # One-time use: a state that has been redeemed must not validate a second
+    # authorization code.
+    response.delete_cookie(OAUTH_STATE_COOKIE)
     token_data = await oauth_service.exchange_google_code(body.code)
     user_info = await oauth_service.get_google_user_info(token_data["access_token"])
     user = await auth_service.find_or_create_oauth_user(

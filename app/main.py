@@ -16,9 +16,10 @@ from app.config import get_settings
 from app.exceptions import (
     AppError, FreeTierLimitError, MonthlyDownloadLimitError,
     SERVICE_UNAVAILABLE_ERRORS,
-    app_error_handler, free_tier_limit_handler, monthly_limit_handler,
-    service_unavailable_handler,
+    app_error_handler, dbapi_error_handler, free_tier_limit_handler,
+    monthly_limit_handler, service_unavailable_handler, unexpected_error_response,
 )
+import sqlalchemy.exc
 from app.middleware.logging_middleware import LoggingMiddleware
 from app.middleware.rate_limit import limiter
 from app.routers import auth, loops, stem_packs, payments, admin, downloads, likes, subscriptions, ai, drones, drum_kits, purchases, producer, newsletter, push_notifications, app_download
@@ -141,6 +142,11 @@ app.add_exception_handler(MonthlyDownloadLimitError, monthly_limit_handler)
 for _exc in SERVICE_UNAVAILABLE_ERRORS:
     app.add_exception_handler(_exc, service_unavailable_handler)
 
+# A value too long for its column answers 422; every other database error keeps
+# its 500. Registered on the base class, so the outage subclasses above still
+# win for their own types.
+app.add_exception_handler(sqlalchemy.exc.DBAPIError, dbapi_error_handler)
+
 
 @app.exception_handler(StarletteHTTPException)
 async def http_exception_handler(request: Request, exc: StarletteHTTPException):
@@ -161,19 +167,9 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
-    import structlog as _structlog
-    _structlog.get_logger().error(
-        "unhandled_exception",
-        path=request.url.path,
-        method=request.method,
-        exc_type=type(exc).__name__,
-        exc=str(exc),
-        exc_info=True,
-    )
-    return JSONResponse(
-        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        content={"status": "error", "data": None, "message": "An unexpected error occurred"},
-    )
+    # No explicit Sentry capture here: Starlette re-raises after this handler
+    # runs, so the ASGI integration reports it.
+    return unexpected_error_response(request, exc)
 
 # Routers
 PREFIX = "/api/v1"

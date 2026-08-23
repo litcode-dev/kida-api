@@ -14,7 +14,7 @@ class SubscriptionInitiateRequest(BaseModel):
 class IapVerifyRequest(BaseModel):
     """Store-subscription verification payload sent by the Kiɗa app."""
 
-    product_id: str
+    product_id: str = Field(max_length=255)
     platform: Literal["ios", "android"]
     receipt: str
 

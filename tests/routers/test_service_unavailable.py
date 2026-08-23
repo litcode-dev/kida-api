@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import asyncpg
 import httpx
+import kombu.exceptions
 import pytest
 import pytest_asyncio
 import redis.exceptions
@@ -69,6 +70,7 @@ def _dbapi_error(orig: Exception) -> sqlalchemy.exc.DBAPIError:
     pytest.param(TimeoutError("connect timed out"), id="connect-timeout"),
     pytest.param(sqlalchemy.exc.InterfaceError("SELECT 1", {}, Exception("gone")), id="sa-interface"),
     pytest.param(sqlalchemy.exc.OperationalError("SELECT 1", {}, Exception("gone")), id="sa-operational"),
+    pytest.param(kombu.exceptions.OperationalError("broker down"), id="celery-broker"),
 ])
 @pytest.mark.asyncio
 async def test_outage_is_503(raw_client, exc):
@@ -107,3 +109,32 @@ async def test_bug_stays_500(raw_client, exc):
     resp = await _login_while(raw_client, exc)
     assert resp.status_code == 500
     assert resp.json()["message"] == "An unexpected error occurred"
+
+
+def _truncation_error() -> sqlalchemy.exc.DBAPIError:
+    """A DBAPIError shaped the way asyncpg's really arrives: SQLAlchemy holds
+    the dialect's Error, which holds the asyncpg one as its __cause__."""
+    inner = asyncpg.exceptions.StringDataRightTruncationError(
+        "value too long for type character varying(255)"
+    )
+    wrapper = Exception("dialect error")
+    wrapper.__cause__ = inner
+    return sqlalchemy.exc.DBAPIError("INSERT ...", {}, wrapper)
+
+
+@pytest.mark.asyncio
+async def test_value_too_long_is_422_not_500(raw_client):
+    """The safety net beneath the schemas' max_length, for a field they miss."""
+    resp = await _login_while(raw_client, _truncation_error())
+    assert resp.status_code == 422
+    assert resp.json()["message"] == "One of the submitted values is too long."
+
+
+@pytest.mark.asyncio
+async def test_other_dbapi_errors_still_500(raw_client):
+    """Registering a handler on the base class must not turn every database
+    error into a client error."""
+    resp = await _login_while(
+        raw_client, sqlalchemy.exc.DBAPIError("SELECT 1", {}, Exception("deadlock"))
+    )
+    assert resp.status_code == 500

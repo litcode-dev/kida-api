@@ -201,11 +201,18 @@ async def verify_email(db: AsyncSession, redis: Redis, email: str, code: str) ->
     await redis.delete(key)
     await redis.delete(f"{VERIFY_COOLDOWN_PREFIX}{user.id}")
 
-    from app.tasks.notification_tasks import (
-        send_registration_email, send_new_user_admin_notification,
-    )
-    send_registration_email.delay(str(user.id))
-    send_new_user_admin_notification.delay(str(user.id))
+    # The address is verified and committed; a broker outage must not report
+    # that as a failure the user would retry.
+    try:
+        from app.tasks.notification_tasks import (
+            send_registration_email, send_new_user_admin_notification,
+        )
+        send_registration_email.delay(str(user.id))
+        send_new_user_admin_notification.delay(str(user.id))
+    except Exception as exc:  # noqa: BLE001 - the account is already verified
+        log.error(
+            "registration_email.enqueue_failed", user_id=str(user.id), error=str(exc)
+        )
 
     log.info("email.verified", user_id=str(user.id), email=user.email)
     return user

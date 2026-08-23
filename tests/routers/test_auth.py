@@ -479,3 +479,121 @@ async def test_google_login_non_string_email_is_502(client):
         "sub": "google-uid-8", "email": {"weird": 1}, "name": "W",
     }))
     assert resp.status_code == 502
+
+
+# --- CSRF state on the web callback -----------------------------------------
+
+async def _callback(client, body, cookies=None):
+    payload = {"sub": "cb-1", "email": "cb@test.com", "name": "CB"}
+    token_resp = MagicMock()
+    token_resp.status_code = 200
+    token_resp.text = "{}"
+    token_resp.json.return_value = {"access_token": "ya29.x"}
+    c = AsyncMock()
+    c.__aenter__ = AsyncMock(return_value=c)
+    c.__aexit__ = AsyncMock(return_value=False)
+    c.post = AsyncMock(return_value=token_resp)
+    c.get = AsyncMock(return_value=_userinfo(payload))
+    client.cookies.clear()
+    for k, v in (cookies or {}).items():
+        client.cookies.set(k, v)
+    with patch("app.services.oauth_service.httpx.AsyncClient", return_value=c):
+        return await client.post("/api/v1/auth/oauth/google/callback", json=body)
+
+
+@pytest.mark.asyncio
+async def test_callback_without_state_is_rejected(client):
+    """Previously any code from anyone was accepted — the CSRF the state
+    parameter exists to prevent."""
+    resp = await _callback(client, {"code": "abc"})
+    assert resp.status_code == 400
+    assert "not valid" in resp.json()["message"]
+
+
+@pytest.mark.asyncio
+async def test_callback_with_mismatched_state_is_rejected(client):
+    resp = await _callback(
+        client, {"code": "abc", "state": "attacker"}, cookies={"oauth_state": "victim"}
+    )
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_callback_with_matching_state_succeeds(client):
+    resp = await _callback(
+        client, {"code": "abc", "state": "s3cr3t"}, cookies={"oauth_state": "s3cr3t"}
+    )
+    assert resp.status_code == 200
+    assert resp.json()["data"]["access_token"]
+
+
+@pytest.mark.asyncio
+async def test_redirect_issues_a_state_cookie(client, monkeypatch):
+    from app.config import get_settings
+
+    get_settings.cache_clear()
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", "test-client-id")
+    try:
+        resp = await client.get("/api/v1/auth/oauth/google", follow_redirects=False)
+        assert resp.status_code == 302
+        cookie = resp.headers["set-cookie"]
+        assert "oauth_state=" in cookie and "HttpOnly" in cookie
+        # the same value has to reach Google, or the callback can never match
+        state = cookie.split("oauth_state=")[1].split(";")[0]
+        assert f"state={state}" in resp.headers["location"]
+    finally:
+        get_settings.cache_clear()
+
+
+# --- input bounds ------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_register_overlong_name_is_422_not_500(client):
+    resp = await _register(client, email="big@test.com", full_name="N" * 400)
+    assert resp.status_code == 422
+    assert "full_name" in resp.json()["message"]
+
+
+@pytest.mark.asyncio
+async def test_register_max_length_name_is_accepted(client):
+    resp = await _register(client, email="edge@test.com", full_name="N" * 255)
+    assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_oauth_endpoints_are_rate_limited(client):
+    """Rate limiting is disabled for the suite, so this turns it back on: the
+    OAuth routes previously had no limit and no global default."""
+    from app.middleware.rate_limit import limiter
+
+    limiter.enabled = True
+    limiter.reset()
+    try:
+        payload = {"sub": "rl-1", "email": "rl@test.com", "name": "RL"}
+        with patch("app.services.oauth_service.httpx.AsyncClient",
+                   return_value=_google_client(response=_userinfo(payload))):
+            codes = [
+                (await client.post("/api/v1/auth/oauth/google/token",
+                                   json={"access_token": "t"})).status_code
+                for _ in range(22)
+            ]
+    finally:
+        limiter.reset()
+        limiter.enabled = False
+    assert 429 in codes, f"never rate limited: {sorted(set(codes))}"
+
+
+@pytest.mark.asyncio
+async def test_registration_survives_a_dead_broker(client, monkeypatch):
+    """The account is committed before the email is queued, so a broker outage
+    must not report the registration as failed."""
+    import kombu.exceptions
+    from app.tasks import notification_tasks
+
+    def boom(*args, **kwargs):
+        raise kombu.exceptions.OperationalError("Error 111 connecting to redis:6379")
+
+    monkeypatch.setattr(notification_tasks.send_verification_email, "delay", boom)
+    resp = await _register(client, email="broker@test.com")
+    assert resp.status_code == 200
+    assert resp.json()["data"]["email"] == "broker@test.com"

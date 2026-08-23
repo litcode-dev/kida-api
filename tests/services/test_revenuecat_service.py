@@ -235,7 +235,20 @@ async def test_client_fetch_entitlement(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_client_requires_api_key():
-    client = RevenueCatClient(api_key="")
-    with pytest.raises(AppError):
-        await client.get_subscriber("user-1")
+async def test_client_requires_api_key(monkeypatch):
+    """RevenueCatClient falls back to the configured key when passed a blank
+    one, so the env has to be cleared for this to test what it claims. Without
+    that the call reached the real API — passing or failing on whether the
+    machine running the tests happened to have a key set, and needing the
+    network either way."""
+    from app.config import get_settings
+
+    get_settings.cache_clear()
+    monkeypatch.setenv("REVENUECAT_API_KEY", "")
+    try:
+        client = RevenueCatClient(api_key="")
+        with pytest.raises(AppError) as exc:
+            await client.get_subscriber("user-1")
+        assert exc.value.status_code == 503
+    finally:
+        get_settings.cache_clear()

@@ -6,7 +6,7 @@ from app.models.drone_pad import MusicalKey
 
 
 class DronePadCategoryCreate(BaseModel):
-    name: str
+    name: str = Field(max_length=100)
     description: str | None = None
 
 

@@ -251,7 +251,7 @@ def build_stem_pack_router(actor_dependency, enforce_ownership: bool) -> APIRout
         pack_id: uuid.UUID,
         file: UploadFile = File(...),
         instrument: StemInstrument = Form(...),
-        label: str | None = Form(None),
+        label: str | None = Form(None, max_length=100),
         part_id: uuid.UUID | None = Form(None),
         db: AsyncSession = Depends(get_db),
         actor=Depends(actor_dependency),

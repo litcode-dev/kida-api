@@ -12,25 +12,25 @@ MAX_PART_REPEATS = 16
 
 
 class StemPackCreate(BaseModel):
-    title: str
+    title: str = Field(max_length=255)
     loop_id: uuid.UUID | None = None
     genre: Genre
     # Long-form by default so existing clients, which never sent this field,
     # keep creating the kind of pack they always did.
     pack_type: StemPackType = StemPackType.long_form
     bpm: int
-    key: str
+    key: str = Field(max_length=50)
     tags: list[str] = []
     price: Decimal
     description: str | None = None
 
 
 class StemPackUpdate(BaseModel):
-    title: str | None = None
+    title: str | None = Field(default=None, max_length=255)
     loop_id: uuid.UUID | None = None
     genre: Genre | None = None
     bpm: int | None = None
-    key: str | None = None
+    key: str | None = Field(default=None, max_length=50)
     tags: list[str] | None = None
     price: Decimal | None = None
     description: str | None = None
@@ -42,7 +42,7 @@ class StemCreate(BaseModel):
     instrument: StemInstrument
     # Free text shown in the app ("Rhodes", "Lead vox"). Defaults to the
     # instrument's own name when the producer does not supply one.
-    label: str | None = None
+    label: str | None = Field(default=None, max_length=100)
     # Required for a breakdown pack, rejected for a long-form one.
     part_id: uuid.UUID | None = None
 
@@ -54,7 +54,7 @@ class StemCreate(BaseModel):
 
 class StemPartCreate(BaseModel):
     section: SongSection
-    name: str | None = None
+    name: str | None = Field(default=None, max_length=100)
     position: int | None = None
     bars: int | None = Field(default=None, gt=0)
 
@@ -66,7 +66,7 @@ class StemPartCreate(BaseModel):
 
 class StemPartUpdate(BaseModel):
     section: SongSection | None = None
-    name: str | None = None
+    name: str | None = Field(default=None, max_length=100)
     position: int | None = None
     bars: int | None = Field(default=None, gt=0)
 
@@ -77,7 +77,7 @@ class ArrangementItemCreate(BaseModel):
 
 
 class StemArrangementCreate(BaseModel):
-    name: str
+    name: str = Field(max_length=150)
     description: str | None = None
     is_default: bool = False
     items: list[ArrangementItemCreate]
@@ -93,7 +93,7 @@ class StemArrangementCreate(BaseModel):
 
 
 class StemArrangementUpdate(BaseModel):
-    name: str | None = None
+    name: str | None = Field(default=None, max_length=150)
     description: str | None = None
     is_default: bool | None = None
     # Sending items re-writes the whole running order and re-renders; omitting

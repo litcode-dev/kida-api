@@ -49,6 +49,39 @@ def _with_detail(message: str, detail: str) -> str:
     return f"{message}: {detail}" if detail else message
 
 
+def _claims_email_verified(value) -> bool | None:
+    """Read a provider's email_verified claim. None means it said nothing.
+
+    Apple sends it as the string "true"/"false" in some tokens and a bool in
+    others; Google sends a bool. Anything else is treated as unstated rather
+    than guessed at.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str) and value.lower() in ("true", "false"):
+        return value.lower() == "true"
+    return None
+
+
+def reject_unverified_provider_email(provider: str, claim) -> None:
+    """Refuse a sign-in whose provider has not verified the email address.
+
+    find_or_create_oauth_user links a provider account to any local account
+    with the same address, and marks it verified on the way through. So an
+    address the provider never confirmed is enough to take over an existing
+    account, which is exactly why both providers publish this claim. Only an
+    explicit "false" is refused — an absent claim is left alone, so a provider
+    that stops sending it cannot lock every user out.
+    """
+    if _claims_email_verified(claim) is False:
+        log.warning("oauth_email_not_verified", provider=provider)
+        raise AppError(
+            f"{provider.capitalize()} has not verified this email address. "
+            f"Verify it with {provider.capitalize()}, then sign in again.",
+            status_code=403,
+        )
+
+
 def get_google_auth_url(state: str) -> str:
     settings = get_settings()
     if not settings.google_client_id:
@@ -168,6 +201,8 @@ async def get_google_user_info(access_token: str) -> dict:
         )
         raise AppError(_UPSTREAM_FAILED, status_code=502)
 
+    reject_unverified_provider_email("google", info.get("email_verified"))
+
     # Normalize the fields the callers actually read, so a null or oddly typed
     # name/picture cannot reach the database as a None or a dict.
     profile = dict(info)
@@ -182,6 +217,11 @@ async def get_google_user_info(access_token: str) -> dict:
 async def verify_apple_identity_token(identity_token: str) -> dict:
     """Verify an Apple identity_token JWT and return its claims."""
     settings = get_settings()
+    if not settings.apple_client_id:
+        # Without an audience to check against, every token fails as invalid —
+        # which reads as the user's fault rather than a missing deployment
+        # setting. Matches how the Google routes report the same thing.
+        raise AppError("Apple login is not configured", status_code=503)
 
     def _verify() -> dict:
         signing_key = _apple_jwks_client.get_signing_key_from_jwt(identity_token)
@@ -191,6 +231,12 @@ async def verify_apple_identity_token(identity_token: str) -> dict:
             algorithms=["RS256"],
             audience=settings.apple_client_id,
             issuer="https://appleid.apple.com",
+            # sub identifies the account and the router indexes it directly;
+            # exp is what stops a leaked token being replayed forever. A token
+            # missing either is not one we can act on, and PyJWT raises
+            # MissingRequiredClaimError, which the caller already renders as an
+            # invalid token rather than a KeyError 500.
+            options={"require": ["sub", "exp"]},
         )
 
     try:

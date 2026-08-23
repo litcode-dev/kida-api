@@ -11,6 +11,8 @@ from app.models.user import User
 from app.schemas.common import success
 from app.services import iap_service
 from app.exceptions import AppError
+from typing import Literal
+
 from pydantic import BaseModel
 
 router = APIRouter(prefix="/purchases", tags=["purchases"])
@@ -18,7 +20,7 @@ router = APIRouter(prefix="/purchases", tags=["purchases"])
 
 class IAPVerifyRequest(BaseModel):
     item_id: uuid.UUID
-    platform: str  # "ios" | "android"
+    platform: Literal["ios", "android"]
     receipt: str
 
 
@@ -47,8 +49,6 @@ async def verify_purchase(
     user: User = Depends(get_current_user),
 ):
     """Verify an IAP receipt with Apple/Google and record ownership."""
-    if body.platform not in ("ios", "android"):
-        raise AppError(422, "platform must be 'ios' or 'android'")
 
     # Verify receipt with the appropriate store
     if body.platform == "ios":

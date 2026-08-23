@@ -1,13 +1,13 @@
 import uuid
 from datetime import datetime
-from pydantic import BaseModel, EmailStr, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from app.models.user import UserRole
 
 
 class UserRegister(BaseModel):
     email: EmailStr
     password: str
-    full_name: str
+    full_name: str = Field(max_length=255)
 
     @field_validator("password")
     @classmethod
@@ -82,8 +82,8 @@ class GoogleTokenRequest(BaseModel):
 
 class AppleTokenRequest(BaseModel):
     identity_token: str
-    full_name: str | None = None
-    email: str | None = None
+    full_name: str | None = Field(default=None, max_length=255)
+    email: str | None = Field(default=None, max_length=255)
 
 
 class DeleteAccountRequest(BaseModel):
