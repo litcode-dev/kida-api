@@ -275,6 +275,16 @@ async def is_newsletter_subscriber(db: AsyncSession, email: str) -> bool:
     return row is not None
 
 
+def _reject_if_suspended(user: User) -> None:
+    if user.is_suspended:
+        msg = (
+            f"Account suspended: {user.suspension_reason}"
+            if user.suspension_reason
+            else "Account suspended"
+        )
+        raise UnauthorizedError(msg)
+
+
 async def find_or_create_oauth_user(
     db: AsyncSession,
     email: str,
@@ -291,9 +301,7 @@ async def find_or_create_oauth_user(
         )
     )
     if user:
-        if user.is_suspended:
-            msg = f"Account suspended: {user.suspension_reason}" if user.suspension_reason else "Account suspended"
-            raise UnauthorizedError(msg)
+        _reject_if_suspended(user)
         if avatar_url and user.avatar_url != avatar_url:
             user.avatar_url = avatar_url
             await db.commit()
@@ -303,9 +311,7 @@ async def find_or_create_oauth_user(
     # Second: find by email and link the OAuth account
     user = await db.scalar(select(User).where(User.email == email))
     if user:
-        if user.is_suspended:
-            msg = f"Account suspended: {user.suspension_reason}" if user.suspension_reason else "Account suspended"
-            raise UnauthorizedError(msg)
+        _reject_if_suspended(user)
         user.oauth_provider = provider
         user.oauth_provider_id = provider_id
         # The provider confirmed this email, so linking it verifies the account.
@@ -332,18 +338,33 @@ async def find_or_create_oauth_user(
     try:
         await db.commit()
         await db.refresh(user)
-        from app.tasks.notification_tasks import (
-            send_registration_email, send_new_user_admin_notification,
-        )
-        send_registration_email.delay(str(user.id))
-        send_new_user_admin_notification.delay(str(user.id))
-        log.info("registration_email.queued", user_id=str(user.id), email=user.email)
-        return user
     except IntegrityError:
+        # Two sign-ins for the same brand-new account raced and the other one
+        # won the unique email index. Re-read what it wrote instead of failing
+        # the loser: both requests are the same person signing in once.
         await db.rollback()
-        user = await db.scalar(select(User).where(User.email == email))
+        user = await db.scalar(
+            select(User).where(
+                User.oauth_provider == provider,
+                User.oauth_provider_id == provider_id,
+            )
+        )
         if not user:
-            raise
+            user = await db.scalar(select(User).where(User.email == email))
+        if not user:
+            # Not the race, then — some other constraint rejected the insert.
+            # A bare re-raise would surface as an opaque 500, so name it.
+            log.error(
+                "oauth_user_create_conflict",
+                provider=provider,
+                email=email,
+                exc_info=True,
+            )
+            raise ConflictError(
+                f"Could not create an account for this {provider} sign-in. "
+                "Please try again."
+            )
+        _reject_if_suspended(user)
         if not user.oauth_provider:
             user.oauth_provider = provider
             user.oauth_provider_id = provider_id
@@ -352,6 +373,22 @@ async def find_or_create_oauth_user(
             await db.commit()
             await db.refresh(user)
         return user
+
+    # The account exists at this point, so a broker outage must not turn a
+    # finished sign-in into an error — log it and let the user in.
+    try:
+        from app.tasks.notification_tasks import (
+            send_registration_email, send_new_user_admin_notification,
+        )
+        send_registration_email.delay(str(user.id))
+        send_new_user_admin_notification.delay(str(user.id))
+        log.info("registration_email.queued", user_id=str(user.id), email=user.email)
+    except Exception as exc:  # noqa: BLE001 - the account is already created
+        log.error(
+            "oauth_registration_email.enqueue_failed",
+            user_id=str(user.id), provider=provider, error=str(exc),
+        )
+    return user
 
 
 async def _loop_s3_keys(db: AsyncSession, loop_ids) -> list[str]:
