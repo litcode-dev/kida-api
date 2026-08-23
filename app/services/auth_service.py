@@ -275,6 +275,57 @@ async def is_newsletter_subscriber(db: AsyncSession, email: str) -> bool:
     return row is not None
 
 
+def _column_limit(name: str) -> int:
+    """The declared max length of a users column, read from the model itself so
+    it cannot drift from the migration."""
+    return User.__table__.c[name].type.length
+
+
+def _fit_oauth_profile(
+    provider: str, email: str, full_name: str, avatar_url: str | None
+) -> tuple[str, str, str | None]:
+    """Clamp a provider's profile to what the users table can hold.
+
+    Providers are loose with these fields — Google's picture URLs have no
+    documented length, and Apple's full_name is whatever the client posted — and
+    an over-long value reached Postgres as a raw StringDataRightTruncation,
+    turning an otherwise valid sign-in into a 500. A display name or an avatar
+    is cosmetic, so trim or drop it and let the user in; an address too long to
+    store is not a usable account, so that one is refused with a reason.
+    """
+    if not isinstance(email, str):
+        # Apple reaches here with a claim from a signed JWT and Google with an
+        # already-normalized string, but neither is worth trusting blindly: a
+        # non-string would only fail later, as a driver-level DataError.
+        email = ""
+    if not isinstance(full_name, str):
+        full_name = ""
+    if not isinstance(avatar_url, str):
+        avatar_url = None
+
+    email = email.strip()
+    if not email:
+        raise AppError(
+            f"{provider.capitalize()} did not provide an email address for this account",
+            status_code=422,
+        )
+    if len(email) > _column_limit("email"):
+        raise AppError(
+            f"That {provider.capitalize()} account's email address is too long to register",
+            status_code=422,
+        )
+
+    full_name = (full_name or "").strip() or email.split("@")[0]
+    full_name = full_name[: _column_limit("full_name")]
+
+    if avatar_url and len(avatar_url) > _column_limit("avatar_url"):
+        log.info(
+            "oauth_avatar_url_discarded", provider=provider, length=len(avatar_url)
+        )
+        avatar_url = None
+    return email, full_name, avatar_url
+
+
 def _reject_if_suspended(user: User) -> None:
     if user.is_suspended:
         msg = (
@@ -293,6 +344,10 @@ async def find_or_create_oauth_user(
     provider_id: str,
     avatar_url: str | None = None,
 ) -> User:
+    email, full_name, avatar_url = _fit_oauth_profile(
+        provider, email, full_name, avatar_url
+    )
+
     # First: find by provider + provider_id
     user = await db.scalar(
         select(User).where(

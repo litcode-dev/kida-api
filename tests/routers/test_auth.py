@@ -430,3 +430,52 @@ async def test_google_login_suspended_account_is_401(client, db_session):
     }))
     assert resp.status_code == 401
     assert resp.json()["message"] == "Account suspended: Spam"
+
+
+@pytest.mark.asyncio
+async def test_google_login_null_name_falls_back_to_email_local_part(client):
+    """`{"name": null}` used to reach the NOT NULL constraint on full_name."""
+    resp = await _google_login(client, response=_userinfo({
+        "sub": "google-uid-4", "email": "nameless@test.com", "name": None,
+    }))
+    assert resp.status_code == 200
+    assert resp.json()["data"]["full_name"] == "nameless"
+
+
+@pytest.mark.asyncio
+async def test_google_login_overlong_avatar_is_dropped_not_fatal(client):
+    """An avatar is cosmetic — too long for the column means drop it, not 500."""
+    resp = await _google_login(client, response=_userinfo({
+        "sub": "google-uid-5", "email": "big@test.com", "name": "Big",
+        "picture": "https://lh3.googleusercontent.com/" + "x" * 600,
+    }))
+    assert resp.status_code == 200
+    assert resp.json()["data"]["avatar_url"] is None
+
+
+@pytest.mark.asyncio
+async def test_google_login_overlong_name_is_truncated(client):
+    resp = await _google_login(client, response=_userinfo({
+        "sub": "google-uid-6", "email": "long@test.com", "name": "N" * 400,
+    }))
+    assert resp.status_code == 200
+    assert len(resp.json()["data"]["full_name"]) == 255
+
+
+@pytest.mark.asyncio
+async def test_google_login_overlong_email_is_422(client):
+    resp = await _google_login(client, response=_userinfo({
+        "sub": "google-uid-7", "email": "e" * 300 + "@test.com", "name": "E",
+    }))
+    assert resp.status_code == 422
+    assert "too long to register" in resp.json()["message"]
+
+
+@pytest.mark.asyncio
+async def test_google_login_non_string_email_is_502(client):
+    """A payload that is not shaped like Google's docs would otherwise reach
+    asyncpg as a raw DataError."""
+    resp = await _google_login(client, response=_userinfo({
+        "sub": "google-uid-8", "email": {"weird": 1}, "name": "W",
+    }))
+    assert resp.status_code == 502
