@@ -1,5 +1,6 @@
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
 from app.services.auth_service import VERIFY_PREFIX, VERIFY_COOLDOWN_PREFIX
@@ -328,3 +329,104 @@ def test_account_deleted_admin_task_skipped_without_recipient(monkeypatch):
         assert sent == []
     finally:
         get_settings.cache_clear()
+
+
+# --- Google sign-in ---------------------------------------------------------
+
+def _google_client(response=None, error=None):
+    """A stand-in httpx client whose GET returns `response` or raises `error`."""
+    c = AsyncMock()
+    c.__aenter__ = AsyncMock(return_value=c)
+    c.__aexit__ = AsyncMock(return_value=False)
+    c.get = AsyncMock(return_value=response, side_effect=error)
+    return c
+
+
+def _userinfo(payload, status_code=200):
+    resp = MagicMock()
+    resp.status_code = status_code
+    resp.text = str(payload)
+    resp.json.return_value = payload
+    return resp
+
+
+async def _google_login(client, **patch_kwargs):
+    with patch(
+        "app.services.oauth_service.httpx.AsyncClient",
+        return_value=_google_client(**patch_kwargs),
+    ):
+        return await client.post(
+            "/api/v1/auth/oauth/google/token", json={"access_token": "ya29.token"}
+        )
+
+
+@pytest.mark.asyncio
+async def test_google_login_success(client):
+    resp = await _google_login(client, response=_userinfo({
+        "sub": "google-uid-1", "email": "gio@test.com", "name": "Gio",
+    }))
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "success"
+    assert body["data"]["access_token"]
+    assert body["data"]["full_name"] == "Gio"
+
+
+@pytest.mark.asyncio
+async def test_google_login_missing_access_token_is_422(client):
+    resp = await client.post("/api/v1/auth/oauth/google/token", json={})
+    assert resp.status_code == 422
+    assert "access_token" in resp.json()["message"]
+
+
+@pytest.mark.asyncio
+async def test_google_login_rejected_token_is_401(client):
+    payload = {"error": {"code": 401, "message": "Invalid Credentials"}}
+    resp = await _google_login(client, response=_userinfo(payload, status_code=401))
+    assert resp.status_code == 401
+    body = resp.json()
+    assert body["status"] == "error"
+    assert "Invalid Credentials" in body["message"]
+
+
+@pytest.mark.asyncio
+async def test_google_login_without_email_scope_is_422_not_500(client):
+    """The profile authenticates but carries no address — the old code raised
+    KeyError here and the client saw "An unexpected error occurred"."""
+    resp = await _google_login(client, response=_userinfo({"sub": "google-uid-2"}))
+    assert resp.status_code == 422
+    assert "email address" in resp.json()["message"]
+
+
+@pytest.mark.asyncio
+async def test_google_login_unreachable_google_is_503_not_500(client):
+    resp = await _google_login(client, error=httpx.ConnectTimeout("timed out"))
+    assert resp.status_code == 503
+    assert "Could not reach Google" in resp.json()["message"]
+
+
+@pytest.mark.asyncio
+async def test_google_login_google_outage_is_502_not_500(client):
+    resp = await _google_login(client, response=_userinfo({}, status_code=500))
+    assert resp.status_code == 502
+    assert "Google could not complete" in resp.json()["message"]
+
+
+@pytest.mark.asyncio
+async def test_google_login_suspended_account_is_401(client, db_session):
+    from sqlalchemy import select
+    from app.models.user import User
+
+    await _google_login(client, response=_userinfo({
+        "sub": "google-uid-3", "email": "banned@test.com", "name": "Banned",
+    }))
+    user = await db_session.scalar(select(User).where(User.email == "banned@test.com"))
+    user.is_suspended = True
+    user.suspension_reason = "Spam"
+    await db_session.commit()
+
+    resp = await _google_login(client, response=_userinfo({
+        "sub": "google-uid-3", "email": "banned@test.com", "name": "Banned",
+    }))
+    assert resp.status_code == 401
+    assert resp.json()["message"] == "Account suspended: Spam"

@@ -1,10 +1,13 @@
 import asyncio
 import httpx
 import jwt
+import structlog
 from jwt import PyJWKClient
 from urllib.parse import urlencode
 from app.config import get_settings
-from app.exceptions import UnauthorizedError
+from app.exceptions import AppError, UnauthorizedError
+
+log = structlog.get_logger()
 
 APPLE_JWKS_URL = "https://appleid.apple.com/auth/keys"
 _apple_jwks_client = PyJWKClient(APPLE_JWKS_URL, cache_jwk_set=True, lifespan=3600)
@@ -13,9 +16,43 @@ GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo"
 
+# Explicit rather than httpx's 5s default: a slow-but-alive Google is worth
+# waiting out, since timing out here costs the user the whole sign-in. Matches
+# the timeout the other outbound integrations use.
+GOOGLE_TIMEOUT = 15.0
+
+_UNREACHABLE = "Could not reach Google to complete sign-in. Please try again."
+_UPSTREAM_FAILED = "Google could not complete the sign-in right now. Please try again."
+
+
+def _google_error_detail(resp: httpx.Response) -> str:
+    """Pull Google's own reason out of an error response, if it sent one.
+
+    Google reports the cause in ``error_description`` (token endpoint) or a
+    nested ``error.message`` (userinfo). Surfacing it turns "sign-in failed"
+    into something a client can act on, and it is short enough to pass through
+    to the caller. Anything unparseable yields "" — the generic message stands.
+    """
+    try:
+        payload = resp.json()
+    except ValueError:
+        return ""
+    if not isinstance(payload, dict):
+        return ""
+    detail = payload.get("error_description") or payload.get("error") or ""
+    if isinstance(detail, dict):
+        detail = detail.get("message", "")
+    return str(detail)[:200] if isinstance(detail, str) else ""
+
+
+def _with_detail(message: str, detail: str) -> str:
+    return f"{message}: {detail}" if detail else message
+
 
 def get_google_auth_url(state: str) -> str:
     settings = get_settings()
+    if not settings.google_client_id:
+        raise AppError("Google login is not configured", status_code=503)
     params = {
         "client_id": settings.google_client_id,
         "redirect_uri": settings.google_redirect_uri,
@@ -29,31 +66,99 @@ def get_google_auth_url(state: str) -> str:
 
 async def exchange_google_code(code: str) -> dict:
     settings = get_settings()
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            GOOGLE_TOKEN_URL,
-            data={
-                "code": code,
-                "client_id": settings.google_client_id,
-                "client_secret": settings.google_client_secret,
-                "redirect_uri": settings.google_redirect_uri,
-                "grant_type": "authorization_code",
-            },
-        )
+    if not settings.google_client_id or not settings.google_client_secret:
+        raise AppError("Google login is not configured", status_code=503)
+    try:
+        async with httpx.AsyncClient(timeout=GOOGLE_TIMEOUT) as client:
+            resp = await client.post(
+                GOOGLE_TOKEN_URL,
+                data={
+                    "code": code,
+                    "client_id": settings.google_client_id,
+                    "client_secret": settings.google_client_secret,
+                    "redirect_uri": settings.google_redirect_uri,
+                    "grant_type": "authorization_code",
+                },
+            )
+    except httpx.HTTPError as exc:
+        # Timeout, DNS, connection reset: nothing is wrong with the code, so the
+        # client should retry rather than restart the whole OAuth dance.
+        log.warning("google_token_transport_error", error=str(exc))
+        raise AppError(_UNREACHABLE, status_code=503)
+
+    if resp.status_code >= 500:
+        log.warning("google_token_upstream_error", status=resp.status_code, body=resp.text[:300])
+        raise AppError(_UPSTREAM_FAILED, status_code=502)
     if resp.status_code != 200:
-        raise UnauthorizedError("Failed to exchange Google authorization code")
-    return resp.json()
+        detail = _google_error_detail(resp)
+        log.info("google_token_rejected", status=resp.status_code, detail=detail)
+        raise UnauthorizedError(
+            _with_detail("Failed to exchange Google authorization code", detail)
+        )
+
+    try:
+        data = resp.json()
+    except ValueError:
+        log.warning("google_token_unreadable", body=resp.text[:300])
+        raise AppError(_UPSTREAM_FAILED, status_code=502)
+    if not isinstance(data, dict) or not data.get("access_token"):
+        # A 200 with no token means Google changed the contract on us; the
+        # caller would otherwise KeyError its way into a 500.
+        log.warning(
+            "google_token_missing_access_token",
+            keys=sorted(data) if isinstance(data, dict) else type(data).__name__,
+        )
+        raise AppError(_UPSTREAM_FAILED, status_code=502)
+    return data
 
 
 async def get_google_user_info(access_token: str) -> dict:
-    async with httpx.AsyncClient() as client:
-        resp = await client.get(
-            GOOGLE_USERINFO_URL,
-            headers={"Authorization": f"Bearer {access_token}"},
-        )
+    """Fetch the Google profile for an access token.
+
+    Guarantees a dict with non-empty ``sub`` and ``email`` on return, so callers
+    can index those two fields without a KeyError.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=GOOGLE_TIMEOUT) as client:
+            resp = await client.get(
+                GOOGLE_USERINFO_URL,
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+    except httpx.HTTPError as exc:
+        log.warning("google_userinfo_transport_error", error=str(exc))
+        raise AppError(_UNREACHABLE, status_code=503)
+
+    if resp.status_code >= 500:
+        log.warning("google_userinfo_upstream_error", status=resp.status_code, body=resp.text[:300])
+        raise AppError(_UPSTREAM_FAILED, status_code=502)
     if resp.status_code != 200:
-        raise UnauthorizedError("Failed to fetch Google user info")
-    return resp.json()
+        detail = _google_error_detail(resp)
+        log.info("google_userinfo_rejected", status=resp.status_code, detail=detail)
+        raise UnauthorizedError(_with_detail("Failed to fetch Google user info", detail))
+
+    try:
+        info = resp.json()
+    except ValueError:
+        log.warning("google_userinfo_unreadable", body=resp.text[:300])
+        raise AppError(_UPSTREAM_FAILED, status_code=502)
+    if not isinstance(info, dict):
+        log.warning("google_userinfo_unexpected_shape", type=type(info).__name__)
+        raise AppError(_UPSTREAM_FAILED, status_code=502)
+
+    if not info.get("email"):
+        # A token minted without the email scope authenticates fine but carries
+        # no address, and an account cannot be created without one. The fix is
+        # on the client, so say what it has to do differently.
+        log.info("google_userinfo_no_email", scopes_hint="email scope missing")
+        raise AppError(
+            "Google did not provide an email address for this account. "
+            "Sign in again and allow access to your email address.",
+            status_code=422,
+        )
+    if not info.get("sub"):
+        log.warning("google_userinfo_no_sub", keys=sorted(info))
+        raise AppError(_UPSTREAM_FAILED, status_code=502)
+    return info
 
 
 async def verify_apple_identity_token(identity_token: str) -> dict:
