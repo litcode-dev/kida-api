@@ -145,7 +145,8 @@ async def get_google_user_info(access_token: str) -> dict:
         log.warning("google_userinfo_unexpected_shape", type=type(info).__name__)
         raise AppError(_UPSTREAM_FAILED, status_code=502)
 
-    if not info.get("email"):
+    email = info.get("email")
+    if not email:
         # A token minted without the email scope authenticates fine but carries
         # no address, and an account cannot be created without one. The fix is
         # on the client, so say what it has to do differently.
@@ -155,10 +156,27 @@ async def get_google_user_info(access_token: str) -> dict:
             "Sign in again and allow access to your email address.",
             status_code=422,
         )
-    if not info.get("sub"):
-        log.warning("google_userinfo_no_sub", keys=sorted(info))
+
+    sub = info.get("sub")
+    if not isinstance(email, str) or not isinstance(sub, str) or not sub:
+        # Not a scope problem — the payload is not shaped the way the API
+        # documents. Passing it on lands it in a query parameter, where the
+        # driver rejects it as a raw DataError.
+        log.warning(
+            "google_userinfo_unexpected_types",
+            email_type=type(email).__name__, sub_type=type(sub).__name__,
+        )
         raise AppError(_UPSTREAM_FAILED, status_code=502)
-    return info
+
+    # Normalize the fields the callers actually read, so a null or oddly typed
+    # name/picture cannot reach the database as a None or a dict.
+    profile = dict(info)
+    profile["email"] = email.strip()
+    profile["sub"] = sub
+    name, picture = info.get("name"), info.get("picture")
+    profile["name"] = name if isinstance(name, str) else ""
+    profile["picture"] = picture if isinstance(picture, str) else None
+    return profile
 
 
 async def verify_apple_identity_token(identity_token: str) -> dict:
