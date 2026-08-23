@@ -1,12 +1,12 @@
 """add squad and stripe to the paymentprovider enum
 
-Revision ID: a6b58w37x4y9
+Revision ID: a04cd7bbb94d
 Revises: r8w69r40s3t1
 Create Date: 2026-08-23
 """
 from alembic import op
 
-revision = "a6b58w37x4y9"
+revision = "a04cd7bbb94d"
 down_revision = "r8w69r40s3t1"
 branch_labels = None
 depends_on = None
