@@ -9,7 +9,11 @@ from app.models.purchase import PaymentProvider
 from app.models.user import User
 from app.config import get_settings
 from app.exceptions import AppError
-from app.services import flutterwave_service, paystack_service
+from app.services import payments
+
+import structlog
+
+log = structlog.get_logger()
 
 
 async def get_active_subscription(db: AsyncSession, user_id: uuid.UUID) -> Subscription | None:
@@ -115,84 +119,63 @@ async def _process_download_extras_webhook(
     await db.commit()
 
 
-async def handle_flutterwave_webhook(
-    db: AsyncSession, payload: bytes, verif_hash: str
+async def handle_webhook(
+    db: AsyncSession,
+    provider: PaymentProvider | str,
+    payload: bytes,
+    signature: str | None,
 ) -> None:
-    if not flutterwave_service.verify_webhook_signature(verif_hash):
+    """Apply a subscription or credit-pack payment from any provider.
+
+    Same shape as the purchase handler: verify the signature, then re-read the
+    transaction from the gateway and act on that answer rather than on the
+    body, so what a payment bought is decided by the gateway's record of it.
+    """
+    gateway = payments.get_gateway(provider)
+    if not gateway.verify_webhook(payload, signature):
         raise AppError("Invalid webhook signature", status_code=400)
 
-    event = json.loads(payload)
-    if event.get("event") != "charge.completed":
-        return
-    data = event.get("data", {})
-    if data.get("status") != "successful":
+    event = gateway.parse_webhook(payload)
+    if not event.is_payment_success or not event.reference:
         return
 
-    tx_ref = data.get("tx_ref")
-    transaction_id = str(data.get("id"))
-    amount = Decimal(str(data.get("amount", 0)))
-
-    verification = await flutterwave_service.verify_transaction(transaction_id)
-    if verification.get("data", {}).get("status") != "successful":
+    verified = await gateway.verify_transaction(event.reference)
+    if not verified.succeeded:
         return
 
-    # Deduplicate by payment_reference
+    # Deduplicate before doing anything, on the gateway's own reference.
     existing = await db.scalar(
-        select(Subscription).where(Subscription.payment_reference == tx_ref)
+        select(Subscription).where(Subscription.payment_reference == verified.reference)
     )
     if existing:
         return
 
-    meta = data.get("meta", {})
+    meta = verified.metadata
     user_id = meta.get("user_id")
     payment_type = meta.get("type")
+    if not user_id:
+        log.info(
+            "subscription_webhook_without_user",
+            provider=gateway.provider.value, reference=verified.reference,
+        )
+        return
 
     if payment_type == "subscription":
         await _process_subscription_webhook(
-            db, user_id, tx_ref, amount, PaymentProvider.flutterwave
+            db, user_id, verified.reference, verified.amount, gateway.provider
         )
     elif payment_type == "ai_extras":
         quantity = meta.get("quantity", get_settings().ai_extra_credits_quantity)
-        await _process_extras_webhook(db, user_id, int(quantity))
+        await _process_extras_webhook(db, user_id, _as_int(quantity))
     elif payment_type == "download_extras":
         quantity = meta.get("quantity", get_settings().download_extra_credits_quantity)
-        await _process_download_extras_webhook(db, user_id, int(quantity))
+        await _process_download_extras_webhook(db, user_id, _as_int(quantity))
 
 
-async def handle_paystack_webhook(
-    db: AsyncSession, payload: bytes, x_paystack_signature: str
-) -> None:
-    if not paystack_service.verify_webhook_signature(payload, x_paystack_signature):
-        raise AppError("Invalid webhook signature", status_code=400)
-
-    event = json.loads(payload)
-    if event.get("event") != "charge.success":
-        return
-    data = event.get("data", {})
-    reference = data.get("reference")
-    amount = Decimal(str(data.get("amount", 0))) / 100
-
-    verification = await paystack_service.verify_transaction(reference)
-    if not verification.get("status") or verification.get("data", {}).get("status") != "success":
-        return
-
-    existing = await db.scalar(
-        select(Subscription).where(Subscription.payment_reference == reference)
-    )
-    if existing:
-        return
-
-    meta = data.get("metadata", {})
-    user_id = meta.get("user_id")
-    payment_type = meta.get("type")
-
-    if payment_type == "subscription":
-        await _process_subscription_webhook(
-            db, user_id, reference, amount, PaymentProvider.paystack
-        )
-    elif payment_type == "ai_extras":
-        quantity = meta.get("quantity", get_settings().ai_extra_credits_quantity)
-        await _process_extras_webhook(db, user_id, int(quantity))
-    elif payment_type == "download_extras":
-        quantity = meta.get("quantity", get_settings().download_extra_credits_quantity)
-        await _process_download_extras_webhook(db, user_id, int(quantity))
+def _as_int(value) -> int:
+    """A quantity comes back through a gateway's metadata, where a number can
+    turn into a string on the round trip."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0

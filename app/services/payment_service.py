@@ -1,6 +1,6 @@
-import json
 import uuid
-from decimal import Decimal
+
+import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.models.purchase import Purchase, PurchaseType, PaymentProvider
@@ -9,7 +9,11 @@ from app.models.stem_pack import StemPack
 from app.models.user import User
 from app.exceptions import NotFoundError, AppError
 from app.schemas.purchase import CheckoutRequest
-from app.services import flutterwave_service, paystack_service
+from app.services import payments
+
+log = structlog.get_logger()
+
+DEFAULT_CURRENCY = "NGN"
 
 
 async def create_checkout_session(
@@ -28,122 +32,93 @@ async def create_checkout_session(
             raise NotFoundError("StemPack not found")
         metadata = {"stem_pack_id": str(request.stem_pack_id), "user_id": str(user.id)}
 
-    ref = str(uuid.uuid4())
-
-    if request.provider == "flutterwave":
-        result = await flutterwave_service.initialize_payment(
-            amount=float(product.price),
-            email=user.email,
-            name=user.full_name,
-            product_name=product.title,
-            metadata=metadata,
-            tx_ref=ref,
-        )
-        return {"checkout_url": result["payment_link"], "payment_reference": ref}
-
-    # paystack
-    amount_kobo = int(product.price * 100)
-    result = await paystack_service.initialize_payment(
-        amount_kobo=amount_kobo,
+    gateway = payments.get_gateway(request.provider)
+    session = await gateway.create_checkout(
+        amount=product.price,
+        currency=DEFAULT_CURRENCY,
+        reference=str(uuid.uuid4()),
         email=user.email,
-        reference=ref,
-        metadata=metadata,
+        description=product.title,
+        metadata={**metadata, "customer_name": user.full_name},
     )
-    return {"checkout_url": result["authorization_url"], "payment_reference": ref}
+    # The gateway's reference, not ours: Stripe answers verification by its own
+    # session id, so whatever comes back here is what the webhook will carry.
+    return {"checkout_url": session.checkout_url, "payment_reference": session.reference}
 
 
-async def handle_flutterwave_webhook(
-    db: AsyncSession, payload: bytes, verif_hash: str
+async def handle_webhook(
+    db: AsyncSession,
+    provider: PaymentProvider | str,
+    payload: bytes,
+    signature: str | None,
 ) -> None:
-    if not flutterwave_service.verify_webhook_signature(verif_hash):
+    """Record a one-time purchase from any provider's webhook.
+
+    The body is only ever a notification. Once its signature checks out the
+    transaction is re-read from the gateway, and the amount and metadata used
+    below come from *that* answer — not from the request, which is why a
+    forged or replayed body cannot name its own buyer or price.
+    """
+    gateway = payments.get_gateway(provider)
+    if not gateway.verify_webhook(payload, signature):
         raise AppError("Invalid webhook signature", status_code=400)
 
-    event = json.loads(payload)
-    if event.get("event") != "charge.completed":
+    event = gateway.parse_webhook(payload)
+    if not event.is_payment_success or not event.reference:
         return
 
-    data = event.get("data", {})
-    if data.get("status") != "successful":
+    verified = await gateway.verify_transaction(event.reference)
+    if not verified.succeeded:
+        log.info(
+            "webhook_transaction_not_successful",
+            provider=gateway.provider.value, reference=event.reference,
+        )
         return
 
-    tx_ref = data.get("tx_ref")
-    transaction_id = str(data.get("id"))
-    amount = Decimal(str(data.get("amount", 0)))
-
-    # Verify with Flutterwave API before recording the purchase
-    verification = await flutterwave_service.verify_transaction(transaction_id)
-    if verification.get("data", {}).get("status") != "successful":
+    user_id = verified.metadata.get("user_id")
+    loop_id = verified.metadata.get("loop_id")
+    stem_pack_id = verified.metadata.get("stem_pack_id")
+    if not user_id or not (loop_id or stem_pack_id):
+        # A charge that did not start from a checkout of ours — nothing to
+        # grant, and no reason to fail the delivery and be retried forever.
+        log.info(
+            "webhook_without_purchase_metadata",
+            provider=gateway.provider.value, reference=verified.reference,
+        )
         return
 
-    meta = data.get("meta", {})
-    user_id = meta.get("user_id")
-    loop_id = meta.get("loop_id")
-    stem_pack_id = meta.get("stem_pack_id")
+    try:
+        purchase = Purchase(
+            user_id=uuid.UUID(user_id),
+            loop_id=uuid.UUID(loop_id) if loop_id else None,
+            stem_pack_id=uuid.UUID(stem_pack_id) if stem_pack_id else None,
+            payment_reference=verified.reference,
+            payment_provider=gateway.provider,
+            amount_paid=verified.amount,
+            purchase_type=PurchaseType.one_time,
+        )
+    except (ValueError, AttributeError, TypeError):
+        log.warning(
+            "webhook_metadata_not_usable",
+            provider=gateway.provider.value, reference=verified.reference,
+        )
+        return
 
     existing = await db.scalar(
-        select(Purchase).where(Purchase.payment_reference == tx_ref)
+        select(Purchase).where(Purchase.payment_reference == verified.reference)
     )
     if existing:
         return
 
-    purchase = Purchase(
-        user_id=uuid.UUID(user_id),
-        loop_id=uuid.UUID(loop_id) if loop_id else None,
-        stem_pack_id=uuid.UUID(stem_pack_id) if stem_pack_id else None,
-        payment_reference=tx_ref,
-        payment_provider=PaymentProvider.flutterwave,
-        amount_paid=amount,
-        purchase_type=PurchaseType.one_time,
-    )
     db.add(purchase)
     await db.commit()
 
-    from app.tasks.notification_tasks import send_purchase_confirmation
-    send_purchase_confirmation.delay(str(user_id), str(purchase.id))
-
-
-async def handle_paystack_webhook(
-    db: AsyncSession, payload: bytes, x_paystack_signature: str
-) -> None:
-    if not paystack_service.verify_webhook_signature(payload, x_paystack_signature):
-        raise AppError("Invalid webhook signature", status_code=400)
-
-    event = json.loads(payload)
-    if event.get("event") != "charge.success":
-        return
-
-    data = event.get("data", {})
-    reference = data.get("reference")
-    amount_kobo = data.get("amount", 0)
-    amount = Decimal(str(amount_kobo)) / 100
-
-    # Verify with Paystack API before recording the purchase
-    verification = await paystack_service.verify_transaction(reference)
-    if not verification.get("status") or verification.get("data", {}).get("status") != "success":
-        return
-
-    meta = data.get("metadata", {})
-    user_id = meta.get("user_id")
-    loop_id = meta.get("loop_id")
-    stem_pack_id = meta.get("stem_pack_id")
-
-    existing = await db.scalar(
-        select(Purchase).where(Purchase.payment_reference == reference)
-    )
-    if existing:
-        return
-
-    purchase = Purchase(
-        user_id=uuid.UUID(user_id),
-        loop_id=uuid.UUID(loop_id) if loop_id else None,
-        stem_pack_id=uuid.UUID(stem_pack_id) if stem_pack_id else None,
-        payment_reference=reference,
-        payment_provider=PaymentProvider.paystack,
-        amount_paid=amount,
-        purchase_type=PurchaseType.one_time,
-    )
-    db.add(purchase)
-    await db.commit()
-
-    from app.tasks.notification_tasks import send_purchase_confirmation
-    send_purchase_confirmation.delay(str(user_id), str(purchase.id))
+    # The purchase is recorded; a broker outage must not undo it.
+    try:
+        from app.tasks.notification_tasks import send_purchase_confirmation
+        send_purchase_confirmation.delay(str(user_id), str(purchase.id))
+    except Exception as exc:  # noqa: BLE001 - the purchase is already committed
+        log.error(
+            "purchase_confirmation.enqueue_failed",
+            purchase_id=str(purchase.id), error=str(exc),
+        )

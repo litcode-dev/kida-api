@@ -44,6 +44,15 @@ class Settings(BaseSettings):
     # Paystack
     paystack_secret_key: str = ""
 
+    # Squad (GTCO). Sandbox base: https://sandbox-api-d.squadco.com
+    squad_secret_key: str = ""
+    squad_base_url: str = "https://api-d.squadco.com"
+
+    # Stripe. The webhook secret is the endpoint's signing secret (whsec_...),
+    # which is not the API key.
+    stripe_secret_key: str = ""
+    stripe_webhook_secret: str = ""
+
     # Frontend
     frontend_url: str = "https://litmusic.app"
 

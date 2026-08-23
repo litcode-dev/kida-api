@@ -1,6 +1,7 @@
 import pytest
 import uuid
 from pydantic import ValidationError
+from app.models.purchase import PaymentProvider
 from app.schemas.purchase import CheckoutRequest
 
 
@@ -25,14 +26,17 @@ def test_checkout_accepts_stem_pack_only():
     assert req.loop_id is None
 
 
-def test_checkout_accepts_paystack_provider():
-    req = CheckoutRequest(loop_id=uuid.uuid4(), provider="paystack")
-    assert req.provider == "paystack"
+@pytest.mark.parametrize("provider", [p.value for p in PaymentProvider])
+def test_checkout_accepts_every_registered_provider(provider):
+    """The field tracks the registry, so a gateway added there is accepted here
+    without this test being edited."""
+    req = CheckoutRequest(loop_id=uuid.uuid4(), provider=provider)
+    assert req.provider == PaymentProvider(provider)
 
 
-def test_checkout_rejects_invalid_provider():
+def test_checkout_rejects_a_provider_with_no_gateway():
     with pytest.raises(ValidationError):
-        CheckoutRequest(loop_id=uuid.uuid4(), provider="stripe")
+        CheckoutRequest(loop_id=uuid.uuid4(), provider="bitcoin")
 
 
 # append at end of file

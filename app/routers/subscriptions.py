@@ -1,12 +1,13 @@
 import json
 import uuid
+from decimal import Decimal
 from fastapi import APIRouter, Depends, Request, Header
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.middleware.auth_middleware import get_current_user
 from app.middleware.rate_limit import limiter
 from app.services import (
-    subscription_service, flutterwave_service, paystack_service,
+    subscription_service, payments,
     iap_subscription_service, revenuecat_service,
 )
 from app.schemas.subscription import (
@@ -34,24 +35,17 @@ async def initiate_subscription(
     ref = str(uuid.uuid4())
     metadata = {"user_id": str(user.id), "type": "subscription", "plan": "premium"}
 
-    if body.provider == PaymentProvider.flutterwave:
-        result = await flutterwave_service.initialize_payment(
-            amount=settings.subscription_monthly_price / 100,
-            email=user.email,
-            name=user.full_name,
-            product_name="LitMusic Premium – Monthly",
-            metadata=metadata,
-            tx_ref=ref,
-        )
-        return success({"checkout_url": result["payment_link"], "payment_reference": ref})
-
-    result = await paystack_service.initialize_payment(
-        amount_kobo=settings.subscription_monthly_price,
-        email=user.email,
+    session = await payments.get_gateway(body.provider).create_checkout(
+        amount=Decimal(settings.subscription_monthly_price) / 100,
+        currency="NGN",
         reference=ref,
-        metadata=metadata,
+        email=user.email,
+        description="LitMusic Premium – Monthly",
+        metadata={**metadata, "customer_name": user.full_name},
     )
-    return success({"checkout_url": result["authorization_url"], "payment_reference": ref})
+    return success({
+        "checkout_url": session.checkout_url, "payment_reference": session.reference
+    })
 
 
 @router.post("/verify", response_model=EntitlementResponse)
@@ -150,24 +144,17 @@ async def initiate_extra_credits(
     qty = settings.ai_extra_credits_quantity
     metadata = {"user_id": str(user.id), "type": "ai_extras", "quantity": qty}
 
-    if body.provider == PaymentProvider.flutterwave:
-        result = await flutterwave_service.initialize_payment(
-            amount=settings.ai_extra_credits_price / 100,
-            email=user.email,
-            name=user.full_name,
-            product_name=f"LitMusic AI Credits ×{qty}",
-            metadata=metadata,
-            tx_ref=ref,
-        )
-        return success({"checkout_url": result["payment_link"], "payment_reference": ref})
-
-    result = await paystack_service.initialize_payment(
-        amount_kobo=settings.ai_extra_credits_price,
-        email=user.email,
+    session = await payments.get_gateway(body.provider).create_checkout(
+        amount=Decimal(settings.ai_extra_credits_price) / 100,
+        currency="NGN",
         reference=ref,
-        metadata=metadata,
+        email=user.email,
+        description=f"LitMusic AI Credits ×{qty}",
+        metadata={**metadata, "customer_name": user.full_name},
     )
-    return success({"checkout_url": result["authorization_url"], "payment_reference": ref})
+    return success({
+        "checkout_url": session.checkout_url, "payment_reference": session.reference
+    })
 
 
 @router.post(
@@ -196,43 +183,24 @@ async def initiate_extra_downloads(
     qty = settings.download_extra_credits_quantity
     metadata = {"user_id": str(user.id), "type": "download_extras", "quantity": qty}
 
-    if body.provider == PaymentProvider.flutterwave:
-        result = await flutterwave_service.initialize_payment(
-            amount=settings.download_extra_credits_price / 100,
-            email=user.email,
-            name=user.full_name,
-            product_name=f"Kida Extra Downloads x{qty}",
-            metadata=metadata,
-            tx_ref=ref,
-        )
-        return success({
-            "checkout_url": result["payment_link"],
-            "payment_reference": ref,
-            "quantity": qty,
-        })
-
-    result = await paystack_service.initialize_payment(
-        amount_kobo=settings.download_extra_credits_price,
-        email=user.email,
+    session = await payments.get_gateway(body.provider).create_checkout(
+        # The configured price is in kobo; gateways take major units and
+        # convert back to whatever they bill in.
+        amount=Decimal(settings.download_extra_credits_price) / 100,
+        currency="NGN",
         reference=ref,
-        metadata=metadata,
+        email=user.email,
+        description=f"Kida Extra Downloads x{qty}",
+        metadata={**metadata, "customer_name": user.full_name},
     )
     return success({
-        "checkout_url": result["authorization_url"],
-        "payment_reference": ref,
+        "checkout_url": session.checkout_url,
+        "payment_reference": session.reference,
         "quantity": qty,
     })
 
 
-@router.post("/webhook/flutterwave")
-async def subscription_flutterwave_webhook(
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-    verif_hash: str = Header(None, alias="verif-hash"),
-):
-    payload = await request.body()
-    await subscription_service.handle_flutterwave_webhook(db, payload, verif_hash)
-    return {"received": True}
+
 
 
 @router.post("/webhook/revenuecat")
@@ -286,12 +254,20 @@ async def subscription_revenuecat_webhook(
     return {"received": True, "applied": True}
 
 
-@router.post("/webhook/paystack")
-async def subscription_paystack_webhook(
+@router.post("/webhook/{provider}")
+async def subscription_payment_webhook(
+    provider: str,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    x_paystack_signature: str = Header(None, alias="x-paystack-signature"),
 ):
+    """Subscription and credit-pack payments, from any gateway.
+
+    Declared last so /webhook/revenuecat above keeps its own handler: Starlette
+    matches routes in order, and RevenueCat is a store aggregator rather than
+    one of the card gateways behind the factory.
+    """
+    gateway = payments.get_gateway(provider)
+    signature = request.headers.get(gateway.signature_header)
     payload = await request.body()
-    await subscription_service.handle_paystack_webhook(db, payload, x_paystack_signature)
+    await subscription_service.handle_webhook(db, gateway.provider, payload, signature)
     return {"received": True}

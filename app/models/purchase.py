@@ -15,6 +15,8 @@ class PurchaseType(str, enum.Enum):
 class PaymentProvider(str, enum.Enum):
     flutterwave = "flutterwave"
     paystack = "paystack"
+    squad = "squad"
+    stripe = "stripe"
 
 
 class Purchase(Base):

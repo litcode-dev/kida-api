@@ -4,6 +4,8 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from unittest.mock import AsyncMock, patch
 
+from app.services.payments import CheckoutSession
+
 import pytest
 from sqlalchemy import func, select
 
@@ -649,8 +651,9 @@ async def test_buying_extra_downloads_returns_a_checkout_url(client, db_session)
     user = await _make_user(db_session)
 
     with patch(
-        "app.services.paystack_service.initialize_payment",
-        new=AsyncMock(return_value={"authorization_url": "https://pay.example/x"}),
+        "app.services.payments.paystack.PaystackGateway.create_checkout",
+        new=AsyncMock(return_value=CheckoutSession(
+            checkout_url="https://pay.example/x", reference="ref-1")),
     ) as init:
         resp = await client.post(
             "/api/v1/subscriptions/downloads/extras/initiate",
@@ -671,8 +674,9 @@ async def test_buying_extra_downloads_needs_no_subscription(client, db_session):
     user = await _make_user(db_session)
 
     with patch(
-        "app.services.paystack_service.initialize_payment",
-        new=AsyncMock(return_value={"authorization_url": "https://pay.example/x"}),
+        "app.services.payments.paystack.PaystackGateway.create_checkout",
+        new=AsyncMock(return_value=CheckoutSession(
+            checkout_url="https://pay.example/x", reference="ref-1")),
     ):
         resp = await client.post(
             "/api/v1/subscriptions/downloads/extras/initiate",

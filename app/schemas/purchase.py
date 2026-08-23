@@ -1,14 +1,16 @@
 import uuid
 from datetime import datetime
 from decimal import Decimal
-from typing import Literal
 from pydantic import BaseModel, model_validator
+
+from app.models.purchase import PaymentProvider
 
 
 class CheckoutRequest(BaseModel):
     loop_id: uuid.UUID | None = None
     stem_pack_id: uuid.UUID | None = None
-    provider: Literal["flutterwave", "paystack"] = "flutterwave"
+    # Any gateway in the registry; the factory turns the name into an adapter.
+    provider: PaymentProvider = PaymentProvider.flutterwave
 
     @model_validator(mode="after")
     def exactly_one_product(self) -> "CheckoutRequest":
