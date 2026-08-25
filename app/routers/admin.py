@@ -345,7 +345,12 @@ async def list_users(
 ):
     offset = (page - 1) * page_size
     total = await db.scalar(select(func.count()).select_from(User))
-    users = await db.scalars(select(User).offset(offset).limit(page_size))
+    users = await db.scalars(
+        select(User)
+        .order_by(User.created_at.desc(), User.id.desc())
+        .offset(offset)
+        .limit(page_size)
+    )
     return success({
         "total": total,
         "page": page,
