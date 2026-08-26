@@ -5,6 +5,7 @@ from app.services.email_service import (
     registration_html, app_download_html, app_download_text,
     new_user_admin_html, new_user_admin_text,
     account_deleted_admin_html, account_deleted_admin_text,
+    loop_request_admin_html, loop_request_admin_text,
 )
 
 _SIGNED_UP_AT = datetime(2026, 6, 22, 14, 30, tzinfo=timezone.utc)
@@ -144,3 +145,76 @@ def test_account_deleted_admin_text_contains_details():
     assert "google" in txt
     assert "Jan 15, 2026" in txt
     assert "Aug 09, 2026 at 11:05 UTC" in txt
+
+
+_REQUESTED_AT = datetime(2026, 8, 26, 16, 45, tzinfo=timezone.utc)
+
+
+def _loop_request_fields(**overrides):
+    fields = dict(
+        request_type="loop",
+        artist_name="Tems",
+        song_title="Love Me JeJe",
+        reference_link="https://example.com/reference",
+        notes="Please make it mellow.",
+        requester_name="Ada Lovelace",
+        requester_email="ada@test.com",
+        request_id="0f8fad5b-d9cb-469f-a165-70867728950e",
+        requested_at=_REQUESTED_AT,
+    )
+    fields.update(overrides)
+    return fields
+
+
+def test_loop_request_admin_html_contains_request_details():
+    html = loop_request_admin_html(**_loop_request_fields())
+    assert "Ada Lovelace" in html
+    assert "ada@test.com" in html
+    assert "Tems" in html
+    assert "Love Me JeJe" in html
+    assert "https://example.com/reference" in html
+    assert "Please make it mellow." in html
+    assert "0f8fad5b-d9cb-469f-a165-70867728950e" in html
+    assert "Aug 26, 2026 at 16:45 UTC" in html
+    assert "LOOP REQUEST" in html
+    assert "Unsubscribe" not in html
+    assert "Not a customer email." in html
+
+
+def test_loop_request_admin_html_labels_a_stems_request():
+    html = loop_request_admin_html(**_loop_request_fields(request_type="stems"))
+    assert "STEMS REQUEST" in html
+    assert "requested stems" in html
+
+
+def test_loop_request_admin_html_handles_missing_link_and_notes():
+    html = loop_request_admin_html(
+        **_loop_request_fields(reference_link=None, notes=None)
+    )
+    assert "none provided" in html
+    assert "Notes" not in html
+
+
+def test_loop_request_admin_html_escapes_user_text():
+    html = loop_request_admin_html(
+        **_loop_request_fields(notes="<script>alert(1)</script>", song_title="A & B")
+    )
+    assert "<script>" not in html
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html
+    assert "A &amp; B" in html
+
+
+def test_loop_request_admin_text_contains_request_details():
+    txt = loop_request_admin_text(**_loop_request_fields(request_type="stems"))
+    assert 'Ada Lovelace requested stems for "Love Me JeJe".' in txt
+    assert "Tems" in txt
+    assert "ada@test.com" in txt
+    assert "https://example.com/reference" in txt
+    assert "Please make it mellow." in txt
+    assert "Aug 26, 2026 at 16:45 UTC" in txt
+
+
+def test_loop_request_admin_text_marks_a_missing_reference():
+    txt = loop_request_admin_text(**_loop_request_fields(reference_link=None, notes=None))
+    assert "none provided" in txt
+    assert "Notes:" not in txt

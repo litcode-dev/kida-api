@@ -748,6 +748,156 @@ def account_deleted_admin_text(
     )
 
 
+def loop_request_admin_html(
+    request_type: str,
+    artist_name: str,
+    song_title: str,
+    reference_link: str | None,
+    notes: str | None,
+    requester_name: str,
+    requester_email: str,
+    request_id: str,
+    requested_at: datetime,
+) -> str:
+    """Internal loop/stems request notification, in the same shell as the other
+    team-inbox templates.
+
+    Every value here is typed by a user, so all of it is escaped before it lands
+    in the markup — ``notes`` especially, which is 2,000 characters of free text.
+    """
+    from html import escape
+
+    when = requested_at.strftime("%b %d, %Y at %H:%M UTC")
+    kind = "STEMS" if request_type == "stems" else "LOOP"
+    artist = escape(artist_name)
+    song = escape(song_title)
+    name = escape(requester_name)
+    email = escape(requester_email)
+
+    if reference_link:
+        link = escape(reference_link)
+        reference_row = f"""
+          <tr>
+            <td style="padding:8px 0;color:#888;font-size:11px;letter-spacing:0.1em;text-transform:uppercase;">Reference</td>
+            <td style="padding:8px 0;word-break:break-all;"><a href="{escape(reference_link, quote=True)}" style="color:#1FBF62;text-decoration:none;">{link}</a></td>
+          </tr>"""
+    else:
+        reference_row = """
+          <tr>
+            <td style="padding:8px 0;color:#888;font-size:11px;letter-spacing:0.1em;text-transform:uppercase;">Reference</td>
+            <td style="padding:8px 0;color:#888;">none provided</td>
+          </tr>"""
+
+    if notes:
+        notes_block = (
+            '<p style="margin:24px 0 0 0;font-size:11px;letter-spacing:0.1em;'
+            'text-transform:uppercase;color:#888;">Notes</p>'
+            '<p style="margin:8px 0 0 0;font-size:14px;line-height:1.6;color:#333;'
+            'white-space:pre-wrap;">'
+            f'{escape(notes).replace(chr(10), "<br>")}'
+            "</p>"
+        )
+    else:
+        notes_block = ""
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#e8e3d9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#e8e3d9;">
+  <tr><td align="center" style="padding:32px 16px;">
+    <table width="520" cellpadding="0" cellspacing="0" style="max-width:520px;width:100%;">
+
+      <!-- HEADER -->
+      <tr><td style="background:#0a0a0a;padding:24px 32px;border-radius:8px 8px 0 0;">
+        <table width="100%" cellpadding="0" cellspacing="0">
+          <tr>
+            <td style="color:#fff;font-size:11px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;">KIDA</td>
+            <td align="right" style="color:#fff;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;">{kind} REQUEST</td>
+          </tr>
+        </table>
+      </td></tr>
+
+      <!-- BODY -->
+      <tr><td style="background:#f2ede4;padding:32px;">
+        <p style="margin:0 0 24px 0;font-size:17px;font-weight:700;color:#0a0a0a;">
+          {name} requested {"stems" if request_type == "stems" else "a loop"} for &ldquo;{song}&rdquo;.
+        </p>
+        <table width="100%" cellpadding="0" cellspacing="0" style="font-size:14px;color:#333;">
+          <tr>
+            <td style="padding:8px 0;width:110px;color:#888;font-size:11px;letter-spacing:0.1em;text-transform:uppercase;">Type</td>
+            <td style="padding:8px 0;">{escape(request_type)}</td>
+          </tr>
+          <tr>
+            <td style="padding:8px 0;color:#888;font-size:11px;letter-spacing:0.1em;text-transform:uppercase;">Artist</td>
+            <td style="padding:8px 0;">{artist}</td>
+          </tr>
+          <tr>
+            <td style="padding:8px 0;color:#888;font-size:11px;letter-spacing:0.1em;text-transform:uppercase;">Song</td>
+            <td style="padding:8px 0;">{song}</td>
+          </tr>{reference_row}
+          <tr>
+            <td style="padding:8px 0;color:#888;font-size:11px;letter-spacing:0.1em;text-transform:uppercase;">Requested by</td>
+            <td style="padding:8px 0;"><a href="mailto:{escape(requester_email, quote=True)}" style="color:#1FBF62;text-decoration:none;">{email}</a></td>
+          </tr>
+          <tr>
+            <td style="padding:8px 0;color:#888;font-size:11px;letter-spacing:0.1em;text-transform:uppercase;">When</td>
+            <td style="padding:8px 0;">{when}</td>
+          </tr>
+          <tr>
+            <td style="padding:8px 0;color:#888;font-size:11px;letter-spacing:0.1em;text-transform:uppercase;">Request ID</td>
+            <td style="padding:8px 0;font-family:monospace;font-size:12px;color:#666;">{request_id}</td>
+          </tr>
+        </table>
+        {notes_block}
+      </td></tr>
+
+      <!-- FOOTER -->
+      <tr><td style="background:#0a0a0a;padding:20px 32px;border-radius:0 0 8px 8px;">
+        <p style="margin:0;font-size:11px;color:#aaa;">
+          Automated notification from the Kida API. Not a customer email.
+        </p>
+      </td></tr>
+
+    </table>
+  </td></tr>
+</table>
+</body>
+</html>"""
+
+
+def loop_request_admin_text(
+    request_type: str,
+    artist_name: str,
+    song_title: str,
+    reference_link: str | None,
+    notes: str | None,
+    requester_name: str,
+    requester_email: str,
+    request_id: str,
+    requested_at: datetime,
+) -> str:
+    when = requested_at.strftime("%b %d, %Y at %H:%M UTC")
+    what = "stems" if request_type == "stems" else "a loop"
+    body = (
+        f'{requester_name} requested {what} for "{song_title}".\n\n'
+        f"Type:          {request_type}\n"
+        f"Artist:        {artist_name}\n"
+        f"Song:          {song_title}\n"
+        f"Reference:     {reference_link or 'none provided'}\n"
+        f"Requested by:  {requester_name} <{requester_email}>\n"
+        f"When:          {when}\n"
+        f"Request ID:    {request_id}\n"
+    )
+    if notes:
+        body += f"\nNotes:\n{notes}\n"
+    return (
+        body
+        + "\n---\n"
+        + "Automated notification from the Kida API. Not a customer email."
+    )
+
+
 def purchase_html(full_name: str, product_title: str, product_type: str, amount: str) -> str:
     return f"""<!DOCTYPE html>
 <html lang="en">

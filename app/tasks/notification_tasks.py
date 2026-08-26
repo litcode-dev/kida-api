@@ -163,6 +163,74 @@ def send_account_deleted_admin_notification(
 
 
 @celery_app.task
+def send_loop_request_admin_notification(loop_request_id: str):
+    """Tell the team inbox that a user asked for a loop or a set of stems.
+
+    Dispatched after the request row is committed, so everything the email needs
+    is looked up here rather than passed through. Silently skipped when
+    ADMIN_NOTIFICATION_EMAIL is blank.
+    """
+    log.info("loop_request_admin_email.task_started", loop_request_id=loop_request_id)
+
+    async def _run():
+        from app.config import get_settings
+        from app.database import AsyncSessionLocal
+        from app.models.loop_request import LoopRequest
+        from app.models.user import User
+        from app.services.email_service import (
+            send_email, loop_request_admin_html, loop_request_admin_text,
+        )
+        import uuid
+
+        recipient = get_settings().admin_notification_email
+        if not recipient:
+            log.info("loop_request_admin_email.skipped", reason="no recipient configured")
+            return
+
+        async with AsyncSessionLocal() as db:
+            loop_request = await db.get(LoopRequest, uuid.UUID(loop_request_id))
+            if not loop_request:
+                log.warning(
+                    "loop_request_admin_email.request_not_found",
+                    loop_request_id=loop_request_id,
+                )
+                return
+
+            user = await db.get(User, loop_request.user_id)
+            fields = dict(
+                request_type=loop_request.request_type,
+                artist_name=loop_request.artist_name,
+                song_title=loop_request.song_title,
+                reference_link=loop_request.reference_link,
+                notes=loop_request.notes,
+                requester_name=(user.full_name if user else "A deleted user"),
+                requester_email=(user.email if user else "unknown"),
+                request_id=str(loop_request.id),
+                requested_at=loop_request.created_at,
+            )
+            label = "Stems" if loop_request.request_type == "stems" else "Loop"
+            log.info(
+                "loop_request_admin_email.sending",
+                loop_request_id=loop_request_id, to=recipient,
+            )
+            await send_email(
+                to=recipient,
+                subject=(
+                    f"{label} request — {loop_request.song_title} "
+                    f"by {loop_request.artist_name}"
+                ),
+                html=loop_request_admin_html(**fields),
+                text=loop_request_admin_text(**fields),
+            )
+            log.info(
+                "loop_request_admin_email.done",
+                loop_request_id=loop_request_id, to=recipient,
+            )
+
+    asyncio.run(_run())
+
+
+@celery_app.task
 def send_purchase_confirmation(user_id: str, purchase_id: str):
     async def _run():
         from app.database import AsyncSessionLocal

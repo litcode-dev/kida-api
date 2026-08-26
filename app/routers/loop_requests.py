@@ -1,3 +1,4 @@
+import structlog
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -7,6 +8,9 @@ from app.models.loop_request import LoopRequest
 from app.models.user import User
 from app.schemas.common import success
 from app.schemas.loop_request import LoopRequestCreate, LoopRequestResponse
+from app.tasks.notification_tasks import send_loop_request_admin_notification
+
+log = structlog.get_logger()
 
 router = APIRouter(prefix="/loop-requests", tags=["loop-requests"])
 
@@ -18,7 +22,7 @@ router = APIRouter(prefix="/loop-requests", tags=["loop-requests"])
     description=(
         "Saves a request for a loop inspired by a reference track. Include an artist, "
         "song title, request type (`loop` or `stems`), and—when available—a link to "
-        "the reference."
+        "the reference. The Kida team inbox is notified by email."
     ),
     responses={
         201: {"description": "Loop request created"},
@@ -42,6 +46,17 @@ async def create_loop_request(
     db.add(loop_request)
     await db.commit()
     await db.refresh(loop_request)
+
+    # The request is saved; a broker outage must not report that as a failure
+    # the user would retry — it would only duplicate the row.
+    try:
+        send_loop_request_admin_notification.delay(str(loop_request.id))
+    except Exception as exc:  # noqa: BLE001 - the request is already stored
+        log.error(
+            "loop_request_admin_email.enqueue_failed",
+            loop_request_id=str(loop_request.id),
+            error=str(exc),
+        )
 
     return success(
         data=LoopRequestResponse.model_validate(loop_request).model_dump(mode="json"),
