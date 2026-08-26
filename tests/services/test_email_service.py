@@ -297,3 +297,51 @@ def test_a_status_nobody_is_emailed_about_raises():
     """A caller that forgets to filter must fail, not send a blank notice."""
     with pytest.raises(KeyError):
         loop_request_status_html(**_status_fields(status="new"))
+
+
+def test_the_fulfilled_cta_uses_the_configured_app_link(monkeypatch):
+    """The button has to follow the setting, not a hardcoded web address."""
+    from app.config import get_settings
+
+    monkeypatch.setenv("APP_DEEP_LINK_URL", "https://kida.litcode.com.ng/app/requests")
+    get_settings.cache_clear()
+    try:
+        html = loop_request_status_html(**_status_fields(status="fulfilled"))
+        txt = loop_request_status_text(**_status_fields(status="fulfilled"))
+    finally:
+        get_settings.cache_clear()
+
+    assert 'href="https://kida.litcode.com.ng/app/requests"' in html
+    assert "Open Kida" in html
+    assert "https://kida.litcode.com.ng/app/requests" in txt
+
+
+def test_the_app_link_stays_an_https_url(monkeypatch):
+    """A kida:// scheme would be a dead button for anyone without the app, and
+    some mail clients strip it outright."""
+    from app.config import get_settings
+
+    get_settings.cache_clear()
+    try:
+        html = loop_request_status_html(**_status_fields(status="fulfilled"))
+    finally:
+        get_settings.cache_clear()
+
+    assert 'href="https://' in html
+    assert "kida://" not in html
+
+
+def test_a_blank_app_link_falls_back_rather_than_rendering_an_empty_button(
+    monkeypatch,
+):
+    from app.config import get_settings
+
+    monkeypatch.setenv("APP_DEEP_LINK_URL", "")
+    get_settings.cache_clear()
+    try:
+        html = loop_request_status_html(**_status_fields(status="fulfilled"))
+    finally:
+        get_settings.cache_clear()
+
+    assert 'href=""' not in html
+    assert 'href="https://kida.litcode.com.ng"' in html

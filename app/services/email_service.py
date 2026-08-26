@@ -921,7 +921,7 @@ _LOOP_REQUEST_STATUS_COPY = {
         "subject": "Your {what} request is ready",
         "lead": "The {what} you asked for is now in Kida.",
         "body": "Open the app and search for it to hear what we made.",
-        "cta": ("Open Kida", "https://kida.litcode.com.ng"),
+        "cta": "Open Kida",
     },
     "declined": {
         "tag": "REQUEST UPDATE",
@@ -937,6 +937,19 @@ _LOOP_REQUEST_STATUS_COPY = {
         "cta": None,
     },
 }
+
+
+def _app_link() -> str:
+    """Where a CTA sends someone who should end up in the app.
+
+    A Universal Link (iOS) / App Link (Android): an https:// URL the OS hands
+    to the app when it is installed and the browser opens as an ordinary page
+    when it is not, so the button works either way. Configured rather than
+    hardcoded, because a path only becomes an app link once the domain serves
+    apple-app-site-association and assetlinks.json for it — that is a deploy
+    detail, not a template one.
+    """
+    return get_settings().app_deep_link_url or "https://kida.litcode.com.ng"
 
 
 def loop_request_status_html(
@@ -962,12 +975,12 @@ def loop_request_status_html(
 
     cta = ""
     if copy["cta"]:
-        label, url = copy["cta"]
         cta = (
-            f'<a href="{url}" style="display:inline-block;margin-top:4px;padding:14px 28px;'
+            f'<a href="{escape(_app_link(), quote=True)}" '
+            'style="display:inline-block;margin-top:4px;padding:14px 28px;'
             'background:#0a0a0a;color:#fff;font-size:14px;font-weight:700;'
             'text-decoration:none;border-radius:4px;letter-spacing:0.02em;">'
-            f"{label} &rarr;</a>"
+            f"{copy['cta']} &rarr;</a>"
         )
 
     return f"""<!DOCTYPE html>
@@ -1042,8 +1055,7 @@ def loop_request_status_text(
         f"{copy['body']}\n"
     )
     if copy["cta"]:
-        label, url = copy["cta"]
-        body += f"\n{label}: {url}\n"
+        body += f"\n{copy['cta']}: {_app_link()}\n"
     return body + _text_footer()
 
 

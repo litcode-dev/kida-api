@@ -56,6 +56,17 @@ class Settings(BaseSettings):
     # Frontend
     frontend_url: str = "https://litmusic.app"
 
+    # Where an email CTA sends someone who should end up in the mobile app.
+    # An https:// URL, not a kida:// scheme, so it is a Universal Link on iOS
+    # and an App Link on Android: the OS hands it to the app when it is
+    # installed and the browser opens it as an ordinary page when it is not,
+    # which means the button works either way.
+    #
+    # It only starts opening the app once kida.litcode.com.ng serves
+    # apple-app-site-association and assetlinks.json covering this path. Until
+    # then it behaves exactly like the plain web link it defaults to.
+    app_deep_link_url: str = "https://kida.litcode.com.ng"
+
     # New-content digest
     # One email a day listing everything that went live, instead of one email
     # per item to every recipient. Push notifications still fire per item, so
