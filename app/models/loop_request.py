@@ -53,3 +53,7 @@ class LoopRequest(Base):
     status_changed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # What the admin wants the requester told, in their own words — "we already
+    # have this one", "someone asked for it last week". Null when the canned
+    # copy for the status says everything that needs saying.
+    admin_response: Mapped[str | None] = mapped_column(Text, nullable=True)

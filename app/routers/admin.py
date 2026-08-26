@@ -1329,7 +1329,13 @@ async def list_loop_requests(
         "null while a request is still untouched.\n\n"
         "Moving a request to `in_progress`, `fulfilled` or `declined` emails the "
         "person who submitted it. Re-setting the status it already holds changes "
-        "nothing and sends nothing, so the call is safe to repeat."
+        "nothing and sends nothing, so the call is safe to repeat.\n\n"
+        "`admin_response` is an optional message to the requester, for what the "
+        "canned copy cannot say — that the loop is already in the catalogue, or "
+        "that someone asked for it last week. It replaces the standard closing "
+        "line of the email and stays visible on the request afterwards. Leave "
+        "it out to keep the text already there; send it as `null` to clear it. "
+        "Changing only the wording saves it without sending a second email."
     ),
     responses={
         401: {"description": "Missing or invalid token"},
@@ -1353,23 +1359,38 @@ async def update_loop_request_status(
     # Re-setting the status a request already holds is not a move, so the
     # timestamp keeps pointing at the change that actually happened — and the
     # requester is not emailed the same news twice.
-    if loop_request.status != body.status:
+    moved = loop_request.status != body.status
+
+    # Absent from the body means "leave what is there"; sent as null or an
+    # empty string means "clear it". Only model_fields_set tells those apart.
+    rewritten = (
+        "admin_response" in body.model_fields_set
+        and body.admin_response != loop_request.admin_response
+    )
+
+    if moved:
         loop_request.status = body.status
         loop_request.status_changed_at = datetime.now(timezone.utc)
+    if rewritten:
+        loop_request.admin_response = body.admin_response
+
+    if moved or rewritten:
         await db.commit()
         await db.refresh(loop_request)
 
-        if body.status in NOTIFIED_LOOP_REQUEST_STATUSES:
-            # The move is committed; a broker outage must not report it as a
-            # failure an admin would repeat.
-            try:
-                send_loop_request_status_email.delay(str(loop_request.id))
-            except Exception as exc:  # noqa: BLE001 - the status is already saved
-                log.error(
-                    "loop_request_status_email.enqueue_failed",
-                    loop_request_id=str(loop_request.id),
-                    error=str(exc),
-                )
+    # The mail follows the move, not the wording: an admin fixing a typo on a
+    # request they already answered does not send it again.
+    if moved and body.status in NOTIFIED_LOOP_REQUEST_STATUSES:
+        # The move is committed; a broker outage must not report it as a
+        # failure an admin would repeat.
+        try:
+            send_loop_request_status_email.delay(str(loop_request.id))
+        except Exception as exc:  # noqa: BLE001 - the status is already saved
+            log.error(
+                "loop_request_status_email.enqueue_failed",
+                loop_request_id=str(loop_request.id),
+                error=str(exc),
+            )
 
     requester = await db.get(User, loop_request.user_id)
     item = AdminLoopRequestResponse.model_validate(loop_request)

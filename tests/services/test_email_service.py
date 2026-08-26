@@ -345,3 +345,44 @@ def test_a_blank_app_link_falls_back_rather_than_rendering_an_empty_button(
 
     assert 'href=""' not in html
     assert 'href="https://kida.litcode.com.ng"' in html
+
+
+def test_the_admin_answer_replaces_the_canned_closing_line():
+    """Both would have the mail answer the same question twice."""
+    answer = "We already have this one — search Tems in the app."
+    html = loop_request_status_html(
+        **_status_fields(status="fulfilled"), admin_response=answer
+    )
+    txt = loop_request_status_text(
+        **_status_fields(status="fulfilled"), admin_response=answer
+    )
+
+    assert answer in html
+    assert answer in txt
+    assert "Open the app and search for it to hear what we made." not in html
+    assert "Open the app and search for it to hear what we made." not in txt
+
+
+def test_without_an_answer_the_canned_copy_stands():
+    html = loop_request_status_html(**_status_fields(status="declined"))
+    assert "It happens for all sorts of reasons" in html
+
+
+def test_the_admin_answer_is_escaped_and_keeps_its_line_breaks():
+    html = loop_request_status_html(
+        **_status_fields(status="declined"),
+        admin_response="<b>no</b> & thanks\nask again soon",
+    )
+    assert "<b>no</b>" not in html
+    assert "&lt;b&gt;no&lt;/b&gt; &amp; thanks" in html
+    assert "ask again soon" in html
+    assert "<br>" in html
+
+
+def test_the_answer_does_not_displace_the_track_or_the_button():
+    html = loop_request_status_html(
+        **_status_fields(status="fulfilled"), admin_response="Already in Kida."
+    )
+    assert "Love Me JeJe" in html
+    assert "Tems" in html
+    assert "Open Kida" in html

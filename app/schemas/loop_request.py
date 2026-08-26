@@ -52,6 +52,7 @@ class LoopRequestResponse(BaseModel):
     reference_link: str | None
     notes: str | None
     status: LoopRequestStatus
+    admin_response: str | None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -71,4 +72,20 @@ class AdminLoopRequestResponse(LoopRequestResponse):
 
 
 class LoopRequestStatusUpdate(BaseModel):
+    """A move through the queue, optionally with something to say about it.
+
+    ``admin_response`` is left unset to keep whatever the request already
+    carries; sent as null or an empty string it clears the old text. The router
+    reads ``model_fields_set`` to tell those two apart, which is why there is no
+    sentinel default here.
+    """
+
     status: LoopRequestStatus
+    admin_response: str | None = Field(default=None, max_length=1_000)
+
+    @field_validator("admin_response", mode="before")
+    @classmethod
+    def strip_response(cls, value):
+        if isinstance(value, str):
+            return value.strip() or None
+        return value

@@ -288,6 +288,7 @@ def send_loop_request_status_email(loop_request_id: str):
                 request_type=loop_request.request_type,
                 artist_name=loop_request.artist_name,
                 song_title=loop_request.song_title,
+                admin_response=loop_request.admin_response,
             )
             log.info(
                 "loop_request_status_email.sending",

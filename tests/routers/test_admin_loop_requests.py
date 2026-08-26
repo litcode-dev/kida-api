@@ -381,6 +381,7 @@ def test_the_task_emails_the_requester(monkeypatch):
         reference_link=None,
         notes=None,
         status="fulfilled",
+        admin_response=None,
         created_at=datetime(2026, 8, 26, 16, 45, tzinfo=timezone.utc),
     )
     user = UserModel(
@@ -426,6 +427,7 @@ def test_the_task_sends_nothing_for_a_request_back_on_new(monkeypatch):
     loop_request = types.SimpleNamespace(
         id=uuid.uuid4(), user_id=uuid.uuid4(), status="new",
         request_type="loop", artist_name="Tems", song_title="Love Me JeJe",
+        admin_response=None,
     )
 
     class _Session:
@@ -445,3 +447,184 @@ def test_the_task_sends_nothing_for_a_request_back_on_new(monkeypatch):
     monkeypatch.setattr("app.database.AsyncSessionLocal", lambda: _Session())
 
     notification_tasks.send_loop_request_status_email(str(loop_request.id))
+
+
+# --- the admin's own words ---------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_an_admin_can_answer_in_their_own_words(client, db_session):
+    """The case this exists for: the loop is already in the catalogue."""
+    admin = await _create_user(db_session, UserRole.admin)
+    user = await _create_user(db_session)
+    loop_request = await _submit(db_session, user)
+    answer = "We already have this one — search Tems in the app."
+
+    response = await client.patch(
+        f"/api/v1/admin/loop-requests/{loop_request.id}",
+        json={"status": "fulfilled", "admin_response": answer},
+        headers=_auth_headers(admin),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["admin_response"] == answer
+    await db_session.refresh(loop_request)
+    assert loop_request.admin_response == answer
+
+
+@pytest.mark.asyncio
+async def test_the_requester_sees_the_answer(client, db_session):
+    admin = await _create_user(db_session, UserRole.admin)
+    user = await _create_user(db_session)
+    loop_request = await _submit(db_session, user)
+
+    await client.patch(
+        f"/api/v1/admin/loop-requests/{loop_request.id}",
+        json={"status": "declined", "admin_response": "Someone asked for it last week."},
+        headers=_auth_headers(admin),
+    )
+    mine = await client.get("/api/v1/loop-requests", headers=_auth_headers(user))
+
+    assert mine.json()["data"]["items"][0]["admin_response"] == (
+        "Someone asked for it last week."
+    )
+
+
+@pytest.mark.asyncio
+async def test_leaving_the_field_out_keeps_the_existing_answer(client, db_session):
+    admin = await _create_user(db_session, UserRole.admin)
+    user = await _create_user(db_session)
+    loop_request = await _submit(db_session, user, admin_response="Already in Kida.")
+
+    response = await client.patch(
+        f"/api/v1/admin/loop-requests/{loop_request.id}",
+        json={"status": "fulfilled"},
+        headers=_auth_headers(admin),
+    )
+
+    assert response.json()["data"]["admin_response"] == "Already in Kida."
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cleared", [None, "", "   "])
+async def test_sending_it_empty_clears_the_answer(client, db_session, cleared):
+    admin = await _create_user(db_session, UserRole.admin)
+    user = await _create_user(db_session)
+    loop_request = await _submit(db_session, user, admin_response="Wrong text.")
+
+    response = await client.patch(
+        f"/api/v1/admin/loop-requests/{loop_request.id}",
+        json={"status": "fulfilled", "admin_response": cleared},
+        headers=_auth_headers(admin),
+    )
+
+    assert response.json()["data"]["admin_response"] is None
+    await db_session.refresh(loop_request)
+    assert loop_request.admin_response is None
+
+
+@pytest.mark.asyncio
+async def test_the_answer_is_trimmed(client, db_session):
+    admin = await _create_user(db_session, UserRole.admin)
+    user = await _create_user(db_session)
+    loop_request = await _submit(db_session, user)
+
+    response = await client.patch(
+        f"/api/v1/admin/loop-requests/{loop_request.id}",
+        json={"status": "declined", "admin_response": "  Not this one.  "},
+        headers=_auth_headers(admin),
+    )
+
+    assert response.json()["data"]["admin_response"] == "Not this one."
+
+
+@pytest.mark.asyncio
+async def test_rewording_an_answered_request_sends_no_second_email(
+    client, db_session, status_email
+):
+    """A typo fix must not land in the requester's inbox twice."""
+    admin = await _create_user(db_session, UserRole.admin)
+    user = await _create_user(db_session)
+    loop_request = await _submit(db_session, user)
+
+    await client.patch(
+        f"/api/v1/admin/loop-requests/{loop_request.id}",
+        json={"status": "declined", "admin_response": "Sory, not this one."},
+        headers=_auth_headers(admin),
+    )
+    reworded = await client.patch(
+        f"/api/v1/admin/loop-requests/{loop_request.id}",
+        json={"status": "declined", "admin_response": "Sorry, not this one."},
+        headers=_auth_headers(admin),
+    )
+
+    assert reworded.json()["data"]["admin_response"] == "Sorry, not this one."
+    status_email.delay.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_an_over_long_answer_is_refused(client, db_session):
+    admin = await _create_user(db_session, UserRole.admin)
+    user = await _create_user(db_session)
+    loop_request = await _submit(db_session, user)
+
+    response = await client.patch(
+        f"/api/v1/admin/loop-requests/{loop_request.id}",
+        json={"status": "declined", "admin_response": "x" * 1001},
+        headers=_auth_headers(admin),
+    )
+
+    assert response.status_code == 422
+    await db_session.refresh(loop_request)
+    assert loop_request.admin_response is None
+    assert loop_request.status == "new"
+
+
+def test_the_task_carries_the_answer_into_the_email(monkeypatch):
+    import types
+    from datetime import datetime, timezone
+
+    from app.models.user import User as UserModel
+    from app.tasks import notification_tasks
+
+    user_id = uuid.uuid4()
+    loop_request = types.SimpleNamespace(
+        id=uuid.uuid4(),
+        user_id=user_id,
+        request_type="loop",
+        artist_name="Tems",
+        song_title="Love Me JeJe",
+        reference_link=None,
+        notes=None,
+        status="fulfilled",
+        admin_response="We already have this one — search Tems in the app.",
+        created_at=datetime(2026, 8, 26, 16, 45, tzinfo=timezone.utc),
+    )
+    user = UserModel(
+        id=user_id, email="ada@test.com", password_hash="x",
+        full_name="Ada Lovelace", role=UserRole.user,
+    )
+
+    class _Session:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def get(self, model, pk):
+            return user if model is UserModel else loop_request
+
+    sent = {}
+
+    async def fake_send_email(*, to, subject, html, text):
+        sent.update(html=html, text=text)
+
+    monkeypatch.setattr("app.services.email_service.send_email", fake_send_email)
+    monkeypatch.setattr("app.database.AsyncSessionLocal", lambda: _Session())
+
+    notification_tasks.send_loop_request_status_email(str(loop_request.id))
+
+    assert "We already have this one" in sent["html"]
+    assert "We already have this one" in sent["text"]
+    # The canned closing line it replaced must not also be there.
+    assert "Open the app and search for it to hear what we made." not in sent["text"]

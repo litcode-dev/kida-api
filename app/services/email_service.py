@@ -958,8 +958,13 @@ def loop_request_status_html(
     request_type: str,
     artist_name: str,
     song_title: str,
+    admin_response: str | None = None,
 ) -> str:
     """Tell the requester their loop or stems request moved.
+
+    ``admin_response`` replaces the canned closing line when an admin wrote
+    one — it exists for what the stock copy cannot say, so leaving both in
+    would have the mail answer the same question twice.
 
     Raises KeyError for a status nobody is emailed about, so a caller that
     forgets to filter fails loudly rather than sending a blank notice.
@@ -972,6 +977,14 @@ def loop_request_status_html(
     name = escape(full_name)
     artist = escape(artist_name)
     song = escape(song_title)
+
+    # The admin's own words when there are any, escaped and with their line
+    # breaks kept — it is staff prose, not markup.
+    closing = (
+        escape(admin_response).replace(chr(10), "<br>")
+        if admin_response
+        else copy["body"]
+    )
 
     cta = ""
     if copy["cta"]:
@@ -1024,7 +1037,7 @@ def loop_request_status_html(
         </table>
 
         <p style="margin:0 0 24px 0;font-size:15px;line-height:1.6;color:#333;">
-          {copy["body"]}
+          {closing}
         </p>
         {cta}
       </td></tr>
@@ -1044,6 +1057,7 @@ def loop_request_status_text(
     request_type: str,
     artist_name: str,
     song_title: str,
+    admin_response: str | None = None,
 ) -> str:
     copy = _LOOP_REQUEST_STATUS_COPY[status]
     what = "stems" if request_type == "stems" else "loop"
@@ -1052,7 +1066,7 @@ def loop_request_status_text(
         f"{copy['lead'].format(what=what)}\n\n"
         f"  {song_title}\n"
         f"  {artist_name}\n\n"
-        f"{copy['body']}\n"
+        f"{admin_response or copy['body']}\n"
     )
     if copy["cta"]:
         body += f"\n{copy['cta']}: {_app_link()}\n"
