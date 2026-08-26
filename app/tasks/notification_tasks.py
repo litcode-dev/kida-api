@@ -4,6 +4,10 @@ from app.tasks.celery_app import celery_app
 
 log = structlog.get_logger()
 
+# The statuses a requester is emailed about. Moving a request back to "new"
+# is an internal correction and sends nothing.
+NOTIFIED_LOOP_REQUEST_STATUSES = ("in_progress", "fulfilled", "declined")
+
 
 @celery_app.task
 def send_registration_email(user_id: str):
@@ -225,6 +229,84 @@ def send_loop_request_admin_notification(loop_request_id: str):
             log.info(
                 "loop_request_admin_email.done",
                 loop_request_id=loop_request_id, to=recipient,
+            )
+
+    asyncio.run(_run())
+
+
+@celery_app.task
+def send_loop_request_status_email(loop_request_id: str):
+    """Tell the requester their loop or stems request moved.
+
+    Only the three statuses a person is waiting on send mail — moving a request
+    back to "new" is an internal correction, so the task exits quietly rather
+    than emailing about it. Dispatched after the status is committed, so what is
+    read here is what was saved.
+    """
+    log.info("loop_request_status_email.task_started", loop_request_id=loop_request_id)
+
+    async def _run():
+        from app.database import AsyncSessionLocal
+        from app.models.loop_request import LoopRequest
+        from app.models.user import User
+        from app.services.email_service import (
+            send_email,
+            loop_request_status_html,
+            loop_request_status_subject,
+            loop_request_status_text,
+        )
+        import uuid
+
+        async with AsyncSessionLocal() as db:
+            loop_request = await db.get(LoopRequest, uuid.UUID(loop_request_id))
+            if not loop_request:
+                log.warning(
+                    "loop_request_status_email.request_not_found",
+                    loop_request_id=loop_request_id,
+                )
+                return
+
+            if loop_request.status not in NOTIFIED_LOOP_REQUEST_STATUSES:
+                log.info(
+                    "loop_request_status_email.skipped",
+                    loop_request_id=loop_request_id,
+                    reason=f"status is {loop_request.status}",
+                )
+                return
+
+            user = await db.get(User, loop_request.user_id)
+            if not user:
+                log.warning(
+                    "loop_request_status_email.user_not_found",
+                    loop_request_id=loop_request_id,
+                )
+                return
+
+            fields = dict(
+                full_name=user.full_name,
+                status=loop_request.status,
+                request_type=loop_request.request_type,
+                artist_name=loop_request.artist_name,
+                song_title=loop_request.song_title,
+            )
+            log.info(
+                "loop_request_status_email.sending",
+                loop_request_id=loop_request_id,
+                status=loop_request.status,
+                email=user.email,
+            )
+            await send_email(
+                to=user.email,
+                subject=loop_request_status_subject(
+                    loop_request.status, loop_request.request_type
+                ),
+                html=loop_request_status_html(**fields),
+                text=loop_request_status_text(**fields),
+            )
+            log.info(
+                "loop_request_status_email.done",
+                loop_request_id=loop_request_id,
+                email=user.email,
             )
 
     asyncio.run(_run())

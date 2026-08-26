@@ -6,6 +6,8 @@ from app.services.email_service import (
     new_user_admin_html, new_user_admin_text,
     account_deleted_admin_html, account_deleted_admin_text,
     loop_request_admin_html, loop_request_admin_text,
+    loop_request_status_html, loop_request_status_subject,
+    loop_request_status_text,
 )
 
 _SIGNED_UP_AT = datetime(2026, 6, 22, 14, 30, tzinfo=timezone.utc)
@@ -218,3 +220,80 @@ def test_loop_request_admin_text_marks_a_missing_reference():
     txt = loop_request_admin_text(**_loop_request_fields(reference_link=None, notes=None))
     assert "none provided" in txt
     assert "Notes:" not in txt
+
+
+def _status_fields(**overrides):
+    fields = dict(
+        full_name="Ada Lovelace",
+        status="in_progress",
+        request_type="loop",
+        artist_name="Tems",
+        song_title="Love Me JeJe",
+    )
+    fields.update(overrides)
+    return fields
+
+
+@pytest.mark.parametrize(
+    "status,expected",
+    [
+        ("in_progress", "We're on"),
+        ("fulfilled", "is ready."),
+        ("declined", "We can't make"),
+    ],
+)
+def test_loop_request_status_html_leads_with_the_status(status, expected):
+    html = loop_request_status_html(**_status_fields(status=status))
+    assert expected in html
+    assert "Ada Lovelace" in html
+    assert "Love Me JeJe" in html
+    assert "Tems" in html
+
+
+def test_loop_request_status_html_is_customer_facing():
+    """Unlike the team-inbox notice, this one carries the brand footer."""
+    html = loop_request_status_html(**_status_fields())
+    assert "Unsubscribe" in html
+    assert "Not a customer email." not in html
+
+
+def test_only_the_fulfilled_notice_links_to_the_app():
+    ready = loop_request_status_html(**_status_fields(status="fulfilled"))
+    working = loop_request_status_html(**_status_fields(status="in_progress"))
+    assert "Open Kida" in ready
+    assert "Open Kida" not in working
+
+
+def test_loop_request_status_html_escapes_the_track():
+    html = loop_request_status_html(
+        **_status_fields(song_title="<script>alert(1)</script>", artist_name="A & B")
+    )
+    assert "<script>" not in html
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html
+    assert "A &amp; B" in html
+
+
+def test_loop_request_status_text_carries_the_track_and_footer():
+    txt = loop_request_status_text(**_status_fields(status="declined"))
+    assert "Hi Ada Lovelace," in txt
+    assert "Love Me JeJe" in txt
+    assert "Tems" in txt
+    assert "Unsubscribe" in txt
+
+
+def test_loop_request_status_subject_names_the_type():
+    assert loop_request_status_subject("fulfilled", "stems") == (
+        "Your stems request is ready"
+    )
+    assert loop_request_status_subject("fulfilled", "loop") == (
+        "Your loop request is ready"
+    )
+    assert loop_request_status_subject("in_progress", "loop") == (
+        "We're working on your loop request"
+    )
+
+
+def test_a_status_nobody_is_emailed_about_raises():
+    """A caller that forgets to filter must fail, not send a blank notice."""
+    with pytest.raises(KeyError):
+        loop_request_status_html(**_status_fields(status="new"))

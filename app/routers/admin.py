@@ -44,7 +44,11 @@ from app.services import (
     auth_service, broadcast_service, loop_service, drone_service, drum_kit_service, cache_service,
 )
 from app.services.admin_analytics_service import get_platform_analytics
-from app.tasks.notification_tasks import send_broadcast_email
+from app.tasks.notification_tasks import (
+    NOTIFIED_LOOP_REQUEST_STATUSES,
+    send_broadcast_email,
+    send_loop_request_status_email,
+)
 from app.tasks.upload_tasks import process_drone_upload, process_drum_sample_upload, process_loop_upload
 import uuid
 from datetime import date, datetime, timezone
@@ -1322,7 +1326,10 @@ async def list_loop_requests(
     description=(
         "Sets the request's status: `new`, `in_progress`, `fulfilled` or "
         "`declined`. `status_changed_at` records when it last moved, and stays "
-        "null while a request is still untouched."
+        "null while a request is still untouched.\n\n"
+        "Moving a request to `in_progress`, `fulfilled` or `declined` emails the "
+        "person who submitted it. Re-setting the status it already holds changes "
+        "nothing and sends nothing, so the call is safe to repeat."
     ),
     responses={
         401: {"description": "Missing or invalid token"},
@@ -1344,12 +1351,25 @@ async def update_loop_request_status(
         raise NotFoundError("Loop request not found")
 
     # Re-setting the status a request already holds is not a move, so the
-    # timestamp keeps pointing at the change that actually happened.
+    # timestamp keeps pointing at the change that actually happened — and the
+    # requester is not emailed the same news twice.
     if loop_request.status != body.status:
         loop_request.status = body.status
         loop_request.status_changed_at = datetime.now(timezone.utc)
         await db.commit()
         await db.refresh(loop_request)
+
+        if body.status in NOTIFIED_LOOP_REQUEST_STATUSES:
+            # The move is committed; a broker outage must not report it as a
+            # failure an admin would repeat.
+            try:
+                send_loop_request_status_email.delay(str(loop_request.id))
+            except Exception as exc:  # noqa: BLE001 - the status is already saved
+                log.error(
+                    "loop_request_status_email.enqueue_failed",
+                    loop_request_id=str(loop_request.id),
+                    error=str(exc),
+                )
 
     requester = await db.get(User, loop_request.user_id)
     item = AdminLoopRequestResponse.model_validate(loop_request)

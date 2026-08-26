@@ -898,6 +898,161 @@ def loop_request_admin_text(
     )
 
 
+# Copy for each status the requester is told about. "new" is deliberately
+# absent: moving a request back to new is an internal correction, not news the
+# person who asked is waiting on.
+_LOOP_REQUEST_STATUS_COPY = {
+    "in_progress": {
+        "tag": "REQUEST UPDATE",
+        "hero_top": "We're on",
+        "hero_accent": "your request.",
+        "subject": "We're working on your {what} request",
+        "lead": "Good news — we've started work on the {what} you asked for.",
+        "body": (
+            "We'll email you again as soon as it lands in Kida. No need to "
+            "request it a second time."
+        ),
+        "cta": None,
+    },
+    "fulfilled": {
+        "tag": "REQUEST READY",
+        "hero_top": "Your request",
+        "hero_accent": "is ready.",
+        "subject": "Your {what} request is ready",
+        "lead": "The {what} you asked for is now in Kida.",
+        "body": "Open the app and search for it to hear what we made.",
+        "cta": ("Open Kida", "https://kida.litcode.com.ng"),
+    },
+    "declined": {
+        "tag": "REQUEST UPDATE",
+        "hero_top": "We can't make",
+        "hero_accent": "this one.",
+        "subject": "About your {what} request",
+        "lead": "We've had a look, and this is not one we're able to produce.",
+        "body": (
+            "It happens for all sorts of reasons, and it says nothing about the "
+            "track you picked. Send us another one whenever you like — we read "
+            "every request that comes in."
+        ),
+        "cta": None,
+    },
+}
+
+
+def loop_request_status_html(
+    full_name: str,
+    status: str,
+    request_type: str,
+    artist_name: str,
+    song_title: str,
+) -> str:
+    """Tell the requester their loop or stems request moved.
+
+    Raises KeyError for a status nobody is emailed about, so a caller that
+    forgets to filter fails loudly rather than sending a blank notice.
+    """
+    from html import escape
+
+    copy = _LOOP_REQUEST_STATUS_COPY[status]
+    what = "stems" if request_type == "stems" else "loop"
+    year = datetime.now(timezone.utc).year
+    name = escape(full_name)
+    artist = escape(artist_name)
+    song = escape(song_title)
+
+    cta = ""
+    if copy["cta"]:
+        label, url = copy["cta"]
+        cta = (
+            f'<a href="{url}" style="display:inline-block;margin-top:4px;padding:14px 28px;'
+            'background:#0a0a0a;color:#fff;font-size:14px;font-weight:700;'
+            'text-decoration:none;border-radius:4px;letter-spacing:0.02em;">'
+            f"{label} &rarr;</a>"
+        )
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#e8e3d9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#e8e3d9;">
+  <tr><td align="center" style="padding:32px 16px;">
+    <table width="520" cellpadding="0" cellspacing="0" style="max-width:520px;width:100%;">
+
+      <!-- HEADER -->
+      <tr><td style="background:#0a0a0a;padding:24px 32px 0 32px;border-radius:8px 8px 0 0;">
+        <table width="100%" cellpadding="0" cellspacing="0">
+          <tr>
+            <td style="color:#fff;font-size:11px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;">KIDA</td>
+            <td align="right" style="color:#fff;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;">{copy["tag"]}</td>
+          </tr>
+        </table>
+      </td></tr>
+
+      <!-- HERO -->
+      <tr><td style="background:#0a0a0a;padding:32px 32px 28px 32px;border-bottom:1px solid #1f1f1f;">
+        <p style="margin:0;font-size:40px;font-weight:800;line-height:1.08;color:#fff;letter-spacing:-0.02em;">{copy["hero_top"]}</p>
+        <p style="margin:0;font-size:40px;font-weight:800;line-height:1.08;color:#1FBF62;letter-spacing:-0.02em;">{copy["hero_accent"]}</p>
+        <p style="margin:16px 0 0 0;color:#fff;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;">{year} &nbsp;&middot;&nbsp; KIDA &nbsp;&middot;&nbsp; {what.upper()} REQUEST</p>
+      </td></tr>
+
+      <!-- BODY -->
+      <tr><td style="background:#f2ede4;padding:36px 32px 32px 32px;">
+        <p style="margin:0 0 8px 0;font-size:17px;font-weight:700;color:#0a0a0a;">Hi {name},</p>
+        <p style="margin:0 0 20px 0;font-size:15px;line-height:1.6;color:#333;">
+          {copy["lead"].format(what=what)}
+        </p>
+
+        <!-- THE REQUEST -->
+        <table width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 24px 0;border-left:3px solid #1FBF62;">
+          <tr><td style="padding:2px 0 2px 14px;">
+            <p style="margin:0;font-size:17px;font-weight:700;color:#0a0a0a;">{song}</p>
+            <p style="margin:2px 0 0 0;font-size:14px;color:#666;">{artist}</p>
+          </td></tr>
+        </table>
+
+        <p style="margin:0 0 24px 0;font-size:15px;line-height:1.6;color:#333;">
+          {copy["body"]}
+        </p>
+        {cta}
+      </td></tr>
+
+      {_brand_footer()}
+
+    </table>
+  </td></tr>
+</table>
+</body>
+</html>"""
+
+
+def loop_request_status_text(
+    full_name: str,
+    status: str,
+    request_type: str,
+    artist_name: str,
+    song_title: str,
+) -> str:
+    copy = _LOOP_REQUEST_STATUS_COPY[status]
+    what = "stems" if request_type == "stems" else "loop"
+    body = (
+        f"Hi {full_name},\n\n"
+        f"{copy['lead'].format(what=what)}\n\n"
+        f"  {song_title}\n"
+        f"  {artist_name}\n\n"
+        f"{copy['body']}\n"
+    )
+    if copy["cta"]:
+        label, url = copy["cta"]
+        body += f"\n{label}: {url}\n"
+    return body + _text_footer()
+
+
+def loop_request_status_subject(status: str, request_type: str) -> str:
+    """The subject line for a status notice, so the task does not re-derive it."""
+    what = "stems" if request_type == "stems" else "loop"
+    return _LOOP_REQUEST_STATUS_COPY[status]["subject"].format(what=what)
+
+
 def purchase_html(full_name: str, product_title: str, product_type: str, amount: str) -> str:
     return f"""<!DOCTYPE html>
 <html lang="en">
