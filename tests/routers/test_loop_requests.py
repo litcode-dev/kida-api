@@ -62,6 +62,7 @@ async def test_user_can_submit_loop_request(client, db_session, notify_task):
     assert body["data"]["song_title"] == "Love Me JeJe"
     assert body["data"]["reference_link"] == "https://example.com/reference"
     assert body["data"]["notes"] == "Please make it mellow."
+    assert body["data"]["status"] == "new"
 
     saved = await db_session.scalar(select(LoopRequest))
     assert saved.user_id == user.id
@@ -236,3 +237,91 @@ def test_notification_task_skips_when_no_admin_inbox_is_configured(monkeypatch):
         notification_tasks.send_loop_request_admin_notification(str(uuid.uuid4()))
     finally:
         get_settings.cache_clear()
+
+
+async def _submit(db, user, **overrides):
+    fields = dict(
+        user_id=user.id,
+        request_type="loop",
+        artist_name="Tems",
+        song_title="Love Me JeJe",
+    )
+    fields.update(overrides)
+    loop_request = LoopRequest(**fields)
+    db.add(loop_request)
+    await db.commit()
+    await db.refresh(loop_request)
+    return loop_request
+
+
+@pytest.mark.asyncio
+async def test_a_user_sees_only_their_own_requests(client, db_session):
+    mine = await _create_user(db_session)
+    someone_else = await _create_user(db_session)
+    await _submit(db_session, mine, song_title="Mine")
+    await _submit(db_session, someone_else, song_title="Theirs")
+
+    response = await client.get("/api/v1/loop-requests", headers=_auth_headers(mine))
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["total"] == 1
+    assert [item["song_title"] for item in data["items"]] == ["Mine"]
+
+
+@pytest.mark.asyncio
+async def test_own_requests_are_newest_first_and_paginated(client, db_session):
+    user = await _create_user(db_session)
+    for title in ("First", "Second", "Third"):
+        await _submit(db_session, user, song_title=title)
+
+    first_page = await client.get(
+        "/api/v1/loop-requests?page=1&page_size=2", headers=_auth_headers(user)
+    )
+    second_page = await client.get(
+        "/api/v1/loop-requests?page=2&page_size=2", headers=_auth_headers(user)
+    )
+
+    assert [i["song_title"] for i in first_page.json()["data"]["items"]] == [
+        "Third", "Second",
+    ]
+    assert [i["song_title"] for i in second_page.json()["data"]["items"]] == ["First"]
+    assert first_page.json()["data"]["total"] == 3
+
+
+@pytest.mark.asyncio
+async def test_own_requests_filter_by_type_and_status(client, db_session):
+    user = await _create_user(db_session)
+    await _submit(db_session, user, request_type="loop", song_title="A loop")
+    await _submit(db_session, user, request_type="stems", song_title="Some stems")
+    await _submit(
+        db_session, user, request_type="stems", song_title="Done stems",
+        status="fulfilled",
+    )
+
+    by_type = await client.get(
+        "/api/v1/loop-requests?request_type=stems", headers=_auth_headers(user)
+    )
+    by_status = await client.get(
+        "/api/v1/loop-requests?status=fulfilled", headers=_auth_headers(user)
+    )
+
+    assert {i["song_title"] for i in by_type.json()["data"]["items"]} == {
+        "Some stems", "Done stems",
+    }
+    assert [i["song_title"] for i in by_status.json()["data"]["items"]] == ["Done stems"]
+
+
+@pytest.mark.asyncio
+async def test_listing_own_requests_requires_authentication(client):
+    response = await client.get("/api/v1/loop-requests")
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_listing_own_requests_rejects_an_unknown_status(client, db_session):
+    user = await _create_user(db_session)
+    response = await client.get(
+        "/api/v1/loop-requests?status=archived", headers=_auth_headers(user)
+    )
+    assert response.status_code == 422

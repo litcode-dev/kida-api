@@ -1,5 +1,6 @@
 import structlog
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -7,7 +8,12 @@ from app.middleware.auth_middleware import get_current_user
 from app.models.loop_request import LoopRequest
 from app.models.user import User
 from app.schemas.common import success
-from app.schemas.loop_request import LoopRequestCreate, LoopRequestResponse
+from app.schemas.loop_request import (
+    LoopRequestCreate,
+    LoopRequestResponse,
+    LoopRequestStatus,
+    LoopRequestType,
+)
 from app.tasks.notification_tasks import send_loop_request_admin_notification
 
 log = structlog.get_logger()
@@ -62,3 +68,54 @@ async def create_loop_request(
         data=LoopRequestResponse.model_validate(loop_request).model_dump(mode="json"),
         message="Loop request submitted",
     )
+
+
+@router.get(
+    "",
+    summary="List your own loop and stems requests",
+    description=(
+        "Returns the requests the caller has submitted, newest first, so the app "
+        "can show what was already asked for and where each request stands "
+        "instead of the user submitting it again."
+    ),
+    responses={
+        200: {"description": "The caller's requests"},
+        401: {"description": "Authentication required"},
+    },
+)
+async def list_my_loop_requests(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    request_type: LoopRequestType | None = Query(None, description="Filter by type"),
+    status_filter: LoopRequestStatus | None = Query(
+        None, alias="status", description="Filter by status"
+    ),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    filters = [LoopRequest.user_id == user.id]
+    if request_type is not None:
+        filters.append(LoopRequest.request_type == request_type)
+    if status_filter is not None:
+        filters.append(LoopRequest.status == status_filter)
+
+    total = await db.scalar(
+        select(func.count()).select_from(LoopRequest).where(*filters)
+    )
+    rows = await db.scalars(
+        select(LoopRequest)
+        .where(*filters)
+        .order_by(LoopRequest.created_at.desc(), LoopRequest.id.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
+
+    return success({
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "items": [
+            LoopRequestResponse.model_validate(row).model_dump(mode="json")
+            for row in rows.all()
+        ],
+    })

@@ -28,6 +28,13 @@ from app.schemas.subscription import (
     AdminSubscriptionActivateRequest,
     AdminSubscriptionDeactivateRequest,
 )
+from app.schemas.loop_request import (
+    AdminLoopRequestResponse,
+    LoopRequestStatus,
+    LoopRequestStatusUpdate,
+    LoopRequestType,
+)
+from app.models.loop_request import LoopRequest
 from app.models.user import outranks, User, UserRole
 from app.models.loop import Genre, TempoFeel
 from app.models.drone_pad import MusicalKey
@@ -40,7 +47,7 @@ from app.services.admin_analytics_service import get_platform_analytics
 from app.tasks.notification_tasks import send_broadcast_email
 from app.tasks.upload_tasks import process_drone_upload, process_drum_sample_upload, process_loop_upload
 import uuid
-from datetime import date
+from datetime import date, datetime, timezone
 
 import structlog
 
@@ -1246,6 +1253,114 @@ async def replace_drum_sample_audio(
     sample = await drum_kit_service.replace_sample_audio(db, kit_id, sample_id, file)
     process_drum_sample_upload.delay(str(sample_id))
     return success({"sample_id": str(sample.id), "status": sample.status}, "Sample audio replacement queued")
+
+
+# --- Loop and stems requests ---
+
+@router.get(
+    "/loop-requests",
+    summary="List the loop and stems requests users have submitted",
+    description=(
+        "Returns submitted requests newest first, each with the requester's name "
+        "and email. Filter by `status` to work the queue — `new` is everything "
+        "nobody has picked up yet — or by `request_type` to separate loop "
+        "requests from stems requests."
+    ),
+    responses={
+        401: {"description": "Missing or invalid token"},
+        403: {"description": "Admin role required"},
+    },
+)
+@limiter.limit("60/minute")
+async def list_loop_requests(
+    request: Request,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    status: LoopRequestStatus | None = Query(None, description="Filter by status"),
+    request_type: LoopRequestType | None = Query(None, description="Filter by type"),
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_admin),
+):
+    filters = []
+    if status is not None:
+        filters.append(LoopRequest.status == status)
+    if request_type is not None:
+        filters.append(LoopRequest.request_type == request_type)
+
+    total = await db.scalar(
+        select(func.count()).select_from(LoopRequest).where(*filters)
+    )
+    # Outer join: a request outlives nothing, but reading it must not depend on
+    # the requester still existing.
+    rows = await db.execute(
+        select(LoopRequest, User.full_name, User.email)
+        .outerjoin(User, User.id == LoopRequest.user_id)
+        .where(*filters)
+        .order_by(LoopRequest.created_at.desc(), LoopRequest.id.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
+
+    items = []
+    for loop_request, full_name, email in rows.all():
+        item = AdminLoopRequestResponse.model_validate(loop_request)
+        item.requester_name = full_name
+        item.requester_email = email
+        items.append(item.model_dump(mode="json"))
+
+    return success({
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "items": items,
+    })
+
+
+@router.patch(
+    "/loop-requests/{loop_request_id}",
+    summary="Move a loop or stems request through the queue",
+    description=(
+        "Sets the request's status: `new`, `in_progress`, `fulfilled` or "
+        "`declined`. `status_changed_at` records when it last moved, and stays "
+        "null while a request is still untouched."
+    ),
+    responses={
+        401: {"description": "Missing or invalid token"},
+        403: {"description": "Admin role required"},
+        404: {"description": "Loop request not found"},
+        422: {"description": "Unknown status"},
+    },
+)
+@limiter.limit("60/minute")
+async def update_loop_request_status(
+    request: Request,
+    loop_request_id: uuid.UUID,
+    body: LoopRequestStatusUpdate,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_admin),
+):
+    loop_request = await db.get(LoopRequest, loop_request_id)
+    if not loop_request:
+        raise NotFoundError("Loop request not found")
+
+    # Re-setting the status a request already holds is not a move, so the
+    # timestamp keeps pointing at the change that actually happened.
+    if loop_request.status != body.status:
+        loop_request.status = body.status
+        loop_request.status_changed_at = datetime.now(timezone.utc)
+        await db.commit()
+        await db.refresh(loop_request)
+
+    requester = await db.get(User, loop_request.user_id)
+    item = AdminLoopRequestResponse.model_validate(loop_request)
+    if requester:
+        item.requester_name = requester.full_name
+        item.requester_email = requester.email
+
+    return success(
+        data=item.model_dump(mode="json"),
+        message=f"Loop request marked {body.status}",
+    )
 
 
 # --- IAP price sync administration ---
