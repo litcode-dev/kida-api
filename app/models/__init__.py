@@ -17,7 +17,8 @@ from app.models.app_download_request import AppDownloadRequest  # noqa: F401
 from app.models.download_grant import DownloadGrant, DownloadGrantType  # noqa: F401
 from app.models.monthly_download_usage import MonthlyDownloadUsage, MonthlyQuotaType  # noqa: F401
 from app.models.deletion_audit import (  # noqa: F401
-    AccountDeletionAudit, AccountDeletionPropagation, DeletionActor, PropagationStatus,
+    AccountDeletionAudit, AccountDeletionPropagation, AccountDeletionReason,
+    DeletionActor, PropagationStatus,
 )
 from app.models.digest_run import DigestRun, DigestRunStatus  # noqa: F401
 from app.models.loop_request import LoopRequest  # noqa: F401

@@ -199,7 +199,11 @@ async def me(user=Depends(get_current_user)):
         "it returns, the email address is free to register again as a new "
         "account.\n\n"
         "A repeat call from the same token gets 401, because the account it "
-        "authenticates no longer exists."
+        "authenticates no longer exists.\n\n"
+        "`reason` is optional — nobody has to explain themselves to leave. When "
+        "given it is the one thing that outlives the account, kept in a table "
+        "that points at neither the person nor the deletion record, so it can "
+        "be read for why people are leaving but not traced back to who left."
     ),
     responses={401: {"description": "Missing or invalid token"}},
 )
@@ -209,7 +213,7 @@ async def delete_account(
     redis: Redis = Depends(get_redis),
     user=Depends(get_current_user),
 ):
-    await auth_service.delete_user(db, user, redis, body.refresh_token)
+    await auth_service.delete_user(db, user, redis, body.refresh_token, reason=body.reason)
     return success(message="Account deleted")
 
 
@@ -254,7 +258,8 @@ async def request_deletion(
         "A POST, not a GET, precisely so that a mail client or link scanner "
         "prefetching the URL cannot delete an account nobody confirmed.\n\n"
         "Returns the same response for a token that is expired, already used, "
-        "forged, or belongs to no account."
+        "forged, or belongs to no account.\n\n"
+        "Takes the same optional `reason` as `DELETE /auth/me`."
     ),
 )
 @limiter.limit("10/hour")
@@ -264,7 +269,7 @@ async def confirm_deletion_request(
     db: AsyncSession = Depends(get_db),
     redis: Redis = Depends(get_redis),
 ):
-    await deletion_request_service.confirm_request(db, redis, body.token)
+    await deletion_request_service.confirm_request(db, redis, body.token, body.reason)
     return success(
         message=(
             "If that link was valid, the account has been deleted and a "

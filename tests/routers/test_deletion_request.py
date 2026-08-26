@@ -33,13 +33,16 @@ def _no_side_effects():
     ]
 
 
-async def _confirm(client, token):
+async def _confirm(client, token, reason=None):
     patchers = _no_side_effects()
     for p in patchers:
         p.start()
+    body = {"token": token}
+    if reason is not None:
+        body["reason"] = reason
     try:
         return await client.post(
-            "/api/v1/auth/deletion-request/confirm", json={"token": token}
+            "/api/v1/auth/deletion-request/confirm", json=body
         )
     finally:
         for p in patchers:
@@ -312,3 +315,54 @@ async def test_the_confirmation_link_points_at_the_frontend_not_the_api():
     url = deletion_request_service.confirmation_url("some-token")
     assert "/delete-account/confirm?token=some-token" in url
     assert "/api/v1/" not in url
+
+
+# ── The reason survives this route too ───────────────────────────────────────
+
+async def _reasons(db):
+    from sqlalchemy import select as _select
+
+    from app.models.deletion_audit import AccountDeletionReason
+
+    return (await db.scalars(_select(AccountDeletionReason))).all()
+
+
+@pytest.mark.asyncio
+async def test_confirming_by_email_keeps_the_reason(client, db_session, fake_redis):
+    await _make_user(db_session)
+    token = deletion_request_service.make_token(EMAIL)
+
+    resp = await _confirm(client, token, reason="Signed up by mistake.")
+
+    assert resp.status_code == 200
+    rows = await _reasons(db_session)
+    assert len(rows) == 1
+    assert rows[0].reason == "Signed up by mistake."
+    # The route it came through, which is the point of keeping the column.
+    assert rows[0].actor.value == "email_request"
+
+
+@pytest.mark.asyncio
+async def test_confirming_without_a_reason_stores_nothing(
+    client, db_session, fake_redis
+):
+    await _make_user(db_session)
+    token = deletion_request_service.make_token(EMAIL)
+
+    resp = await _confirm(client, token)
+
+    assert resp.status_code == 200
+    assert await _reasons(db_session) == []
+
+
+@pytest.mark.asyncio
+async def test_a_reason_on_a_dead_token_deletes_and_stores_nothing(
+    client, db_session, fake_redis
+):
+    """A forged token must not become a way to write rows."""
+    await _make_user(db_session)
+
+    resp = await _confirm(client, "not-a-real-token", reason="let me in")
+
+    assert resp.status_code == 200
+    assert await _reasons(db_session) == []

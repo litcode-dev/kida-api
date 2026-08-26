@@ -549,6 +549,7 @@ async def delete_user(
     redis: Redis,
     refresh_token: str | None,
     actor: str = "user",
+    reason: str | None = None,
 ) -> None:
     """Permanently delete an account and everything that references it.
 
@@ -557,6 +558,10 @@ async def delete_user(
     "email_request" for the confirmed public deletion link, and "admin" when an
     admin removes the account; it changes the wording of the internal
     notification and what the audit records, not what gets deleted.
+
+    ``reason`` is what the account holder said on their way out, if anything.
+    It is the one thing here that outlives the account, and it is kept in a
+    table of its own that points at neither the person nor the audit row.
     """
     from app.models.ai_generation import AIGeneration
     from app.models.download import Download
@@ -722,10 +727,14 @@ async def delete_user(
     from app.models.deletion_audit import DeletionActor
     from app.services import account_deletion_service
 
+    deletion_actor = _deletion_actors().get(actor, DeletionActor.user)
+    # Same transaction as the audit row and the delete itself.
+    account_deletion_service.record_reason(db, reason=reason, actor=deletion_actor)
+
     audit_id = await account_deletion_service.record_deletion(
         db,
         user_id=uid,
-        actor=_deletion_actors().get(actor, DeletionActor.user),
+        actor=deletion_actor,
         requested_at=requested_at,
         revenuecat_app_user_ids=revenuecat_ids,
         onesignal_subscription_id=onesignal_subscription_id,

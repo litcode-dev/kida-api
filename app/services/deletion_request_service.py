@@ -153,7 +153,9 @@ async def start_request(db, email: str) -> bool:
     return True
 
 
-async def confirm_request(db, redis: Redis, token: str) -> bool:
+async def confirm_request(
+    db, redis: Redis, token: str, reason: str | None = None
+) -> bool:
     """Redeem a confirmation link, deleting the account outright.
 
     Returns whether an account was actually deleted. Like :func:`start_request`
@@ -185,7 +187,7 @@ async def confirm_request(db, redis: Redis, token: str) -> bool:
         return False
 
     await auth_service.delete_user(
-        db, user, redis, refresh_token=None, actor="email_request"
+        db, user, redis, refresh_token=None, actor="email_request", reason=reason
     )
     log.info("deletion_request.confirmed", user_id=str(user.id))
     return True

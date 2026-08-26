@@ -35,6 +35,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.models.deletion_audit import (
     AccountDeletionAudit,
+    AccountDeletionReason,
     AccountDeletionPropagation,
     DeletionActor,
     PropagationStatus,
@@ -70,6 +71,26 @@ def _backoff(attempts: int) -> timedelta:
 
 def _max_attempts() -> int:
     return get_settings().deletion_propagation_max_attempts
+
+
+def record_reason(db, *, reason: str | None, actor: DeletionActor) -> None:
+    """Keep why they left, detached from who they were.
+
+    Written in the same transaction as the delete, so a rolled-back deletion
+    leaves no reason for something that never happened. Nothing is stored when
+    no reason was given, which keeps the table a set of answers rather than a
+    count of deletions padded with nulls — ``account_deletion_audit`` already
+    counts those.
+
+    Not a coroutine: it only stages a row. It is called from inside the delete
+    transaction and committed with it.
+    """
+    if not reason:
+        return
+    if actor is DeletionActor.admin:
+        # Nobody asked to leave, so there is nothing they said about it.
+        return
+    db.add(AccountDeletionReason(id=uuid.uuid4(), reason=reason, actor=actor))
 
 
 async def record_deletion(

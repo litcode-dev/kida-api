@@ -88,6 +88,16 @@ class AppleTokenRequest(BaseModel):
 
 class DeleteAccountRequest(BaseModel):
     refresh_token: str | None = None
+    # Optional, and kept apart from everything else that is being erased — see
+    # AccountDeletionReason. Nobody is made to explain themselves to leave.
+    reason: str | None = Field(default=None, max_length=1_000)
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def strip_reason(cls, value):
+        if isinstance(value, str):
+            return value.strip() or None
+        return value
 
 
 class DeletionRequestCreate(BaseModel):
@@ -100,3 +110,11 @@ class DeletionRequestConfirm(BaseModel):
     """Redeem the signed link mailed by :class:`DeletionRequestCreate`."""
 
     token: str
+    reason: str | None = Field(default=None, max_length=1_000)
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def strip_reason(cls, value):
+        if isinstance(value, str):
+            return value.strip() or None
+        return value

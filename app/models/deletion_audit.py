@@ -9,6 +9,13 @@ Two tables, deliberately split:
   prove you deleted me") without the table itself being a list of who used the
   app. There is no email column to forget to clear.
 
+* :class:`AccountDeletionReason` is why they left, in their own words, and
+  nothing else. It is a third table rather than a column on the audit row
+  because the audit row is guaranteed to hold no personal data, and a free-text
+  box is the one field a person can put anything into — their name, a phone
+  number, an accusation. Keeping it apart means the audit table's guarantee
+  survives, and this table can be read, exported or dropped on its own.
+
 * :class:`AccountDeletionPropagation` is transient. Telling RevenueCat and
   OneSignal to delete someone requires knowing what *they* call that person, so
   those identifiers have to survive the local delete long enough to be sent.
@@ -19,7 +26,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Enum as SAEnum, func
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, Enum as SAEnum, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -112,4 +119,36 @@ class AccountDeletionPropagation(Base):
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class AccountDeletionReason(Base):
+    """Why an account was deleted, kept for the pattern rather than the person.
+
+    There is deliberately no foreign key to the audit row and no subject hash.
+    The question this table answers is "why are people leaving?", which is asked
+    of the whole table at once and never of one row — so nothing here needs to
+    point back at a deletion, and the reasons cannot be walked back to the
+    accounts that gave them. (Two rows written seconds apart are still
+    circumstantially close; the point is that nothing joins them.)
+
+    Only the account holder's own routes write here. An admin removing an
+    account has no reason to record, because the person never gave one.
+    """
+
+    __tablename__ = "account_deletion_reasons"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+    # Free text, as typed. Not moderated: someone leaving angry is exactly the
+    # signal this table exists to capture, and filtering it would throw away
+    # the feedback worth having.
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+
+    # Which route the person used. Never ``admin`` — see the class docstring.
+    actor: Mapped[DeletionActor] = mapped_column(
+        SAEnum(DeletionActor, name="deletion_actor"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
     )

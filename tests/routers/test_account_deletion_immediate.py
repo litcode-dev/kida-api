@@ -43,8 +43,13 @@ def _headers(user):
     return {"Authorization": f"Bearer {create_access_token(str(user.id), user.role.value)}"}
 
 
-async def _delete_account(client, user, refresh_token=None):
-    body = {"refresh_token": refresh_token} if refresh_token else {}
+async def _delete_account(client, user, refresh_token=None, reason=None, body=None):
+    if body is None:
+        body = {}
+        if refresh_token:
+            body["refresh_token"] = refresh_token
+        if reason is not None:
+            body["reason"] = reason
     with patch("app.services.email_service.send_email", new=AsyncMock()), \
          patch("app.services.s3_service.delete_object", new=AsyncMock()), \
          patch(
@@ -303,3 +308,136 @@ async def test_a_deleted_account_is_not_in_a_broadcast(client, db_session):
     emails = await broadcast_service.resolve_recipients(db_session, BroadcastAudience.all)
 
     assert emails == ["staying@test.com"]
+
+
+# ── Why they left, kept apart from who they were ─────────────────────────────
+
+async def _reasons(db):
+    from app.models.deletion_audit import AccountDeletionReason
+
+    return (await db.scalars(select(AccountDeletionReason))).all()
+
+
+@pytest.mark.asyncio
+async def test_a_reason_is_kept_after_the_account_is_gone(client, db_session):
+    user = await _make_user(db_session)
+
+    resp = await _delete_account(
+        client, user, reason="Too expensive for how often I use it."
+    )
+
+    assert resp.status_code == 200
+    rows = await _reasons(db_session)
+    assert len(rows) == 1
+    assert rows[0].reason == "Too expensive for how often I use it."
+    assert rows[0].actor.value == "user"
+
+
+@pytest.mark.asyncio
+async def test_the_reason_is_optional(client, db_session):
+    """Nobody is made to explain themselves to leave."""
+    user = await _make_user(db_session)
+
+    resp = await _delete_account(client, user)
+
+    assert resp.status_code == 200
+    assert await _reasons(db_session) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("blank", ["", "   ", None])
+async def test_a_blank_reason_stores_nothing(client, db_session, blank):
+    """The table is a set of answers, not deletions padded with nulls."""
+    user = await _make_user(db_session)
+
+    resp = await _delete_account(client, user, body={"reason": blank})
+
+    assert resp.status_code == 200
+    assert await _reasons(db_session) == []
+
+
+@pytest.mark.asyncio
+async def test_the_reason_is_trimmed(client, db_session):
+    user = await _make_user(db_session)
+
+    await _delete_account(client, user, reason="   I found another app.   ")
+
+    rows = await _reasons(db_session)
+    assert rows[0].reason == "I found another app."
+
+
+@pytest.mark.asyncio
+async def test_the_reason_does_not_point_at_the_account(client, db_session):
+    """No foreign key, no user id, no subject hash — that is the whole design."""
+    from app.models.deletion_audit import AccountDeletionReason
+
+    user = await _make_user(db_session)
+    await _delete_account(client, user, reason="Not enough amapiano.")
+
+    columns = set(AccountDeletionReason.__table__.columns.keys())
+    assert columns == {"id", "reason", "actor", "created_at"}
+    row = (await _reasons(db_session))[0]
+    assert str(user.id) not in row.reason
+
+
+@pytest.mark.asyncio
+async def test_an_over_long_reason_is_refused_and_nothing_is_deleted(
+    client, db_session
+):
+    user = await _make_user(db_session)
+
+    resp = await _delete_account(client, user, reason="x" * 1001)
+
+    assert resp.status_code == 422
+    assert await db_session.get(User, user.id) is not None
+    assert await _reasons(db_session) == []
+
+
+@pytest.mark.asyncio
+async def test_a_reason_is_not_moderated(client, db_session):
+    """Someone leaving angry is the signal this table exists to capture."""
+    user = await _make_user(db_session)
+
+    resp = await _delete_account(client, user, reason="your app is shit")
+
+    assert resp.status_code == 200
+    rows = await _reasons(db_session)
+    assert rows[0].reason == "your app is shit"
+
+
+@pytest.mark.asyncio
+async def test_an_admin_removal_records_no_reason(client, db_session):
+    """Nobody asked to leave, so there is nothing they said about it."""
+    from app.services import auth_service
+
+    user = await _make_user(db_session)
+    with patch("app.services.email_service.send_email", new=AsyncMock()), \
+         patch("app.services.s3_service.delete_object", new=AsyncMock()), \
+         patch(
+             "app.tasks.notification_tasks.send_account_deleted_admin_notification.delay",
+             new=lambda *a, **kw: None,
+         ), \
+         patch(
+             "app.tasks.deletion_tasks.propagate_account_deletion.delay",
+             new=lambda *a, **kw: None,
+         ):
+        await auth_service.delete_user(
+            db_session, user, FakeRedisStub(), None, actor="admin",
+            reason="should not be stored",
+        )
+
+    assert await _reasons(db_session) == []
+
+
+class FakeRedisStub:
+    async def delete(self, *keys):
+        return 0
+
+    async def smembers(self, key):
+        return set()
+
+    async def srem(self, key, *members):
+        return 0
+
+    async def get(self, key):
+        return None
