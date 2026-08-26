@@ -16,6 +16,13 @@ request:
   ("fuuuck"). Whitespace is not: catching "f u c k" would reject far more
   innocent text than the evasion is worth.
 
+There are two checks, because the fields are not alike. ``find_banned_term``
+applies both lists and guards the submitter's own words — a note, a link.
+``find_slur`` applies the hateful list only and guards the two fields that
+quote somebody else's record: plenty of real releases are called things nobody
+would put in a note, and refusing them rejects the request rather than the
+behaviour.
+
 Both lists below are a starting point, not a policy. They are plain tuples so
 that adding a term someone actually used is a one-line change.
 """
@@ -83,7 +90,12 @@ def _pattern(term: str) -> str:
     return f"(?<![a-z0-9]){body}{_SUFFIX}(?![a-z0-9])"
 
 
-_MATCHER = re.compile("|".join(_pattern(t) for t in BANNED_TERMS), re.IGNORECASE)
+def _compile(terms) -> re.Pattern:
+    return re.compile("|".join(_pattern(t) for t in terms), re.IGNORECASE)
+
+
+_MATCHER = _compile(BANNED_TERMS)
+_SLUR_MATCHER = _compile(SLURS)
 
 
 # Four or more single letters in a row, each separated by whitespace — someone
@@ -116,12 +128,7 @@ def _normalise(text: str) -> str:
 _MIN_REAL_CHARS = 3
 
 
-def find_banned_term(text: str | None) -> str | None:
-    """Return the offending fragment, or None when the text is clean.
-
-    The fragment is returned as it appeared after normalisation, which is what
-    makes a rejection debuggable — the caller decides whether to repeat it back.
-    """
+def _search(matcher: re.Pattern, text: str | None) -> str | None:
     if not text:
         return None
     normalised = _normalise(text)
@@ -129,11 +136,31 @@ def find_banned_term(text: str | None) -> str | None:
     # catches everything ordinary, the collapsed one catches the spelled-out
     # evasion without letting it rewrite the rest of the string.
     for candidate in (normalised, _collapse_spelled_out(normalised)):
-        for match in _MATCHER.finditer(candidate):
+        for match in matcher.finditer(candidate):
             fragment = match.group(0)
             if sum(c.isalnum() for c in fragment) >= _MIN_REAL_CHARS:
                 return fragment
     return None
+
+
+def find_banned_term(text: str | None) -> str | None:
+    """Profanity or a slur. Return the offending fragment, or None if clean.
+
+    The fragment is returned as it appeared after normalisation, which is what
+    makes a rejection debuggable — the caller decides whether to repeat it back.
+    """
+    return _search(_MATCHER, text)
+
+
+def find_slur(text: str | None) -> str | None:
+    """Slurs only — the check for a field that quotes someone else's work.
+
+    Real records are called things no one would write in a support note. A
+    title or an artist name has to be reproduced as it is, or the request
+    cannot be fulfilled, so profanity there is the work rather than an insult
+    and only the hateful list applies.
+    """
+    return _search(_SLUR_MATCHER, text)
 
 
 def is_clean(text: str | None) -> bool:

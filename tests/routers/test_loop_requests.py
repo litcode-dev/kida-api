@@ -333,9 +333,10 @@ async def test_listing_own_requests_rejects_an_unknown_status(client, db_session
 @pytest.mark.parametrize(
     "field,value",
     [
-        ("artist_name", "fucking Tems"),
-        ("song_title", "Love Me B*tch"),
+        ("artist_name", "some retard"),
+        ("song_title", "n1gger anthem"),
         ("notes", "make it fast you retard"),
+        ("notes", "hurry up you prick"),
     ],
 )
 async def test_offensive_text_is_refused(client, db_session, field, value):
@@ -417,3 +418,53 @@ async def test_ordinary_words_containing_a_banned_run_still_go_through(
 
     assert response.status_code == 201
     assert response.json()["data"]["song_title"] == "Classic Bassline"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("artist_name", "Dick Dale"),
+        ("song_title", "Fuck tha Police"),
+        ("song_title", "Bitch Better Have My Money"),
+    ],
+)
+async def test_a_real_release_is_not_refused_for_its_own_title(
+    client, db_session, field, value
+):
+    """These are citations, not the submitter's words — there is no other
+    spelling, so refusing them refuses the request rather than the behaviour."""
+    user = await _create_user(db_session)
+    body = {
+        "request_type": "loop",
+        "artist_name": "Tems",
+        "song_title": "Love Me JeJe",
+    }
+    body[field] = value
+
+    response = await client.post(
+        "/api/v1/loop-requests", json=body, headers=_auth_headers(user)
+    )
+
+    assert response.status_code == 201
+    assert response.json()["data"][field] == value
+
+
+@pytest.mark.asyncio
+async def test_a_slur_in_a_title_is_still_refused(client, db_session):
+    """No catalogue lookup needs one."""
+    user = await _create_user(db_session)
+
+    response = await client.post(
+        "/api/v1/loop-requests",
+        json={
+            "request_type": "loop",
+            "artist_name": "Tems",
+            "song_title": "faggot anthem",
+        },
+        headers=_auth_headers(user),
+    )
+
+    assert response.status_code == 422
+    assert "song_title" in response.json()["message"]
+    assert await db_session.scalar(select(LoopRequest)) is None

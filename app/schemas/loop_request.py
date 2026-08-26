@@ -5,7 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, HttpUrl, field_validator
 
-from app.utils.text_moderation import find_banned_term
+from app.utils.text_moderation import find_banned_term, find_slur
 
 LoopRequestType = Literal["loop", "stems"]
 LoopRequestStatus = Literal["new", "in_progress", "fulfilled", "declined"]
@@ -26,17 +26,32 @@ class LoopRequestCreate(BaseModel):
             return value or None
         return value
 
-    @field_validator("artist_name", "song_title", "notes", "reference_link")
+    @field_validator("notes", "reference_link")
     @classmethod
     def reject_offensive_text(cls, value):
         """An admin reads every one of these by hand — keep abuse out of that inbox.
 
         The offending fragment is named in the error: without it the submitter
-        cannot tell which of four fields to fix, and a filter nobody can act on
-        just looks broken.
+        cannot tell which field to fix, and a filter nobody can act on just
+        looks broken.
         """
         text = str(value) if value is not None else None
         found = find_banned_term(text)
+        if found:
+            raise ValueError(f"remove the offensive language ({found}) and try again")
+        return value
+
+    @field_validator("artist_name", "song_title")
+    @classmethod
+    def reject_hateful_text(cls, value):
+        """Slurs only, on the two fields that name somebody else's record.
+
+        These are a citation, not the submitter's own words: plenty of real
+        tracks are called things nobody would put in a note, and refusing them
+        rejects the request rather than the behaviour. A slur is different —
+        no catalogue lookup needs one.
+        """
+        found = find_slur(value)
         if found:
             raise ValueError(f"remove the offensive language ({found}) and try again")
         return value

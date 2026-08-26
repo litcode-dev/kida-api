@@ -5,7 +5,14 @@ false-positive set below is the more important half of this file.
 """
 import pytest
 
-from app.utils.text_moderation import BANNED_TERMS, find_banned_term, is_clean
+from app.utils.text_moderation import (
+    BANNED_TERMS,
+    PROFANITY,
+    SLURS,
+    find_banned_term,
+    find_slur,
+    is_clean,
+)
 
 
 # Words and phrases that contain a banned term as a substring, or otherwise
@@ -99,3 +106,42 @@ def test_punctuation_alone_is_not_a_match():
 def test_empty_and_missing_text_is_clean():
     assert is_clean(None)
     assert is_clean("")
+
+
+# --- the narrower check, for fields that quote somebody else's record --------
+
+# Real releases. A filter that refuses these refuses the request, not the
+# behaviour — the submitter cannot spell the title any other way.
+REAL_TITLES = [
+    "Fuck tha Police",
+    "Bitch Better Have My Money",
+    "Dick Dale",
+    "The Shit",
+    "Cocky",
+]
+
+
+@pytest.mark.parametrize("title", REAL_TITLES)
+def test_profanity_in_a_title_passes_the_slur_check(title):
+    assert find_slur(title) is None
+
+
+@pytest.mark.parametrize("title", REAL_TITLES)
+def test_the_same_titles_would_have_been_refused_by_the_full_check(title):
+    """Documents why the two checks exist rather than one."""
+    assert find_banned_term(title) is not None
+
+
+@pytest.mark.parametrize("term", SLURS)
+def test_every_slur_is_caught_by_the_narrow_check(term):
+    assert find_slur(f"a song about {term} really") is not None
+
+
+@pytest.mark.parametrize("term", PROFANITY)
+def test_no_profanity_is_caught_by_the_narrow_check(term):
+    assert find_slur(f"a song about {term} really") is None
+
+
+def test_the_narrow_check_still_sees_through_obfuscation():
+    assert find_slur("n1gger") is not None
+    assert find_slur("you r*tard") is not None
