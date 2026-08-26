@@ -1,4 +1,5 @@
 import asyncio
+import re
 import smtplib
 from datetime import datetime, timezone
 from email.mime.multipart import MIMEMultipart
@@ -250,6 +251,25 @@ async def _send_with_fallback(
 
 # ── Shared footer snippets ─────────────────────────────────────────────────────
 
+DEFAULT_SITE_URL = "https://kida.litcode.com.ng"
+
+
+def _site_url() -> str:
+    """The Kida site, as every email link and footer spells it.
+
+    One setting rather than the same literal in fifteen templates, so moving
+    the domain is a config change and not a hunt through the markup. This is
+    the plain website — ``_app_link`` is the separate value for a CTA that
+    should open the app instead.
+    """
+    return (get_settings().site_url or DEFAULT_SITE_URL).rstrip("/")
+
+
+def _site_host() -> str:
+    """The same address without its scheme, for footers that print it as text."""
+    return re.sub(r"^https?://", "", _site_url())
+
+
 def _brand_footer(
     unsubscribe_email: str = "support@litcode.com.ng",
     unsubscribe_url: str | None = None,
@@ -283,7 +303,7 @@ def _brand_footer(
           <tr>
             <td colspan="2" style="padding-top:16px;border-top:1px solid #1f1f1f;margin-top:16px;">
               <p style="margin:12px 0 0 0;font-size:11px;color:#aaa;line-height:1.8;">
-                Nigeria &middot; <a href="https://kida.litcode.com.ng" style="color:#1FBF62;text-decoration:none;">kida.litcode.com.ng</a><br>
+                Nigeria &middot; <a href="{_site_url()}" style="color:#1FBF62;text-decoration:none;">{_site_host()}</a><br>
                 &copy; {year} Litcode. All rights reserved.<br>
                 {unsubscribe_link}
               </p>
@@ -303,7 +323,7 @@ def _text_footer(unsubscribe_url: str | None = None) -> str:
     return (
         f"\n\n---\n"
         f"Kida | Professional Music Production Samples\n"
-        f"Nigeria | kida.litcode.com.ng\n"
+        f"Nigeria | {_site_host()}\n"
         f"© {year} Litcode. All rights reserved.\n"
         f"{unsubscribe}"
     )
@@ -417,7 +437,7 @@ def registration_html(full_name: str) -> str:
         <p style="margin:0 0 28px 0;font-size:15px;line-height:1.6;color:#333;">
           Your Kida account is ready. Browse premium loops and stem packs built for serious producers — no subscriptions, just the sounds you need.
         </p>
-        <a href="https://kida.litcode.com.ng"
+        <a href="{_site_url()}"
            style="display:inline-block;padding:14px 28px;background:#0a0a0a;color:#fff;
                   font-size:14px;font-weight:700;text-decoration:none;border-radius:4px;
                   letter-spacing:0.02em;">
@@ -456,7 +476,7 @@ def registration_text(full_name: str) -> str:
         f"Your Kida account is ready.\n\n"
         f"Browse premium loops and stem packs built for serious musicians — "
         f"you can start with no subscriptions, just the sounds you need.\n\n"
-        f"Get started: https://kida.litcode.com.ng"
+        f"Get started: {_site_url()}"
         + _text_footer()
     )
 
@@ -594,7 +614,7 @@ def account_deleted_html(full_name: str) -> str:
           Your Kida account has been permanently deleted. All your data has been removed from our systems.
           We're sorry to see you go — if you ever want to come back, you're always welcome.
         </p>
-        <a href="https://kida.litcode.com.ng"
+        <a href="{_site_url()}"
            style="display:inline-block;padding:14px 28px;background:#0a0a0a;color:#fff;
                   font-size:14px;font-weight:700;text-decoration:none;border-radius:4px;
                   letter-spacing:0.02em;">
@@ -616,7 +636,7 @@ def account_deleted_text(full_name: str) -> str:
         f"Hi {full_name},\n\n"
         f"Your Kida account has been permanently deleted. "
         f"All your data has been removed from our systems.\n\n"
-        f"We're sorry to see you go. If you ever want to come back: https://kida.litcode.com.ng"
+        f"We're sorry to see you go. If you ever want to come back: {_site_url()}"
         + _text_footer()
     )
 
@@ -949,7 +969,7 @@ def _app_link() -> str:
     apple-app-site-association and assetlinks.json for it — that is a deploy
     detail, not a template one.
     """
-    return get_settings().app_deep_link_url or "https://kida.litcode.com.ng"
+    return get_settings().app_deep_link_url or _site_url()
 
 
 def loop_request_status_html(
@@ -1130,7 +1150,7 @@ def purchase_html(full_name: str, product_title: str, product_type: str, amount:
         <p style="margin:0 0 28px 0;font-size:15px;line-height:1.6;color:#333;">
           Your purchase is available in your library immediately.
         </p>
-        <a href="https://kida.litcode.com.ng"
+        <a href="{_site_url()}"
            style="display:inline-block;padding:14px 28px;background:#0a0a0a;color:#fff;
                   font-size:14px;font-weight:700;text-decoration:none;border-radius:4px;
                   letter-spacing:0.02em;">
@@ -1155,7 +1175,7 @@ def purchase_text(full_name: str, product_title: str, product_type: str, amount:
         f"Type: {product_type}\n"
         f"Amount Paid: ₦{amount}\n\n"
         f"Your purchase is available in your library immediately.\n"
-        f"Go to Library: https://kida.litcode.com.ng"
+        f"Go to Library: {_site_url()}"
         + _text_footer()
     )
 
@@ -1198,7 +1218,7 @@ def newsletter_subscribe_html(email: str) -> str:
           <strong>{email}</strong> is now subscribed to Kida news and marketing emails.
           You'll be the first to hear about new loops, stem packs, and exclusive drops.
         </p>
-        <a href="https://kida.litcode.com.ng"
+        <a href="{_site_url()}"
            style="display:inline-block;padding:14px 28px;background:#0a0a0a;color:#fff;
                   font-size:14px;font-weight:700;text-decoration:none;border-radius:4px;
                   letter-spacing:0.02em;">
@@ -1220,7 +1240,7 @@ def newsletter_subscribe_text(email: str) -> str:
         f"You're subscribed!\n\n"
         f"{email} is now subscribed to Kida news and marketing emails.\n"
         f"You'll be the first to hear about new loops, stem packs, and exclusive drops.\n\n"
-        f"Browse: https://kida.litcode.com.ng"
+        f"Browse: {_site_url()}"
         + _text_footer()
     )
 
@@ -1318,7 +1338,7 @@ def newsletter_unsubscribe_html(email: str) -> str:
           <strong>{email}</strong> has been removed from Kida's mailing list.
           You won't receive any more marketing emails from us. Changed your mind?
         </p>
-        <a href="https://kida.litcode.com.ng"
+        <a href="{_site_url()}"
            style="display:inline-block;padding:14px 28px;background:#0a0a0a;color:#fff;
                   font-size:14px;font-weight:700;text-decoration:none;border-radius:4px;
                   letter-spacing:0.02em;">
@@ -1340,7 +1360,7 @@ def newsletter_unsubscribe_text(email: str) -> str:
         f"You've been unsubscribed.\n\n"
         f"{email} has been removed from Kida's mailing list.\n"
         f"You won't receive any more marketing emails from us.\n\n"
-        f"Changed your mind? Resubscribe at: https://kida.litcode.com.ng"
+        f"Changed your mind? Resubscribe at: {_site_url()}"
         + _text_footer()
     )
 
@@ -1517,7 +1537,7 @@ def account_unsuspended_html(full_name: str) -> str:
           Your Kida account has been reinstated. You can now log in and access all your content again.
           Welcome back — we're glad to have you.
         </p>
-        <a href="https://kida.litcode.com.ng"
+        <a href="{_site_url()}"
            style="display:inline-block;padding:14px 28px;background:#0a0a0a;color:#fff;
                   font-size:14px;font-weight:700;text-decoration:none;border-radius:4px;
                   letter-spacing:0.02em;">
@@ -1539,7 +1559,7 @@ def account_unsuspended_text(full_name: str) -> str:
         f"Hi {full_name},\n\n"
         f"Your Kida account has been reinstated.\n\n"
         f"You can now log in and access all your content again.\n"
-        f"Welcome back: https://kida.litcode.com.ng"
+        f"Welcome back: {_site_url()}"
         + _text_footer()
     )
 

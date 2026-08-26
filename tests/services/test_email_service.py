@@ -386,3 +386,57 @@ def test_the_answer_does_not_displace_the_track_or_the_button():
     assert "Love Me JeJe" in html
     assert "Tems" in html
     assert "Open Kida" in html
+
+
+def test_every_email_link_follows_the_site_setting(monkeypatch):
+    """Fifteen templates used to carry the domain as a literal. Moving it must
+    be a config change, not a hunt through the markup."""
+    from app.config import get_settings
+    from app.services.email_service import (
+        account_unsuspended_html, newsletter_subscribe_text, registration_html,
+    )
+
+    monkeypatch.setenv("SITE_URL", "https://example.test")
+    get_settings.cache_clear()
+    try:
+        rendered = [
+            registration_html("Ada"),
+            account_unsuspended_html("Ada"),
+            newsletter_subscribe_text("a@b.c"),
+        ]
+    finally:
+        get_settings.cache_clear()
+
+    for out in rendered:
+        assert "https://example.test" in out
+        assert "kida.litcode.com.ng" not in out
+
+
+def test_the_footer_prints_the_host_without_its_scheme(monkeypatch):
+    from app.config import get_settings
+
+    monkeypatch.setenv("SITE_URL", "https://example.test/")
+    get_settings.cache_clear()
+    try:
+        html = registration_html("Ada")
+    finally:
+        get_settings.cache_clear()
+
+    assert ">example.test</a>" in html
+    assert ">https://example.test</a>" not in html
+    # A trailing slash in the setting must not become a double slash in a link.
+    assert "example.test//" not in html
+
+
+def test_a_blank_app_link_follows_the_site_rather_than_a_frozen_literal(monkeypatch):
+    from app.config import get_settings
+
+    monkeypatch.setenv("SITE_URL", "https://example.test")
+    monkeypatch.setenv("APP_DEEP_LINK_URL", "")
+    get_settings.cache_clear()
+    try:
+        txt = loop_request_status_text(**_status_fields(status="fulfilled"))
+    finally:
+        get_settings.cache_clear()
+
+    assert "https://example.test" in txt

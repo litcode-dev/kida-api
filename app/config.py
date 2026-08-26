@@ -56,6 +56,10 @@ class Settings(BaseSettings):
     # Frontend
     frontend_url: str = "https://litmusic.app"
 
+    # The Kida website, as every email link and footer spells it. One setting
+    # rather than the same literal in fifteen templates.
+    site_url: str = "https://kida.litcode.com.ng"
+
     # Where an email CTA sends someone who should end up in the mobile app.
     # An https:// URL, not a kida:// scheme, so it is a Universal Link on iOS
     # and an App Link on Android: the OS hands it to the app when it is
