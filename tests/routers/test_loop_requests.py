@@ -325,3 +325,95 @@ async def test_listing_own_requests_rejects_an_unknown_status(client, db_session
         "/api/v1/loop-requests?status=archived", headers=_auth_headers(user)
     )
     assert response.status_code == 422
+
+
+# --- moderation --------------------------------------------------------------
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("artist_name", "fucking Tems"),
+        ("song_title", "Love Me B*tch"),
+        ("notes", "make it fast you retard"),
+    ],
+)
+async def test_offensive_text_is_refused(client, db_session, field, value):
+    user = await _create_user(db_session)
+    body = {
+        "request_type": "loop",
+        "artist_name": "Tems",
+        "song_title": "Love Me JeJe",
+    }
+    body[field] = value
+
+    response = await client.post(
+        "/api/v1/loop-requests", json=body, headers=_auth_headers(user)
+    )
+
+    assert response.status_code == 422
+    message = response.json()["message"]
+    assert field in message
+    assert "offensive language" in message
+    assert await db_session.scalar(select(LoopRequest)) is None
+
+
+@pytest.mark.asyncio
+async def test_the_refusal_names_the_offending_word(client, db_session):
+    """Four text fields go in; the submitter has to know which one to fix."""
+    user = await _create_user(db_session)
+
+    response = await client.post(
+        "/api/v1/loop-requests",
+        json={
+            "request_type": "loop",
+            "artist_name": "Tems",
+            "song_title": "Love Me JeJe",
+            "notes": "what the f*ck",
+        },
+        headers=_auth_headers(user),
+    )
+
+    assert response.status_code == 422
+    assert "f*ck" in response.json()["message"]
+
+
+@pytest.mark.asyncio
+async def test_an_offensive_reference_link_is_refused(client, db_session):
+    user = await _create_user(db_session)
+
+    response = await client.post(
+        "/api/v1/loop-requests",
+        json={
+            "request_type": "loop",
+            "artist_name": "Tems",
+            "song_title": "Love Me JeJe",
+            "reference_link": "https://example.com/fuck-you",
+        },
+        headers=_auth_headers(user),
+    )
+
+    assert response.status_code == 422
+    assert "reference_link" in response.json()["message"]
+
+
+@pytest.mark.asyncio
+async def test_ordinary_words_containing_a_banned_run_still_go_through(
+    client, db_session
+):
+    """A filter that rejects "classic" is worse than no filter at all."""
+    user = await _create_user(db_session)
+
+    response = await client.post(
+        "/api/v1/loop-requests",
+        json={
+            "request_type": "stems",
+            "artist_name": "Cockburn",
+            "song_title": "Classic Bassline",
+            "notes": "Assess the mix — cocktail-hour energy, Scunthorpe session.",
+        },
+        headers=_auth_headers(user),
+    )
+
+    assert response.status_code == 201
+    assert response.json()["data"]["song_title"] == "Classic Bassline"

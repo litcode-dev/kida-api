@@ -5,6 +5,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, HttpUrl, field_validator
 
+from app.utils.text_moderation import find_banned_term
+
 LoopRequestType = Literal["loop", "stems"]
 LoopRequestStatus = Literal["new", "in_progress", "fulfilled", "declined"]
 
@@ -22,6 +24,21 @@ class LoopRequestCreate(BaseModel):
         if isinstance(value, str):
             value = value.strip()
             return value or None
+        return value
+
+    @field_validator("artist_name", "song_title", "notes", "reference_link")
+    @classmethod
+    def reject_offensive_text(cls, value):
+        """An admin reads every one of these by hand — keep abuse out of that inbox.
+
+        The offending fragment is named in the error: without it the submitter
+        cannot tell which of four fields to fix, and a filter nobody can act on
+        just looks broken.
+        """
+        text = str(value) if value is not None else None
+        found = find_banned_term(text)
+        if found:
+            raise ValueError(f"remove the offensive language ({found}) and try again")
         return value
 
 
