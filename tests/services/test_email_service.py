@@ -2,7 +2,7 @@ import pytest
 from datetime import datetime, timezone
 
 from app.services.email_service import (
-    registration_html, app_download_html, app_download_text,
+    registration_html, registration_text, app_download_html, app_download_text,
     new_user_admin_html, new_user_admin_text,
     account_deleted_admin_html, account_deleted_admin_text,
     loop_request_admin_html, loop_request_admin_text,
@@ -31,11 +31,29 @@ def test_registration_html_cta():
     assert "https://kida.litcode.com.ng" in html
 
 
-def test_registration_html_stats():
+def test_registration_html_lists_what_is_on_offer():
+    """The catalogue is loops, drone pads and drum kits — there are no stems yet."""
     html = registration_html("Ada")
-    assert "500+" in html
     assert "Loops" in html
-    assert "Genres" in html
+    assert "Drone Pads" in html
+    assert "Drum Kits" in html
+    # "stem" alone matches BlinkMacSystemFont in the font stack.
+    assert "stem pack" not in html.lower()
+
+
+def test_registration_html_mentions_the_subscription():
+    html = registration_html("Ada")
+    assert "Kida Premium" in html
+    assert "setlists" in html
+
+
+def test_registration_text_offers_the_same_catalogue_as_the_html():
+    """The plain-text part is what a stripped-down client shows, so it carries
+    the same offer rather than a shorter, staler version of it."""
+    text = registration_text("Ada")
+    for phrase in ("loops", "drone pads", "drum kits", "setlists"):
+        assert phrase in text
+    assert "stem pack" not in text.lower()
 
 
 def test_registration_html_footer():

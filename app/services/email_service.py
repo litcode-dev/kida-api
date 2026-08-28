@@ -428,14 +428,14 @@ def registration_html(full_name: str) -> str:
 
       <!-- META STRIP -->
       <tr><td style="background:#0a0a0a;padding:24px 32px 28px 32px;border-bottom:1px solid #1f1f1f;">
-        <p style="margin:0;color:#fff;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;">{year} &nbsp;&middot;&nbsp; PREMIUM LOOPS &nbsp;&middot;&nbsp; STEM PACKS</p>
+        <p style="margin:0;color:#fff;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;">{year} &nbsp;&middot;&nbsp; PREMIUM LOOPS &nbsp;&middot;&nbsp; DRONE PADS &nbsp;&middot;&nbsp; DRUM KITS</p>
       </td></tr>
 
       <!-- BODY -->
       <tr><td style="background:#f2ede4;padding:36px 32px 28px 32px;">
         <p style="margin:0 0 8px 0;font-size:17px;font-weight:700;color:#0a0a0a;">Hi {full_name},</p>
         <p style="margin:0 0 28px 0;font-size:15px;line-height:1.6;color:#333;">
-          Your Kida account is ready. Browse premium loops and stem packs built for serious producers — no subscriptions, just the sounds you need.
+          Your Kida account is ready. Browse premium loops, drone pads and drum kits built for serious producers — buy what you need one at a time, or subscribe for more.
         </p>
         <a href="{_site_url()}"
            style="display:inline-block;padding:14px 28px;background:#0a0a0a;color:#fff;
@@ -445,19 +445,35 @@ def registration_html(full_name: str) -> str:
         </a>
       </td></tr>
 
-      <!-- STATS -->
+      <!-- WHAT'S INSIDE -->
       <tr><td style="background:#f2ede4;padding:28px 32px;border-top:1px solid #ddd8ce;">
         <table width="100%" cellpadding="0" cellspacing="0">
           <tr>
-            <td style="text-align:left;">
-              <p style="margin:0;font-size:28px;font-weight:800;color:#0a0a0a;">500+</p>
-              <p style="margin:4px 0 0 0;font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:#888;">Loops</p>
+            <td style="text-align:left;width:33%;">
+              <p style="margin:0;font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:#888;">Premium</p>
+              <p style="margin:4px 0 0 0;font-size:17px;font-weight:800;color:#0a0a0a;">Loops</p>
             </td>
-            <td style="text-align:center;">
-              <p style="margin:0;font-size:28px;font-weight:800;color:#0a0a0a;">10</p>
-              <p style="margin:4px 0 0 0;font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:#888;">Genres</p>
+            <td style="text-align:center;width:33%;">
+              <p style="margin:0;font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:#888;">Ambient</p>
+              <p style="margin:4px 0 0 0;font-size:17px;font-weight:800;color:#0a0a0a;">Drone Pads</p>
+            </td>
+            <td style="text-align:right;width:33%;">
+              <p style="margin:0;font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:#888;">Full</p>
+              <p style="margin:4px 0 0 0;font-size:17px;font-weight:800;color:#0a0a0a;">Drum Kits</p>
             </td>
           </tr>
+        </table>
+      </td></tr>
+
+      <!-- SUBSCRIPTION -->
+      <tr><td style="background:#f2ede4;padding:0 32px 32px 32px;">
+        <table width="100%" cellpadding="0" cellspacing="0" style="background:#0a0a0a;border-radius:6px;">
+          <tr><td style="padding:22px 24px;">
+            <p style="margin:0 0 6px 0;color:#1FBF62;font-size:11px;font-weight:800;letter-spacing:0.15em;text-transform:uppercase;">Kida Premium</p>
+            <p style="margin:0;color:#fff;font-size:14px;line-height:1.6;">
+              Subscribe for access to more loops, drone pads, drum kits and setlists.
+            </p>
+          </td></tr>
         </table>
       </td></tr>
 
@@ -474,8 +490,9 @@ def registration_text(full_name: str) -> str:
     return (
         f"Hi {full_name},\n\n"
         f"Your Kida account is ready.\n\n"
-        f"Browse premium loops and stem packs built for serious musicians — "
-        f"you can start with no subscriptions, just the sounds you need.\n\n"
+        f"Browse premium loops, drone pads and drum kits built for serious "
+        f"musicians — buy what you need one at a time, or subscribe for access "
+        f"to more loops, drone pads, drum kits and setlists.\n\n"
         f"Get started: {_site_url()}"
         + _text_footer()
     )
