@@ -56,6 +56,36 @@ def test_registration_text_offers_the_same_catalogue_as_the_html():
     assert "stem pack" not in text.lower()
 
 
+def test_no_customer_email_still_advertises_stem_packs():
+    """Five templates carried the old catalogue in their header strip or body.
+
+    Stem packs are not something Kida sells yet, and an email is where somebody
+    first learns what is on offer — so the sweep is pinned here rather than
+    left to whoever next edits one of these by hand.
+    """
+    from app.services.email_service import (
+        account_deleted_html, broadcast_html, newsletter_subscribe_html,
+        newsletter_subscribe_text, purchase_html,
+    )
+
+    rendered = [
+        registration_html("Ada"),
+        registration_text("Ada"),
+        account_deleted_html("Ada"),
+        purchase_html(
+            full_name="Ada", product_title="Lagos Nights",
+            product_type="Loop", amount="10.00",
+        ),
+        newsletter_subscribe_html("a@b.c"),
+        newsletter_subscribe_text("a@b.c"),
+        broadcast_html("A new drop", "Body copy."),
+    ]
+
+    for out in rendered:
+        # "stem" alone matches BlinkMacSystemFont in the font stack.
+        assert "stem pack" not in out.lower()
+
+
 def test_registration_html_footer():
     html = registration_html("Ada")
     assert "KIDA" in html

@@ -621,7 +621,7 @@ def account_deleted_html(full_name: str) -> str:
 
       <!-- META STRIP -->
       <tr><td style="background:#0a0a0a;padding:24px 32px 28px 32px;border-bottom:1px solid #1f1f1f;">
-        <p style="margin:0;color:#fff;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;">{year} &nbsp;&middot;&nbsp; PREMIUM LOOPS &nbsp;&middot;&nbsp; STEM PACKS</p>
+        <p style="margin:0;color:#fff;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;">{year} &nbsp;&middot;&nbsp; PREMIUM LOOPS &nbsp;&middot;&nbsp; DRONE PADS &nbsp;&middot;&nbsp; DRUM KITS</p>
       </td></tr>
 
       <!-- BODY -->
@@ -1144,7 +1144,7 @@ def purchase_html(full_name: str, product_title: str, product_type: str, amount:
 
       <!-- META STRIP -->
       <tr><td style="background:#0a0a0a;padding:24px 32px 28px 32px;border-bottom:1px solid #1f1f1f;">
-        <p style="margin:0;color:#fff;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;">{datetime.now(timezone.utc).year} &nbsp;&middot;&nbsp; PREMIUM LOOPS &nbsp;&middot;&nbsp; STEM PACKS</p>
+        <p style="margin:0;color:#fff;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;">{datetime.now(timezone.utc).year} &nbsp;&middot;&nbsp; PREMIUM LOOPS &nbsp;&middot;&nbsp; DRONE PADS &nbsp;&middot;&nbsp; DRUM KITS</p>
       </td></tr>
 
       <!-- BODY -->
@@ -1233,7 +1233,7 @@ def newsletter_subscribe_html(email: str) -> str:
       <tr><td style="background:#f2ede4;padding:36px 32px 28px 32px;">
         <p style="margin:0 0 28px 0;font-size:15px;line-height:1.6;color:#333;">
           <strong>{email}</strong> is now subscribed to Kida news and marketing emails.
-          You'll be the first to hear about new loops, stem packs, and exclusive drops.
+          You'll be the first to hear about new loops, drone pads, drum kits, and exclusive drops.
         </p>
         <a href="{_site_url()}"
            style="display:inline-block;padding:14px 28px;background:#0a0a0a;color:#fff;
@@ -1256,7 +1256,8 @@ def newsletter_subscribe_text(email: str) -> str:
     return (
         f"You're subscribed!\n\n"
         f"{email} is now subscribed to Kida news and marketing emails.\n"
-        f"You'll be the first to hear about new loops, stem packs, and exclusive drops.\n\n"
+        f"You'll be the first to hear about new loops, drone pads, drum kits, "
+        f"and exclusive drops.\n\n"
         f"Browse: {_site_url()}"
         + _text_footer()
     )
@@ -1640,7 +1641,7 @@ def broadcast_html(
       <!-- HERO -->
       <tr><td style="background:#0a0a0a;padding:32px 32px 28px 32px;border-bottom:1px solid #1f1f1f;">
         <p style="margin:0;font-size:34px;font-weight:800;line-height:1.15;color:#fff;letter-spacing:-0.02em;">{hero}</p>
-        <p style="margin:16px 0 0 0;color:#fff;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;">{year} &nbsp;&middot;&nbsp; PREMIUM LOOPS &nbsp;&middot;&nbsp; STEM PACKS</p>
+        <p style="margin:16px 0 0 0;color:#fff;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;">{year} &nbsp;&middot;&nbsp; PREMIUM LOOPS &nbsp;&middot;&nbsp; DRONE PADS &nbsp;&middot;&nbsp; DRUM KITS</p>
       </td></tr>
 
       <!-- BODY -->
