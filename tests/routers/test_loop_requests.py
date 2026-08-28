@@ -215,7 +215,7 @@ def test_notification_task_emails_the_admin_inbox(monkeypatch):
 
     assert sent["to"] == get_settings().admin_notification_email
     assert sent["to"] == "kida.audio@gmail.com"
-    assert sent["subject"] == "Stems request — Love Me JeJe by Tems"
+    assert sent["subject"] == "Stems request: Love Me JeJe by Tems"
     assert "Love Me JeJe" in sent["html"]
     assert "Ada Lovelace" in sent["html"]
     assert "ada@test.com" in sent["text"]

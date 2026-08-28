@@ -104,7 +104,7 @@ def send_new_user_admin_notification(user_id: str):
             log.info("new_user_admin_email.sending", user_id=user_id, to=recipient)
             await send_email(
                 to=recipient,
-                subject=f"New Kida signup — {user.email}",
+                subject=f"New Kida signup: {user.email}",
                 html=new_user_admin_html(**fields),
                 text=new_user_admin_text(**fields),
             )
@@ -157,7 +157,7 @@ def send_account_deleted_admin_notification(
         log.info("account_deleted_admin_email.sending", user_id=user_id, to=recipient, actor=actor)
         await send_email(
             to=recipient,
-            subject=f"Kida account deleted — {email}",
+            subject=f"Kida account deleted: {email}",
             html=account_deleted_admin_html(**fields),
             text=account_deleted_admin_text(**fields),
         )
@@ -220,7 +220,7 @@ def send_loop_request_admin_notification(loop_request_id: str):
             await send_email(
                 to=recipient,
                 subject=(
-                    f"{label} request — {loop_request.song_title} "
+                    f"{label} request: {loop_request.song_title} "
                     f"by {loop_request.artist_name}"
                 ),
                 html=loop_request_admin_html(**fields),
@@ -351,7 +351,7 @@ def send_purchase_confirmation(user_id: str, purchase_id: str):
             _amount = f"{purchase.amount_paid:.2f}"
             await send_email(
                 to=user.email,
-                subject=f"Purchase confirmed — {product.title}",
+                subject=f"Purchase confirmed: {product.title}",
                 html=purchase_html(
                     full_name=user.full_name,
                     product_title=product.title,

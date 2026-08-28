@@ -51,7 +51,7 @@ async def subscribe(body: SubscribeRequest, db: AsyncSession = Depends(get_db)):
         await db.commit()
         await send_email(
             to=body.email,
-            subject="You're back — Kida newsletter",
+            subject="You're back on the Kida newsletter",
             html=newsletter_subscribe_html(body.email),
             text=newsletter_subscribe_text(body.email),
         )

@@ -435,7 +435,7 @@ def registration_html(full_name: str) -> str:
       <tr><td style="background:#f2ede4;padding:36px 32px 28px 32px;">
         <p style="margin:0 0 8px 0;font-size:17px;font-weight:700;color:#0a0a0a;">Hi {full_name},</p>
         <p style="margin:0 0 28px 0;font-size:15px;line-height:1.6;color:#333;">
-          Your Kida account is ready. Browse premium loops, drone pads and drum kits built for serious producers — buy what you need one at a time, or subscribe for more.
+          Your Kida account is ready. Browse premium loops, drone pads and drum kits built for serious producers. Buy what you need one at a time, or subscribe for more.
         </p>
         <a href="{_site_url()}"
            style="display:inline-block;padding:14px 28px;background:#0a0a0a;color:#fff;
@@ -491,7 +491,7 @@ def registration_text(full_name: str) -> str:
         f"Hi {full_name},\n\n"
         f"Your Kida account is ready.\n\n"
         f"Browse premium loops, drone pads and drum kits built for serious "
-        f"musicians — buy what you need one at a time, or subscribe for access "
+        f"musicians. Buy what you need one at a time, or subscribe for access "
         f"to more loops, drone pads, drum kits and setlists.\n\n"
         f"Get started: {_site_url()}"
         + _text_footer()
@@ -629,7 +629,7 @@ def account_deleted_html(full_name: str) -> str:
         <p style="margin:0 0 8px 0;font-size:17px;font-weight:700;color:#0a0a0a;">Hi {full_name},</p>
         <p style="margin:0 0 28px 0;font-size:15px;line-height:1.6;color:#333;">
           Your Kida account has been permanently deleted. All your data has been removed from our systems.
-          We're sorry to see you go — if you ever want to come back, you're always welcome.
+          We're sorry to see you go. If you ever want to come back, you're always welcome.
         </p>
         <a href="{_site_url()}"
            style="display:inline-block;padding:14px 28px;background:#0a0a0a;color:#fff;
@@ -735,7 +735,7 @@ def account_deleted_admin_html(
         </table>
         <p style="margin:24px 0 0 0;font-size:13px;line-height:1.6;color:#666;">
           The account and all its data have been removed. This record is the only
-          trace left — the user row no longer exists.
+          trace left. The user row no longer exists.
         </p>
       </td></tr>
 
@@ -779,7 +779,7 @@ def account_deleted_admin_text(
         f"Deleted by:    {actor}\n"
         f"User ID:       {user_id}\n\n"
         f"The account and all its data have been removed. This record is the only\n"
-        f"trace left — the user row no longer exists.\n\n"
+        f"trace left. The user row no longer exists.\n\n"
         f"---\n"
         f"Automated notification from the Kida API. Not a customer email."
     )
@@ -944,7 +944,7 @@ _LOOP_REQUEST_STATUS_COPY = {
         "hero_top": "We're on",
         "hero_accent": "your request.",
         "subject": "We're working on your {what} request",
-        "lead": "Good news — we've started work on the {what} you asked for.",
+        "lead": "Good news. We've started work on the {what} you asked for.",
         "body": (
             "We'll email you again as soon as it lands in Kida. No need to "
             "request it a second time."
@@ -968,7 +968,7 @@ _LOOP_REQUEST_STATUS_COPY = {
         "lead": "We've had a look, and this is not one we're able to produce.",
         "body": (
             "It happens for all sorts of reasons, and it says nothing about the "
-            "track you picked. Send us another one whenever you like — we read "
+            "track you picked. Send us another one whenever you like, and we read "
             "every request that comes in."
         ),
         "cta": None,
@@ -1553,7 +1553,7 @@ def account_unsuspended_html(full_name: str) -> str:
         <p style="margin:0 0 8px 0;font-size:17px;font-weight:700;color:#0a0a0a;">Hi {full_name},</p>
         <p style="margin:0 0 28px 0;font-size:15px;line-height:1.6;color:#333;">
           Your Kida account has been reinstated. You can now log in and access all your content again.
-          Welcome back — we're glad to have you.
+          Welcome back. We're glad to have you.
         </p>
         <a href="{_site_url()}"
            style="display:inline-block;padding:14px 28px;background:#0a0a0a;color:#fff;
@@ -1729,7 +1729,7 @@ def deletion_request_html(confirm_url: str, ttl_minutes: int) -> str:
         "</p>"
         '<p style="margin:0 0 24px 0;font-size:15px;line-height:1.6;color:#333;">'
         f"This link works once and expires in <strong>{window}</strong>. Using it "
-        "<strong>deletes the account straight away</strong> — there is no waiting "
+        "<strong>deletes the account straight away</strong>. There is no waiting "
         "period and it cannot be undone."
         "</p>"
         f'<a href="{confirm_url}" '
@@ -1737,7 +1737,7 @@ def deletion_request_html(confirm_url: str, ttl_minutes: int) -> str:
         'font-size:14px;font-weight:700;text-decoration:none;border-radius:4px;'
         'letter-spacing:0.02em;">Confirm deletion &rarr;</a>'
         '<p style="margin:24px 0 0 0;font-size:14px;line-height:1.6;color:#666;">'
-        "Didn't ask for this? Ignore this email — nothing happens unless the link "
+        "Didn't ask for this? Ignore this email. Nothing happens unless the link "
         "above is used, and we will not email you about it again."
         "</p>"
     )
@@ -1751,8 +1751,8 @@ def deletion_request_text(confirm_url: str, ttl_minutes: int) -> str:
         "If that was you, confirm with the link below.\n\n"
         f"{confirm_url}\n\n"
         f"This link works once and expires in {window}. Using it deletes the account\n"
-        "straight away — there is no waiting period and it cannot be undone.\n\n"
-        "Didn't ask for this? Ignore this email — nothing happens unless the link\n"
+        "straight away. There is no waiting period and it cannot be undone.\n\n"
+        "Didn't ask for this? Ignore this email. Nothing happens unless the link\n"
         "above is used, and we will not email you about it again."
         + _text_footer()
     )

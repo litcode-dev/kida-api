@@ -488,3 +488,83 @@ def test_a_blank_app_link_follows_the_site_rather_than_a_frozen_literal(monkeypa
         get_settings.cache_clear()
 
     assert "https://example.test" in txt
+
+
+def _every_rendered_email() -> dict[str, str]:
+    """Every template a person can receive, rendered with plausible input.
+
+    Keyed by name so a failure names the template rather than an index.
+    """
+    from app.services import email_service as mail
+
+    exp = datetime(2026, 6, 22, tzinfo=timezone.utc)
+    section = ("loop", "Loops", [type("Item", (), {"title": "Lagos Nights", "subtitle": "Afrobeat"})()])
+    rendered = {
+        "verification_html": mail.verification_html("Ada", "123456", 15),
+        "verification_text": mail.verification_text("Ada", "123456", 15),
+        "registration_html": mail.registration_html("Ada"),
+        "registration_text": mail.registration_text("Ada"),
+        "new_user_admin_html": mail.new_user_admin_html(
+            full_name="Ada", email="a@b.c", provider="email",
+            user_id="u1", signed_up_at=_SIGNED_UP_AT,
+        ),
+        "new_user_admin_text": mail.new_user_admin_text(
+            full_name="Ada", email="a@b.c", provider="email",
+            user_id="u1", signed_up_at=_SIGNED_UP_AT,
+        ),
+        "account_deleted_html": mail.account_deleted_html("Ada"),
+        "account_deleted_text": mail.account_deleted_text("Ada"),
+        "account_deleted_admin_html": mail.account_deleted_admin_html(
+            full_name="Ada", email="a@b.c", provider="email", user_id="u1",
+            joined_at=_SIGNED_UP_AT, deleted_at=_SIGNED_UP_AT, actor="user",
+        ),
+        "account_deleted_admin_text": mail.account_deleted_admin_text(
+            full_name="Ada", email="a@b.c", provider="email", user_id="u1",
+            joined_at=_SIGNED_UP_AT, deleted_at=_SIGNED_UP_AT, actor="user",
+        ),
+        "loop_request_admin_html": mail.loop_request_admin_html(**_loop_request_fields()),
+        "loop_request_admin_text": mail.loop_request_admin_text(**_loop_request_fields()),
+        "purchase_html": mail.purchase_html(
+            full_name="Ada", product_title="Lagos Nights",
+            product_type="Loop", amount="10.00",
+        ),
+        "purchase_text": mail.purchase_text(
+            full_name="Ada", product_title="Lagos Nights",
+            product_type="Loop", amount="10.00",
+        ),
+        "newsletter_subscribe_html": mail.newsletter_subscribe_html("a@b.c"),
+        "newsletter_subscribe_text": mail.newsletter_subscribe_text("a@b.c"),
+        "newsletter_unsubscribe_html": mail.newsletter_unsubscribe_html("a@b.c"),
+        "newsletter_unsubscribe_text": mail.newsletter_unsubscribe_text("a@b.c"),
+        "app_download_html": mail.app_download_html("macOS", "https://x.test/d", exp),
+        "app_download_text": mail.app_download_text("macOS", "https://x.test/d", exp),
+        "content_digest_html": mail.content_digest_html([section], 1),
+        "content_digest_text": mail.content_digest_text([section], 1),
+        "account_suspended_html": mail.account_suspended_html("Ada", "Chargebacks"),
+        "account_suspended_text": mail.account_suspended_text("Ada", "Chargebacks"),
+        "account_unsuspended_html": mail.account_unsuspended_html("Ada"),
+        "account_unsuspended_text": mail.account_unsuspended_text("Ada"),
+        "broadcast_html": mail.broadcast_html("A new drop", "Body copy."),
+        "broadcast_text": mail.broadcast_text("A new drop", "Body copy."),
+        "deletion_request_html": mail.deletion_request_html("https://x.test/c", 60),
+        "deletion_request_text": mail.deletion_request_text("https://x.test/c", 60),
+    }
+    for status in ("in_progress", "fulfilled", "declined"):
+        fields = _status_fields(status=status)
+        rendered[f"loop_request_status_html:{status}"] = mail.loop_request_status_html(**fields)
+        rendered[f"loop_request_status_text:{status}"] = mail.loop_request_status_text(**fields)
+        rendered[f"loop_request_status_subject:{status}"] = mail.loop_request_status_subject(
+            status, "loop"
+        )
+    return rendered
+
+
+def test_no_email_uses_an_em_dash():
+    """House style: mail reads in plain sentences, not dashed asides.
+
+    Rendered rather than grepped, so a dash reintroduced through shared copy
+    (the status table, the footers) is caught wherever it ends up.
+    """
+    offenders = [name for name, out in _every_rendered_email().items() if "—" in out]
+
+    assert not offenders, f"em dash in: {', '.join(sorted(offenders))}"
