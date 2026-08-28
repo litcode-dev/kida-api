@@ -1,8 +1,8 @@
 # The daily new-content email
 
-One email a day listing everything that went live since the last one. Push
-notifications still fire per item the moment it is ready — this is the roundup,
-not the alert.
+One email a day listing everything that went live since the last one, and one
+push notification saying the same thing. Per-item pushes still fire the moment
+something is ready — this is the roundup, not the alert.
 
 ## What sends it
 
@@ -29,6 +29,38 @@ own timestamped key, so it never consumes the day's scheduled digest.
 
 Set `CONTENT_DIGEST_SCHEDULER_ENABLED=false` on deployments that do run beat and
 want it to be the only sender.
+
+## The push that goes with it
+
+The same digest goes out as a single OneSignal broadcast to every subscribed
+device, immediately after the mail. It reaches the people who are on the app
+rather than in an inbox, and it is the only announcement a stem pack gets when
+its producer publishes it days after upload — by then its per-item push has long
+since fired.
+
+The heading is the email's subject line ("3 new drops on Kida"), so somebody who
+gets both reads the second as the first rather than as a second batch. The body
+names the item when there is one and counts by type when there are several
+("2 loops and 1 drum kit just dropped") — a phone shows about two lines, and a
+list of twelve titles arrives as an ellipsis. The payload carries
+`{"type": "content_digest"}` for the app to route on.
+
+The mail is what a run succeeds or fails on. The push happens after the send and
+its outcome only ever lands on the run row, in `push_status`:
+
+| `push_status` | Meaning |
+| --- | --- |
+| `sent` | OneSignal accepted the broadcast; `push_detail` says for how many devices |
+| `disabled` | `CONTENT_DIGEST_PUSH_ENABLED` is false — the mail still went |
+| `not_configured` | `ONESIGNAL_APP_ID`/`ONESIGNAL_API_KEY` is empty |
+| `no_devices` | accepted, but nobody is subscribed |
+| `failed` | OneSignal rejected it, or the call blew up |
+| *empty* | no push was attempted, because no mail was sent either |
+
+A failed push never releases the content. The items are already in thousands of
+inboxes; re-announcing them tomorrow to make a notification work would be the
+more expensive mistake, so the run stays `sent` and the failure is recorded
+beside it.
 
 ## What each run records
 
@@ -70,6 +102,7 @@ on a run mean something.
 From an admin token, without shell access:
 
     GET  /api/v1/admin/email/digest       # schedule, credentials, queue, last runs
+                                          # including push_enabled/push_problem
     POST /api/v1/admin/email/digest/run   # send it now, and report what happened
 
 From a shell on the service:

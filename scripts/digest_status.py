@@ -11,8 +11,9 @@ of a handful of things, and none of them are visible from outside the database:
   * the item predates the digest deploy and was backfilled as already announced
   * the sweep ran and claimed the item, but the send then failed
   * the mail backend has no credentials, so nothing could be delivered
+  * the mail went out but the push that accompanies it did not
 
-This prints all six, plus the digest's own run history and what the next digest
+This prints all seven, plus the digest's own run history and what the next digest
 currently holds. Every run writes a digest_runs row, so "did it even fire, and
 what did it decide" is a question this can answer directly.
 
@@ -39,6 +40,7 @@ from app.models.stem_pack import Stem, StemPack
 from app.schemas.broadcast import BroadcastAudience
 from app.services import (
     broadcast_service, content_digest_service, digest_run_service, email_service,
+    onesignal_service,
 )
 
 # Lagos, which is what the default 17:00 UTC was chosen against.
@@ -182,7 +184,11 @@ async def _runs(db, limit: int = 10) -> list[str]:
     lines = []
     for run in await digest_run_service.recent(db, limit):
         counts = f"items={run.items} recipients={run.recipients} sent={run.sent} failed={run.failed}"
+        if run.push_status:
+            counts += f" push={run.push_status}"
         detail = f" — {run.detail}" if run.detail else ""
+        if run.push_status and run.push_status != "sent" and run.push_detail:
+            detail += f" [push: {run.push_detail}]"
         lines.append(
             f"{run.run_key:<24} {run.status:<15} via {run.trigger:<7} "
             f"{_both_zones(run.started_at)}  {counts}{detail}"
@@ -208,6 +214,9 @@ async def report() -> None:
     print(f"  email backend      {settings.email_backend}")
     delivery = _delivery_problem(settings)
     print(f"  credentials        {delivery or 'present for this backend'}")
+    push_problem = onesignal_service.delivery_problem(settings)
+    print(f"  push               {settings.content_digest_push_enabled} "
+          f"({push_problem or 'OneSignal credentials present'})")
 
     async with AsyncSessionLocal() as db:
         present = await _digest_columns(db)
@@ -294,6 +303,10 @@ async def report() -> None:
         print(f"  The last due run sent {due_run.sent} message(s) to {due_run.recipients}")
         print(f"  recipient(s), {due_run.failed} of which failed. Anything queued above")
         print(f"  arrived after {last_run:%H:%M} UTC and goes out at {_both_zones(next_run)}.")
+        if due_run.push_status and due_run.push_status != "sent":
+            print(f"  Its push did not go out ({due_run.push_status}): "
+                  f"{due_run.push_detail}.")
+            print("  The mail is unaffected — the content was announced and stays claimed.")
     elif digest.total:
         print(f"  {digest.total} item(s) are queued and will go out at {_both_zones(next_run)}.")
     elif blocked:

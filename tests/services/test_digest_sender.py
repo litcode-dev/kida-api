@@ -7,7 +7,8 @@ as announced and therefore never mentioned again. Both now refuse to lose the
 content, and both leave a row saying what happened.
 
 The rest cover the lock: several things can start a digest now, and only one of
-them may send it.
+them may send it, and the push that goes out with the mail — which is recorded
+but never allowed to cost the run.
 """
 import uuid
 from decimal import Decimal
@@ -15,10 +16,10 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app.models.digest_run import DigestRunStatus
+from app.models.digest_run import DigestPushStatus, DigestRunStatus
 from app.models.loop import Genre, Loop, TempoFeel
 from app.models.user import User, UserRole
-from app.services import digest_sender, email_service
+from app.services import digest_sender, email_service, onesignal_service
 from app.services.auth_service import hash_password
 from tests.conftest import TestSessionLocal
 
@@ -56,13 +57,33 @@ async def _ready_loop(db, user_id, title="Fresh Loop"):
 
 
 @pytest.fixture
-def digest_env():
+def push_ok():
+    """OneSignal accepting the broadcast.
+
+    Pulled in by ``digest_env`` rather than requested per test: the digest now
+    pushes on every successful send, and nothing here may reach the real API.
+    """
+    with patch.object(
+        onesignal_service,
+        "send_to_all",
+        new=AsyncMock(return_value={
+            "status_code": 200, "body": {"id": "abc", "recipients": 812},
+        }),
+    ) as push:
+        yield push
+
+
+@pytest.fixture
+def digest_env(push_ok):
     """Point the sender at the test database, with a delivering mail backend."""
     settings = digest_sender.get_settings().model_copy(update={
         "content_digest_enabled": True,
         "content_digest_hour_utc": 0,  # always past due, so a run is always claimable
         "email_backend": "resend",
         "resend_api_key": "test-key",
+        "content_digest_push_enabled": True,
+        "onesignal_app_id": "test-app",
+        "onesignal_api_key": "test-key",
     })
     with patch.object(digest_sender, "AsyncSessionLocal", TestSessionLocal), \
             patch.object(digest_sender, "get_settings", return_value=settings):
@@ -229,3 +250,138 @@ async def test_a_disabled_digest_does_nothing_at_all(db_session, digest_env, sen
 
     assert await digest_sender.run_digest(trigger="beat") is None
     sent_ok.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_the_digest_is_pushed_as_well_as_emailed(
+    db_session, digest_env, sent_ok, push_ok
+):
+    producer = await _user(db_session, role=UserRole.producer)
+    await _ready_loop(db_session, producer.id, title="Ancestral Chant")
+
+    run = await digest_sender.run_digest(trigger="beat")
+
+    assert run.status == DigestRunStatus.sent
+    assert run.push_status == DigestPushStatus.sent
+    assert "812" in run.push_detail
+
+    push_ok.assert_awaited_once()
+    kwargs = push_ok.await_args.kwargs
+    # The same sentence as the subject line: somebody who gets both should read
+    # the second as the first, not as a second batch of content.
+    assert kwargs["title"] == "1 new drop on Kida"
+    assert "Ancestral Chant" in kwargs["message"]
+    assert kwargs["data"]["type"] == "content_digest"
+    assert kwargs["data"]["content_types"] == ["loop"]
+
+
+@pytest.mark.asyncio
+async def test_a_push_that_blows_up_does_not_cost_the_email(
+    db_session, digest_env, sent_ok, push_ok
+):
+    """The mail is the digest. A failed broadcast is recorded, and nothing more.
+
+    Releasing the content here would re-send tomorrow's digest to every inbox
+    that already has today's, which is the expensive mistake.
+    """
+    producer = await _user(db_session, role=UserRole.producer)
+    loop = await _ready_loop(db_session, producer.id)
+    push_ok.side_effect = RuntimeError("onesignal is down")
+
+    run = await digest_sender.run_digest(trigger="beat")
+
+    assert run.status == DigestRunStatus.sent
+    assert run.push_status == DigestPushStatus.failed
+    assert "RuntimeError" in run.push_detail
+
+    await db_session.refresh(loop)
+    assert loop.announced_at is not None, "the email went out, so the claim stands"
+
+
+@pytest.mark.asyncio
+async def test_a_rejected_push_is_recorded_on_the_run(
+    db_session, digest_env, sent_ok, push_ok
+):
+    producer = await _user(db_session, role=UserRole.producer)
+    await _ready_loop(db_session, producer.id)
+    push_ok.return_value = {
+        "status_code": 400, "body": {"errors": ["app_id not found"]},
+    }
+
+    run = await digest_sender.run_digest(trigger="beat")
+
+    assert run.status == DigestRunStatus.sent
+    assert run.push_status == DigestPushStatus.failed
+    assert "400" in run.push_detail
+
+
+@pytest.mark.asyncio
+async def test_nobody_subscribed_is_not_a_failed_push(
+    db_session, digest_env, sent_ok, push_ok
+):
+    """OneSignal answers an empty audience with a 200 and a complaint.
+
+    That is a catalogue nobody has installed the app for, not a broken send —
+    calling it "failed" would send somebody looking for a fault that is not
+    there.
+    """
+    producer = await _user(db_session, role=UserRole.producer)
+    await _ready_loop(db_session, producer.id)
+    push_ok.return_value = {
+        "status_code": 200,
+        "body": {"errors": ["All included players are not subscribed"]},
+    }
+
+    run = await digest_sender.run_digest(trigger="beat")
+
+    assert run.push_status == DigestPushStatus.no_devices
+
+
+@pytest.mark.asyncio
+async def test_the_push_can_be_turned_off_without_touching_the_mail(
+    db_session, digest_env, sent_ok, push_ok
+):
+    producer = await _user(db_session, role=UserRole.producer)
+    await _ready_loop(db_session, producer.id)
+    digest_env.content_digest_push_enabled = False
+
+    run = await digest_sender.run_digest(trigger="beat")
+
+    assert run.status == DigestRunStatus.sent
+    assert run.push_status == DigestPushStatus.disabled
+    push_ok.assert_not_awaited()
+    sent_ok.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_unconfigured_onesignal_is_named_rather_than_attempted(
+    db_session, digest_env, sent_ok, push_ok
+):
+    producer = await _user(db_session, role=UserRole.producer)
+    await _ready_loop(db_session, producer.id)
+    digest_env.onesignal_api_key = ""
+
+    run = await digest_sender.run_digest(trigger="beat")
+
+    assert run.push_status == DigestPushStatus.not_configured
+    assert "ONESIGNAL_API_KEY" in run.push_detail
+    push_ok.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_run_that_sends_no_mail_sends_no_push(
+    db_session, digest_env, sent_ok, push_ok
+):
+    """No mail, no push: the two announcements go out together or not at all."""
+    producer = await _user(db_session, role=UserRole.producer)
+    await _ready_loop(db_session, producer.id)
+
+    with patch(
+        "app.services.broadcast_service.resolve_recipients",
+        new=AsyncMock(return_value=[]),
+    ):
+        run = await digest_sender.run_digest(trigger="beat")
+
+    assert run.status == DigestRunStatus.no_recipients
+    assert run.push_status is None, "not attempted is not the same as failed"
+    push_ok.assert_not_awaited()

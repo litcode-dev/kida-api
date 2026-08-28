@@ -210,7 +210,10 @@ async def send_broadcast(
         "is queued for the next run, and the last few runs with what each one did. "
         "A run recorded as `not_configured` or `failed` is the answer to \"nobody "
         "received anything\"; no run row at all for a past slot means nothing "
-        "triggered it."
+        "triggered it.\n\n"
+        "Each run also carries `push_status`: the digest goes out as one push to "
+        "every device alongside the mail, and a push that failed leaves the run "
+        "itself recorded as `sent`, because the email is what the run succeeds on."
     ),
     responses={403: {"description": "Admin role required"}},
 )
@@ -223,7 +226,9 @@ async def digest_status(
     from datetime import datetime, timezone
 
     from app.config import get_settings
-    from app.services import content_digest_service, digest_run_service, email_service
+    from app.services import (
+        content_digest_service, digest_run_service, email_service, onesignal_service,
+    )
 
     settings = get_settings()
     now = datetime.now(timezone.utc)
@@ -245,6 +250,8 @@ async def digest_status(
         "last_due_run_status": due_run.status if due_run else "never ran",
         "email_backend": settings.email_backend,
         "delivery_problem": email_service.delivery_problem(settings),
+        "push_enabled": settings.content_digest_push_enabled,
+        "push_problem": onesignal_service.delivery_problem(settings),
         "queued_items": sum(len(ids) for ids in claim_ids.values()),
         "queued": [
             {"type": key, "title": item.title}
@@ -263,6 +270,8 @@ async def digest_status(
                 "recipients": run.recipients,
                 "sent": run.sent,
                 "failed": run.failed,
+                "push_status": run.push_status,
+                "push_detail": run.push_detail,
                 "detail": run.detail,
             }
             for run in runs
@@ -276,9 +285,10 @@ async def digest_status(
     description=(
         "Runs the digest immediately instead of waiting for the scheduled hour, and "
         "waits for it to finish so the response says what happened.\n\n"
-        "It sends real mail to the full audience. Nothing goes out when there is no "
-        "new content — check `/admin/email/digest` first. A manual run gets its own "
-        "slot, so it never cancels the day's scheduled digest."
+        "It sends real mail to the full audience, and one push to every device. "
+        "Nothing goes out when there is no new content — check `/admin/email/digest` "
+        "first. A manual run gets its own slot, so it never cancels the day's "
+        "scheduled digest."
     ),
     responses={
         403: {"description": "Admin role required"},
@@ -317,6 +327,8 @@ async def run_digest_now(
             "recipients": run.recipients,
             "sent": run.sent,
             "failed": run.failed,
+            "push_status": run.push_status,
+            "push_detail": run.push_detail,
             "detail": run.detail,
         },
         f"Digest run finished: {run.status}",

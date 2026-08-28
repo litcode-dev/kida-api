@@ -35,6 +35,15 @@ SECTION_LABELS = [
     ("drone_pad", "Drone Pads"),
 ]
 
+# How each type is counted in the push notification's one line: "3 loops and
+# 1 drum kit". The email has room for the titles; the push has room for this.
+SECTION_NOUNS = {
+    "loop": ("loop", "loops"),
+    "stem_pack": ("stem pack", "stem packs"),
+    "drum_kit": ("drum kit", "drum kits"),
+    "drone_pad": ("drone pad", "drone pads"),
+}
+
 # A single digest will not list more than this per type. Beyond it the email
 # stops being readable, so the rest is summarised as a count.
 MAX_ITEMS_PER_SECTION = 12
@@ -67,6 +76,41 @@ class Digest:
             for key, label in SECTION_LABELS
             if self.items.get(key)
         ]
+
+
+def headline(total: int) -> str:
+    """What the digest is called wherever it is announced.
+
+    The email subject and the push heading are the same sentence on purpose:
+    somebody who gets both should recognise the second as the first, not read
+    it as a second batch of content.
+    """
+    return "1 new drop on Kida" if total == 1 else f"{total} new drops on Kida"
+
+
+def _join(parts: list[str]) -> str:
+    if len(parts) < 2:
+        return parts[0] if parts else ""
+    return f"{', '.join(parts[:-1])} and {parts[-1]}"
+
+
+def push_message(sections: list[tuple[str, str, list[DigestItem]]]) -> str:
+    """The push's one line of body text.
+
+    A single drop is named — that is the most useful thing one notification can
+    say. Several are counted by type instead: a phone shows about two lines, so
+    a list of twelve titles arrives as an ellipsis, while "3 loops and 2 drum
+    kits" survives the truncation intact.
+    """
+    items = [item for _key, _label, group in sections for item in group]
+    if len(items) == 1:
+        return f'"{items[0].title}" just dropped. Open Kida to hear it.'
+
+    counts = [
+        f"{len(group)} {SECTION_NOUNS[key][0 if len(group) == 1 else 1]}"
+        for key, _label, group in sections
+    ]
+    return f"{_join(counts)} just dropped. Open Kida to hear them."
 
 
 async def _ready_loops(db: AsyncSession) -> list[Loop]:

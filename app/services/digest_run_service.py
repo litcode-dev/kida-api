@@ -87,6 +87,8 @@ async def finish(
     failed: int = 0,
     claimed_ids: dict[str, list[str]] | None = None,
     detail: str | None = None,
+    push_status: str | None = None,
+    push_detail: str | None = None,
 ) -> DigestRun:
     run.status = status
     run.finished_at = datetime.now(timezone.utc)
@@ -97,6 +99,10 @@ async def finish(
     if claimed_ids is not None:
         run.claimed_ids = claimed_ids
     run.detail = detail
+    # Left as NULL when no push was attempted: a run that sent no mail sends no
+    # push either, and "not attempted" is a different answer from "failed".
+    run.push_status = push_status
+    run.push_detail = push_detail
     db.add(run)
     await db.commit()
     return run

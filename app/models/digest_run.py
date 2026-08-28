@@ -33,6 +33,22 @@ class DigestRunStatus(str):
     failed = "failed"                    # the send itself failed
 
 
+class DigestPushStatus(str):
+    """What became of the digest's push notification.
+
+    Kept apart from the run's own status because the push is not what the run
+    succeeds or fails on: the mail is the digest, and a rejected broadcast must
+    not release content that thousands of inboxes already have. NULL on the row
+    means no push was attempted — the mail never went out either.
+    """
+
+    sent = "sent"                        # OneSignal accepted the broadcast
+    disabled = "disabled"                # CONTENT_DIGEST_PUSH_ENABLED is false
+    not_configured = "not_configured"    # OneSignal has no credentials
+    no_devices = "no_devices"            # accepted, but nobody is subscribed
+    failed = "failed"                    # OneSignal rejected it, or the call blew up
+
+
 class DigestRun(Base):
     __tablename__ = "digest_runs"
 
@@ -59,6 +75,13 @@ class DigestRun(Base):
     recipients: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
     sent: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
     failed: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+
+    # What became of the push that goes out with the mail, and why. NULL means
+    # none was attempted, which is what a run that sent no mail looks like.
+    # Separate from ``status`` so "the email arrived but no push did" is a
+    # question the row answers on its own.
+    push_status: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    push_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # What went out, by type: {"loop": ["<uuid>", ...]}. Kept so a digest lost
     # to a failed send can be reconstructed by hand from the row alone.

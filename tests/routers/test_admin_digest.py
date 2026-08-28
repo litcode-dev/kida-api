@@ -11,7 +11,7 @@ import pytest
 
 from app.models.loop import Genre, Loop, TempoFeel
 from app.models.user import User, UserRole
-from app.services import digest_sender, email_service
+from app.services import digest_sender, email_service, onesignal_service
 from app.services.auth_service import create_access_token, hash_password
 from tests.conftest import TestSessionLocal
 
@@ -62,9 +62,17 @@ def digest_env():
         "content_digest_hour_utc": 0,
         "email_backend": "resend",
         "resend_api_key": "test-key",
+        "content_digest_push_enabled": True,
+        "onesignal_app_id": "test-app",
+        "onesignal_api_key": "test-key",
+    })
+    # A digest that sends also pushes, and no test may reach OneSignal itself.
+    push = AsyncMock(return_value={
+        "status_code": 200, "body": {"id": "abc", "recipients": 4},
     })
     with patch.object(digest_sender, "AsyncSessionLocal", TestSessionLocal), \
-            patch.object(digest_sender, "get_settings", return_value=settings):
+            patch.object(digest_sender, "get_settings", return_value=settings), \
+            patch.object(onesignal_service, "send_to_all", new=push):
         yield settings
 
 
@@ -134,6 +142,11 @@ async def test_the_run_shows_up_in_the_history(client, db_session, digest_env):
 
     assert [r["status"] for r in body["runs"]] == ["sent"]
     assert body["runs"][0]["trigger"] == "manual"
+    # The push rides along with the mail, and the history says what became of
+    # it: a run recorded as "sent" whose push failed is a real outcome.
+    assert body["runs"][0]["push_status"] == "sent"
+    assert body["push_enabled"] is True
+    assert body["push_problem"] is None
 
 
 @pytest.mark.asyncio

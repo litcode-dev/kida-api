@@ -219,3 +219,31 @@ async def test_sections_skip_empty_groups_and_keep_order(db_session):
     keys = [key for key, _label, _items in digest.sections()]
 
     assert keys == ["loop", "drone_pad"]
+
+
+@pytest.mark.asyncio
+async def test_a_single_drop_is_named_in_the_push(db_session):
+    """One notification, one item: the title is the most useful thing to say."""
+    user = await _user(db_session)
+    await _loop(db_session, user.id, title="Ancestral Chant")
+
+    digest, _ = await content_digest_service.collect(db_session)
+
+    assert content_digest_service.headline(digest.total) == "1 new drop on Kida"
+    assert "Ancestral Chant" in content_digest_service.push_message(digest.sections())
+
+
+@pytest.mark.asyncio
+async def test_several_drops_are_counted_by_type_in_the_push(db_session):
+    """A phone shows about two lines, so twelve titles would arrive as an ellipsis."""
+    user = await _user(db_session)
+    await _loop(db_session, user.id, title="One")
+    await _loop(db_session, user.id, title="Two")
+    await _drum_kit(db_session, user.id, title="Kit")
+
+    digest, _ = await content_digest_service.collect(db_session)
+    message = content_digest_service.push_message(digest.sections())
+
+    assert content_digest_service.headline(digest.total) == "3 new drops on Kida"
+    assert message.startswith("2 loops and 1 drum kit just dropped")
+    assert "One" not in message
