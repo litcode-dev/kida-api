@@ -33,6 +33,29 @@ def _app_id() -> str:
     return get_settings().onesignal_app_id
 
 
+def delivery_problem(settings=None) -> str | None:
+    """Why a push would go nowhere, or None if OneSignal is usable.
+
+    The digest asks this before it sends, for the same reason the mail backend
+    is checked: a broadcast against missing credentials is a 400 nobody reads,
+    and "the push never arrived" should name its cause on the run row rather
+    than only in a log line.
+    """
+    settings = settings or get_settings()
+    missing = [
+        name
+        for name, value in (
+            ("ONESIGNAL_APP_ID", settings.onesignal_app_id),
+            ("ONESIGNAL_API_KEY", settings.onesignal_api_key),
+        )
+        if not value
+    ]
+    if missing:
+        verb = "is" if len(missing) == 1 else "are"
+        return f"{'/'.join(missing)} {verb} empty; OneSignal would reject the send"
+    return None
+
+
 async def _post(payload: dict) -> dict:
     async with httpx.AsyncClient(timeout=10) as client:
         resp = await client.post(ONESIGNAL_API_URL, json=payload, headers=_headers())

@@ -1,6 +1,8 @@
 import pytest
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from app.services import onesignal_service
 from app.services.onesignal_service import send_notification
 
 
@@ -65,3 +67,19 @@ async def test_send_notification_posts_the_expected_payload():
     assert payload["headings"] == {"en": "Title"}
     assert payload["contents"] == {"en": "Body"}
     assert payload["data"] == {"k": "v"}
+
+
+def _settings(app_id: str, api_key: str):
+    return SimpleNamespace(onesignal_app_id=app_id, onesignal_api_key=api_key)
+
+
+def test_delivery_problem_is_none_when_both_credentials_are_set():
+    assert onesignal_service.delivery_problem(_settings("app", "key")) is None
+
+
+def test_delivery_problem_names_every_missing_credential():
+    """The digest records this on its run row, so it has to say which one."""
+    problem = onesignal_service.delivery_problem(_settings("", ""))
+
+    assert "ONESIGNAL_APP_ID" in problem
+    assert "ONESIGNAL_API_KEY" in problem

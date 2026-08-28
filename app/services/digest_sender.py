@@ -14,6 +14,11 @@ Two failure modes the old task hid are now refusals rather than false successes:
 a mail backend with no credentials (which logged sent=N while delivering
 nothing), and a send where every message failed (which left the content stamped
 as announced and therefore never mentioned again).
+
+The same digest also goes out as one push to every device, after the mail. Its
+outcome is recorded on the run row and nowhere else: the email is what the run
+succeeds or fails on, so a rejected broadcast can never release content that
+thousands of inboxes have already received.
 """
 from datetime import datetime, timezone
 
@@ -21,11 +26,11 @@ import structlog
 
 from app.config import get_settings
 from app.database import AsyncSessionLocal
-from app.models.digest_run import DigestRun, DigestRunStatus
+from app.models.digest_run import DigestPushStatus, DigestRun, DigestRunStatus
 from app.schemas.broadcast import BroadcastAudience
 from app.services import (
     broadcast_service, content_digest_service, digest_run_service, email_service,
-    unsubscribe_service,
+    onesignal_service, unsubscribe_service,
 )
 
 log = structlog.get_logger()
@@ -33,6 +38,69 @@ log = structlog.get_logger()
 
 def _as_json_ids(claim_ids: dict) -> dict[str, list[str]]:
     return {key: [str(i) for i in ids] for key, ids in claim_ids.items() if ids}
+
+
+def _empty_audience(errors) -> bool:
+    """OneSignal's way of saying "accepted, but nobody is subscribed"."""
+    return any("not subscribed" in str(error).lower() for error in errors)
+
+
+async def _send_push(
+    settings, sections, total: int, key: str
+) -> tuple[str, str | None]:
+    """Announce the same digest to every device. Never raises.
+
+    The mail is the digest; this is the copy that reaches the app. It runs
+    after the send, and its outcome only ever lands on the run row: a push that
+    fails must not fail the run, because the run's claim is what stops the mail
+    that already went out from being sent again tomorrow.
+    """
+    if not settings.content_digest_push_enabled:
+        return DigestPushStatus.disabled, "CONTENT_DIGEST_PUSH_ENABLED is false"
+
+    problem = onesignal_service.delivery_problem(settings)
+    if problem:
+        log.error("content_digest.push_not_configured", run_key=key, reason=problem)
+        return DigestPushStatus.not_configured, problem
+
+    try:
+        result = await onesignal_service.send_to_all(
+            title=content_digest_service.headline(total),
+            message=content_digest_service.push_message(sections),
+            data={
+                "type": "content_digest",
+                "total": total,
+                "content_types": [section for section, _label, _items in sections],
+            },
+        )
+    except Exception as exc:  # noqa: BLE001 - the mail is already out
+        log.error("content_digest.push_error", run_key=key, error=str(exc))
+        return DigestPushStatus.failed, f"push raised {type(exc).__name__}: {exc}"
+
+    status_code = result.get("status_code")
+    body = result.get("body") or {}
+    errors = body.get("errors") or []
+
+    if status_code not in (200, 201):
+        detail = f"OneSignal answered {status_code}: {str(errors or body)[:200]}"
+        log.error("content_digest.push_rejected", run_key=key, detail=detail)
+        return DigestPushStatus.failed, detail
+
+    devices = body.get("recipients")
+    if errors:
+        detail = str(errors)[:200]
+        if _empty_audience(errors):
+            # Not a failure of the send: the broadcast was accepted and there
+            # was nobody registered to deliver it to.
+            log.info("content_digest.push_no_devices", run_key=key, detail=detail)
+            return DigestPushStatus.no_devices, detail
+        log.error("content_digest.push_rejected", run_key=key, detail=detail)
+        return DigestPushStatus.failed, detail
+
+    log.info("content_digest.pushed", run_key=key, devices=devices)
+    return DigestPushStatus.sent, (
+        f"queued for {devices} device(s)" if devices is not None else None
+    )
 
 
 async def run_digest(
@@ -115,7 +183,7 @@ async def run_digest(
             run_key=key, items=claimed, recipients=len(recipients), ids=json_ids,
         )
 
-        subject = "1 new drop on Kida" if total == 1 else f"{total} new drops on Kida"
+        subject = content_digest_service.headline(total)
 
         # Rendered per address: the unsubscribe link and its List-Unsubscribe
         # headers are signed for one recipient, so one shared body would let
@@ -164,11 +232,17 @@ async def run_digest(
                 detail="every message failed — content released for the next digest",
             )
 
+        # The same announcement, to every device. After the mail rather than
+        # before it: the push is the copy, and nothing about it may change what
+        # the run has already claimed and delivered.
+        push_status, push_detail = await _send_push(settings, sections, total, key)
+
         log.info(
             "content_digest.sent",
-            run_key=key, items=total, sent=sent, failed=failed,
+            run_key=key, items=total, sent=sent, failed=failed, push=push_status,
         )
         return await digest_run_service.finish(
             db, run, DigestRunStatus.sent, items=total, recipients=len(recipients),
             sent=sent, failed=failed, claimed_ids=json_ids,
+            push_status=push_status, push_detail=push_detail,
         )

@@ -76,6 +76,13 @@ class Settings(BaseSettings):
     # per item to every recipient. Push notifications still fire per item, so
     # nothing here delays the "it's live" signal — this is the roundup.
     content_digest_enabled: bool = True
+    # The digest also goes out as one push to every subscribed device, sent
+    # with the mail and saying the same thing. Most of the audience is on the
+    # app rather than in an inbox, and a stem pack the producer publishes days
+    # after upload has no per-item push left to fire — the roundup is the only
+    # announcement it gets. Turn it off to leave the digest email-only; the
+    # mail sends either way, because a failed push must not cost the roundup.
+    content_digest_push_enabled: bool = True
     # Hour (UTC) the digest is sent. 17:00 UTC is 18:00 in Lagos — evening,
     # after work, for the audience this catalogue is built for.
     content_digest_hour_utc: int = 17
