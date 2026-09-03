@@ -100,6 +100,7 @@ async def update_drum_kit(
     thumbnail: UploadFile | None = None,
 ) -> DrumKit:
     kit = await get_drum_kit(db, kit_id)
+    stale_keys: list[str] = []
 
     if thumbnail:
         thumb_bytes = await thumbnail.read()
@@ -111,8 +112,10 @@ async def update_drum_kit(
         old_thumb_key = kit.thumbnail_s3_key
         await s3_service.upload_bytes(new_thumb_key, thumb_bytes, content_type)
         kit.thumbnail_s3_key = new_thumb_key
+        # Removed once the row naming the replacement is committed — deleting
+        # here and then rolling back leaves the row pointing at nothing.
         if old_thumb_key and old_thumb_key != new_thumb_key:
-            await s3_service.delete_object(old_thumb_key)
+            stale_keys.append(old_thumb_key)
 
     update_fields = data.model_dump(exclude_none=True)
     new_desired = update_fields.pop("desired_price_usd", None)
@@ -127,6 +130,8 @@ async def update_drum_kit(
 
     await db.commit()
     await db.refresh(kit)
+
+    await s3_service.delete_objects_after_commit(stale_keys)
     return kit
 
 
@@ -171,12 +176,13 @@ async def replace_sample_audio(
 
     wav_bytes = await validate_wav_upload(file)
 
-    if sample.file_s3_key:
-        await s3_service.delete_object(sample.file_s3_key)
-
     raw_key = s3_service.s3_key_for_raw_drum_sample(str(sample_id))
     await s3_service.upload_bytes(raw_key, wav_bytes, "audio/wav")
 
+    # The encrypted sample keeps its key, which is derived from the sample id,
+    # so the job that re-encodes this upload overwrites it in place. Deleting it
+    # here frees no storage and leaves a sample whose job never runs with no
+    # audio at all.
     sample.file_s3_key = None
     sample.status = "processing"
     await db.commit()
@@ -194,14 +200,19 @@ async def delete_drum_kit(db: AsyncSession, kit_id: uuid.UUID) -> None:
     if not kit:
         raise NotFoundError(f"Drum kit {kit_id} not found")
 
-    for sample in kit.samples:
-        if sample.file_s3_key:
-            await s3_service.delete_object(sample.file_s3_key)
-        if sample.preview_s3_key:
-            await s3_service.delete_object(sample.preview_s3_key)
-
+    keys_to_delete = [
+        key
+        for sample in kit.samples
+        for key in (sample.file_s3_key, sample.preview_s3_key)
+        if key
+    ]
     if kit.thumbnail_s3_key:
-        await s3_service.delete_object(kit.thumbnail_s3_key)
+        keys_to_delete.append(kit.thumbnail_s3_key)
 
     await db.delete(kit)
     await db.commit()
+
+    # After the row is gone, for the same reason the update path waits: a
+    # commit that fails once the objects are deleted leaves a kit the
+    # catalogue still lists and nothing can play.
+    await s3_service.delete_objects_after_commit(keys_to_delete)

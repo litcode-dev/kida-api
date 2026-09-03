@@ -1,9 +1,11 @@
 import asyncio
 import hashlib
 import boto3
+import structlog
 from botocore.config import Config
 from app.config import get_settings
 
+log = structlog.get_logger()
 settings = get_settings()
 
 # boto3 clients are thread-safe — reuse one instance to avoid per-call construction overhead
@@ -90,6 +92,26 @@ async def delete_object(key: str) -> None:
         _client.delete_object(Bucket=settings.s3_bucket_name, Key=key)
 
     await asyncio.to_thread(_delete)
+
+
+async def delete_objects_after_commit(keys: list[str]) -> None:
+    """Remove assets a committed row no longer refers to.
+
+    Replacing an asset has to delete the old object *after* the row that names
+    the new one is committed: deleting first and then rolling back — a later
+    validator refusing the same request is enough — leaves the row pointing at
+    an object that no longer exists, which no retry repairs.
+
+    A failure here is logged rather than raised. The write it belongs to has
+    already succeeded, so turning a leftover object into a 500 would tell the
+    caller their update was lost and invite a duplicate; an orphan costs
+    storage and nothing else.
+    """
+    for key in keys:
+        try:
+            await delete_object(key)
+        except Exception as exc:  # noqa: BLE001 - an orphan beats a failed update
+            log.warning("s3_stale_object_not_deleted", key=key, error=str(exc))
 
 
 def s3_key_for_raw_loop(loop_id: str) -> str:

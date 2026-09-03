@@ -221,6 +221,12 @@ async def update_loop(
 ) -> tuple[Loop, bool]:
     loop = await get_loop(db, loop_id)
 
+    # Old assets are removed once the row naming their replacement is committed,
+    # never before: a request can still fail after this point — the audio below
+    # is validated after the thumbnail is written — and a rollback would leave
+    # the row pointing at an object that is already gone.
+    stale_keys: list[str] = []
+
     if thumbnail:
         thumb_bytes = await thumbnail.read()
         content_type = thumbnail.content_type or "image/jpeg"
@@ -235,17 +241,19 @@ async def update_loop(
         await s3_service.upload_bytes(new_thumb_key, thumb_bytes, content_type)
         loop.thumbnail_s3_key = new_thumb_key
         if old_thumb_key and old_thumb_key != new_thumb_key:
-            await s3_service.delete_object(old_thumb_key)
+            stale_keys.append(old_thumb_key)
 
     should_reprocess = False
     if file:
         wav_bytes = await validate_wav_upload(file)
-        if loop.file_s3_key:
-            await s3_service.delete_object(loop.file_s3_key)
-        if loop.preview_s3_key:
-            await s3_service.delete_object(loop.preview_s3_key)
         raw_key = s3_service.s3_key_for_raw_loop(str(loop_id))
         await s3_service.upload_bytes(raw_key, wav_bytes, "audio/wav")
+        # The encrypted file and the preview are not deleted here. Both keys are
+        # derived from the loop id alone, so the job that re-encodes this upload
+        # overwrites them in place — deleting first frees no storage and only
+        # widens the window where a loop whose job never runs has no audio left
+        # at all. The columns are cleared so nothing serves the old audio in the
+        # meantime; see assert_loop_ready.
         loop.file_s3_key = None
         loop.preview_s3_key = None
         loop.status = "processing"
@@ -270,19 +278,25 @@ async def update_loop(
 
     await db.commit()
     await db.refresh(loop)
+
+    await s3_service.delete_objects_after_commit(stale_keys)
     return loop, should_reprocess
 
 
 async def delete_loop(db: AsyncSession, loop_id: uuid.UUID) -> None:
     loop = await get_loop(db, loop_id)
     keys_to_delete = [
-        s3_service.s3_key_for_raw_loop(str(loop_id)),
-        loop.file_s3_key,
-        loop.preview_s3_key,
-        loop.thumbnail_s3_key,
+        key for key in (
+            s3_service.s3_key_for_raw_loop(str(loop_id)),
+            loop.file_s3_key,
+            loop.preview_s3_key,
+            loop.thumbnail_s3_key,
+        ) if key
     ]
-    for key in keys_to_delete:
-        if key:
-            await s3_service.delete_object(key)
     await db.delete(loop)
     await db.commit()
+
+    # After the row is gone, for the same reason the update path waits: a
+    # commit that fails once the objects are deleted leaves a loop the
+    # catalogue still lists and nothing can play.
+    await s3_service.delete_objects_after_commit(keys_to_delete)
