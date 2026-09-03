@@ -305,3 +305,70 @@ async def test_replace_drum_sample_audio_returns_404_if_sample_not_in_kit(client
         )
 
     assert resp.status_code == 404
+
+
+# --- Form validation reaches the client as 422, not 500 ---
+
+@pytest.mark.asyncio
+async def test_update_loop_with_out_of_range_values_is_422_not_500(client, db_session):
+    """A multipart PUT builds LoopUpdate inside the handler, so a failed
+    validator used to escape as a bare ValidationError and the admin saw
+    "An unexpected error occurred" for what is a client-side mistake."""
+    user = await _create_user(db_session, role=UserRole.admin)
+    loop = await _create_loop(db_session, user.id)
+    token = create_access_token(str(user.id), user.role.value)
+
+    resp = await client.put(
+        f"/api/v1/admin/loops/{loop.id}",
+        data={"bpm": "0", "time_signature": "string"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert resp.status_code == 422
+    message = resp.json()["message"]
+    # Both bad fields are named — reporting only the first sends the client
+    # back for a second round trip.
+    assert "bpm" in message and "BPM must be between 60 and 250" in message
+    assert "time_signature" in message and "numerator/denominator" in message
+
+
+@pytest.mark.asyncio
+async def test_update_loop_with_zero_desired_price_is_422(client, db_session):
+    user = await _create_user(db_session, role=UserRole.admin)
+    loop = await _create_loop(db_session, user.id)
+    token = create_access_token(str(user.id), user.role.value)
+
+    resp = await client.put(
+        f"/api/v1/admin/loops/{loop.id}",
+        data={"desired_price_usd": "0"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert resp.status_code == 422
+    assert "desired_price_usd" in resp.json()["message"]
+
+
+@pytest.mark.asyncio
+async def test_upload_loop_with_bad_time_signature_is_422_not_500(client, db_session):
+    user = await _create_user(db_session, role=UserRole.admin)
+    token = create_access_token(str(user.id), user.role.value)
+
+    with patch("app.services.loop_service.validate_wav_upload", new=AsyncMock(return_value=b"fakewav")), \
+         patch("app.services.loop_service.s3_service.upload_bytes", new=AsyncMock()):
+        resp = await client.post(
+            "/api/v1/admin/loops",
+            data={
+                "title": "New Loop",
+                "genre": "Afrobeat",
+                "bpm": "90",
+                "time_signature": "string",
+                "tempo_feel": "slow",
+                "price": "0",
+                "is_free": "true",
+            },
+            files={"file": ("test.wav", b"RIFF....", "audio/wav")},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert resp.status_code == 422
+    assert "time_signature" in resp.json()["message"]

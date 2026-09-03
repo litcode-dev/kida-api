@@ -179,7 +179,7 @@ class LoopFilter(BaseModel):
         Malformed entries are rejected rather than dropped: silently ignoring
         one turns a client typo into a page of results for the *other* values,
         which reads as real data. Handlers turn the resulting ValidationError
-        into a 422 (see validation_error_422).
+        into a 422 (see parse_model).
         """
         if v is None:
             return None

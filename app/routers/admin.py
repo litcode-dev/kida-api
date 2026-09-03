@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, Query, Request, UploadFile, File, Form
-from pydantic import BaseModel, EmailStr, ValidationError
+from pydantic import BaseModel, EmailStr
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from decimal import Decimal
@@ -38,7 +38,7 @@ from app.models.loop_request import LoopRequest
 from app.models.user import outranks, User, UserRole
 from app.models.loop import Genre, TempoFeel
 from app.models.drone_pad import MusicalKey
-from app.exceptions import NotFoundError, AppError, ForbiddenError
+from app.exceptions import NotFoundError, AppError, ForbiddenError, parse_model
 from redis.asyncio import Redis
 from app.services import (
     auth_service, broadcast_service, loop_service, drone_service, drum_kit_service, cache_service,
@@ -834,12 +834,9 @@ async def platform_analytics(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_admin),
 ):
-    try:
-        params = AnalyticsParams(period=period, from_date=from_date, to_date=to_date)
-    except ValidationError as e:
-        err = e.errors()[0]
-        msg = str(err.get("ctx", {}).get("error", err["msg"]))
-        raise AppError(msg, status_code=422)
+    params = parse_model(
+        AnalyticsParams, period=period, from_date=from_date, to_date=to_date
+    )
     data = await get_platform_analytics(db, params)
     return success(data)
 
@@ -864,7 +861,8 @@ async def upload_loop(
     db: AsyncSession = Depends(get_db),
     admin=Depends(require_admin),
 ):
-    data = LoopCreate(
+    data = parse_model(
+        LoopCreate,
         title=title, genre=genre, bpm=bpm,
         time_signature=time_signature, tempo_feel=tempo_feel,
         price=price, is_free=is_free,
@@ -909,7 +907,8 @@ async def update_loop(
     admin=Depends(require_admin),
 ):
     tags_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else None
-    data = LoopUpdate(
+    data = parse_model(
+        LoopUpdate,
         title=title,
         description=description,
         genre=genre,
@@ -980,7 +979,8 @@ async def upload_drone(
     from app.exceptions import AppError
     if not is_free and price is None:
         raise AppError("price is required for paid drone pads", status_code=422)
-    data = DronePadCreate(
+    data = parse_model(
+        DronePadCreate,
         title=title,
         description=description,
         key=key,
@@ -1103,7 +1103,8 @@ async def update_drone(
     db: AsyncSession = Depends(get_db),
     admin=Depends(require_admin),
 ):
-    data = DronePadUpdate(
+    data = parse_model(
+        DronePadUpdate,
         title=title,
         description=description,
         price=price,
@@ -1175,7 +1176,8 @@ async def create_drum_kit(
 ):
     import structlog as _structlog
     labels = [l.strip() for l in sample_labels.split(",") if l.strip()]
-    data = DrumKitCreate(
+    data = parse_model(
+        DrumKitCreate,
         title=title,
         description=description,
         tags=[t.strip() for t in tags.split(",") if t.strip()],
@@ -1248,7 +1250,8 @@ async def update_drum_kit(
     db: AsyncSession = Depends(get_db),
     admin=Depends(require_admin),
 ):
-    data = DrumKitUpdate(
+    data = parse_model(
+        DrumKitUpdate,
         title=title, description=description, price=price, is_free=is_free,
         desired_price_usd=desired_price_usd,
     )

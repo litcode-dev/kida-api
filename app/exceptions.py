@@ -1,4 +1,5 @@
 import socket
+from typing import TypeVar
 
 import asyncpg
 import kombu.exceptions
@@ -8,8 +9,11 @@ import sqlalchemy.exc
 import structlog
 from fastapi import Request, status
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, ValidationError
 
 log = structlog.get_logger()
+
+ModelT = TypeVar("ModelT", bound=BaseModel)
 
 
 class AppError(Exception):
@@ -285,17 +289,42 @@ async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
     )
 
 
-def validation_error_422(exc) -> AppError:
+def validation_error_422(exc: ValidationError) -> AppError:
     """Render a pydantic ValidationError as the API's own 422 envelope.
 
-    Filter models are built inside the handler rather than declared as the
-    signature, so a failure arrives as a bare ValidationError — which the
-    catch-all handler would log and return as a 500. Reporting the first
-    error's original message keeps the body readable ("Time signature ..."
-    rather than pydantic's "Value error, Time signature ...").
+    Filter and multipart models are built inside the handler rather than
+    declared as the signature, so a failure arrives as a bare ValidationError —
+    which the catch-all handler would log and return as a 500.
+
+    Every error is reported, named by its field, the way the handler for
+    signature-level failures already spells them ("bpm: BPM must be between 60
+    and 250"): a form with two bad values must not answer as though only the
+    first one were wrong. Each message is the validator's own, since pydantic's
+    "Value error, " prefix says nothing to the caller.
     """
-    err = exc.errors()[0]
+    messages = []
+    for err in exc.errors():
+        message = str(err.get("ctx", {}).get("error", err["msg"]))
+        field = " -> ".join(str(part) for part in err["loc"])
+        messages.append(f"{field}: {message}" if field else message)
     return AppError(
-        str(err.get("ctx", {}).get("error", err["msg"])),
+        "; ".join(messages),
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
     )
+
+
+def parse_model(model: type[ModelT], **fields) -> ModelT:
+    """Build a schema from values the handler gathered itself, 422 on failure.
+
+    A multipart endpoint cannot declare its schema as the request body, and a
+    filter model is assembled from loose query parameters, so both pass the
+    individual values through here instead. Constructing the model directly in
+    the handler leaves a failed validator — a BPM outside the accepted range, a
+    time signature that is not n/d — raising a bare ValidationError, which the
+    catch-all turns into a 500 "An unexpected error occurred" for what is
+    plainly a client-side mistake.
+    """
+    try:
+        return model(**fields)
+    except ValidationError as exc:
+        raise validation_error_422(exc) from exc

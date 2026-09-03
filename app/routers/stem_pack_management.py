@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.exceptions import AppError, ForbiddenError
+from app.exceptions import AppError, ForbiddenError, parse_model
 from app.middleware.rate_limit import limiter
 from app.models.loop import Genre
 from app.models.stem_pack import StemInstrument, StemPackType
@@ -257,7 +257,7 @@ def build_stem_pack_router(actor_dependency, enforce_ownership: bool) -> APIRout
         actor=Depends(actor_dependency),
     ):
         await owned(db, pack_id, actor)
-        data = StemCreate(instrument=instrument, label=label, part_id=part_id)
+        data = parse_model(StemCreate, instrument=instrument, label=label, part_id=part_id)
         stem = await stem_pack_service.add_stem_to_pack(db, pack_id, file, data)
         process_stem_upload.delay(str(stem.id))
         return success(
@@ -300,7 +300,8 @@ def build_stem_pack_router(actor_dependency, enforce_ownership: bool) -> APIRout
             )
 
         stems_data = [
-            StemCreate(
+            parse_model(
+                StemCreate,
                 instrument=inst,
                 label=label_list[i] if label_list else None,
                 part_id=part_id,

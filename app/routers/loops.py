@@ -1,10 +1,9 @@
 from fastapi import APIRouter, Depends, Query
-from pydantic import ValidationError
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 import httpx
 from app.database import get_db
-from app.exceptions import validation_error_422
+from app.exceptions import parse_model
 from app.middleware.auth_middleware import get_current_user
 from app.services import (
     loop_service, s3_service, like_service, free_tier_service, monthly_quota_service,
@@ -75,17 +74,15 @@ async def list_loops(
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
 ):
-    try:
-        filters = LoopFilter(
-            ready_only=True,
-            search=search, genre=genre, bpm_min=bpm_min, bpm_max=bpm_max,
-            key=key, time_signature=time_signature, tempo_feel=tempo_feel,
-            is_free=is_free,
-            tags=[t.strip() for t in tags.split(",") if t.strip()] if tags else None,
-            sort=sort, page=page, page_size=page_size,
-        )
-    except ValidationError as e:
-        raise validation_error_422(e)
+    filters = parse_model(
+        LoopFilter,
+        ready_only=True,
+        search=search, genre=genre, bpm_min=bpm_min, bpm_max=bpm_max,
+        key=key, time_signature=time_signature, tempo_feel=tempo_feel,
+        is_free=is_free,
+        tags=[t.strip() for t in tags.split(",") if t.strip()] if tags else None,
+        sort=sort, page=page, page_size=page_size,
+    )
     loops, total = await loop_service.list_loops(db, filters)
     return success({
         "items": [LoopResponse.model_validate(l).model_dump() for l in loops],
