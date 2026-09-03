@@ -5,16 +5,16 @@ from app.tasks.celery_app import celery_app
 
 
 def _s3() -> boto3.client:
-    """Return a module-level S3 client, created once per worker process."""
+    """Return a module-level S3 client, created once per worker process.
+
+    Built by the same factory the API uses, so the worker cannot end up writing
+    to a different store than the one the API reads. Still constructed lazily
+    here rather than imported ready-made: a client built before Celery forks
+    would have its connection pool shared across worker processes.
+    """
     if not hasattr(_s3, "_client"):
-        from app.config import get_settings
-        s = get_settings()
-        _s3._client = boto3.client(
-            "s3",
-            aws_access_key_id=s.aws_access_key_id,
-            aws_secret_access_key=s.aws_secret_access_key,
-            region_name=s.aws_region,
-        )
+        from app.services.s3_service import build_content_client
+        _s3._client = build_content_client()
     return _s3._client
 
 

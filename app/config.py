@@ -25,6 +25,12 @@ class Settings(BaseSettings):
     aws_secret_access_key: str
     aws_region: str = "us-east-1"
     s3_bucket_name: str
+    # Empty means AWS S3. Set it to put the content bucket on an S3-compatible
+    # store instead — Cloudflare R2, MinIO, LocalStack. The credentials above
+    # are then that store's, not AWS's.
+    s3_endpoint_url: str = ""  # e.g. https://<account_id>.r2.cloudflarestorage.com
+    # Whatever serves the bucket publicly: a CloudFront distribution, or an R2
+    # custom domain / r2.dev URL.
     s3_cloudfront_url: str = ""  # e.g. https://d2q7nhojr9v45l.cloudfront.net
 
     # Cloudflare R2 (S3-compatible) — hosts the desktop app installers

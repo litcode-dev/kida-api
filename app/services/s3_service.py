@@ -8,13 +8,45 @@ from app.config import get_settings
 log = structlog.get_logger()
 settings = get_settings()
 
+# Cloudflare R2 validates the SigV4 credential scope against the region "auto"
+# and rejects a real AWS region name. Other S3-compatible stores (MinIO,
+# LocalStack) ignore the region, so only R2 is special-cased here.
+_R2_HOST = "r2.cloudflarestorage.com"
+
+
+def _signing_region(endpoint_url: str) -> str:
+    return "auto" if _R2_HOST in endpoint_url else settings.aws_region
+
+
+def build_content_client():
+    """A client for the bucket the catalogue lives in, wherever that is.
+
+    S3_ENDPOINT_URL was accepted in the environment but never passed to boto3,
+    so every request went to AWS whatever it said — which answers a Cloudflare
+    R2 key with "InvalidAccessKeyId: The AWS Access Key Id you provided does
+    not exist in our records" and looks like a credentials problem rather than
+    a request sent to the wrong company.
+
+    The API and the Celery tasks both build their client here, so moving the
+    bucket moves all of them at once: a worker still writing to the old store
+    while the API reads the new one leaves uploads stuck in "processing"
+    forever.
+    """
+    endpoint_url = settings.s3_endpoint_url.strip()
+    return boto3.client(
+        "s3",
+        endpoint_url=endpoint_url or None,
+        aws_access_key_id=settings.aws_access_key_id,
+        aws_secret_access_key=settings.aws_secret_access_key,
+        region_name=_signing_region(endpoint_url),
+        # Explicit rather than inherited: an S3-compatible store accepts SigV4
+        # and nothing older.
+        config=Config(signature_version="s3v4"),
+    )
+
+
 # boto3 clients are thread-safe — reuse one instance to avoid per-call construction overhead
-_client = boto3.client(
-    "s3",
-    aws_access_key_id=settings.aws_access_key_id,
-    aws_secret_access_key=settings.aws_secret_access_key,
-    region_name=settings.aws_region,
-)
+_client = build_content_client()
 
 # Cloudflare R2 is S3-compatible — a separate client pointed at the R2 endpoint,
 # used for the desktop app installers (the rest of the content lives on AWS S3).

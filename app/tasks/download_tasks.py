@@ -6,7 +6,6 @@ from app.tasks.celery_app import celery_app
 def generate_waveform_task(loop_id: str):
     async def _run():
         import uuid
-        import boto3
         from app.database import AsyncSessionLocal
         from app.models.loop import Loop
         from app.services.waveform_service import generate_waveform
@@ -18,12 +17,8 @@ def generate_waveform_task(loop_id: str):
             loop = await db.get(Loop, uuid.UUID(loop_id))
             if not loop or not loop.file_s3_key:
                 return
-            s3 = boto3.client(
-                "s3",
-                aws_access_key_id=settings.aws_access_key_id,
-                aws_secret_access_key=settings.aws_secret_access_key,
-                region_name=settings.aws_region,
-            )
+            from app.services.s3_service import build_content_client
+            s3 = build_content_client()
             obj = s3.get_object(Bucket=settings.s3_bucket_name, Key=loop.file_s3_key)
             encrypted = obj["Body"].read()
             wav_bytes = decrypt_bytes(encrypted, loop.aes_key, loop.aes_iv)
