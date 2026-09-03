@@ -20,6 +20,7 @@ from app.exceptions import (
     monthly_limit_handler, service_unavailable_handler, unexpected_error_response,
 )
 import sqlalchemy.exc
+from app.middleware.error_middleware import UnhandledErrorMiddleware
 from app.middleware.logging_middleware import LoggingMiddleware
 from app.middleware.rate_limit import limiter
 from app.routers import auth, loops, stem_packs, payments, admin, downloads, likes, subscriptions, ai, drones, drum_kits, purchases, producer, newsletter, push_notifications, app_download, loop_requests
@@ -118,6 +119,13 @@ def _parse_origins(raw: str) -> list[str]:
     return [o.strip() for o in raw.split(",") if o.strip()]
 
 
+# Middleware runs outermost-last-added, so the order of these three calls is
+# the reverse of the order a request meets them: logging, then CORS, then the
+# unhandled-error net. The net has to sit inside CORS — a 500 written outside
+# it reaches the browser without Access-Control-Allow-Origin and is dropped
+# before the client can read it.
+app.add_middleware(UnhandledErrorMiddleware)
+
 # CORS
 app.add_middleware(
     CORSMiddleware,
@@ -125,6 +133,10 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    # A browser hides every response header a page did not ask for, so the
+    # request id LoggingMiddleware stamps was unreadable from the dashboard —
+    # the one value that ties a failure on screen to its line in the logs.
+    expose_headers=["X-Request-ID"],
 )
 
 # Logging
@@ -168,8 +180,11 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
-    # No explicit Sentry capture here: Starlette re-raises after this handler
-    # runs, so the ASGI integration reports it.
+    # Starlette hands this to ServerErrorMiddleware, the outermost layer, so it
+    # is reached only by a failure in the middleware above the net —
+    # UnhandledErrorMiddleware answers everything raised by a route. No explicit
+    # Sentry capture: Starlette re-raises after this handler runs, so the ASGI
+    # integration reports it.
     return unexpected_error_response(request, exc)
 
 # Routers
