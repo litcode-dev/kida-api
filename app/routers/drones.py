@@ -1,7 +1,5 @@
 from fastapi import APIRouter, Depends, Query
-from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-import httpx
 import uuid
 
 from app.database import get_db
@@ -9,6 +7,7 @@ from app.middleware.auth_middleware import get_current_user
 from app.services import drone_service, s3_service, cache_service
 from app.schemas.drone_pad import DronePadFilter, DroneResponse, DronePadCategoryResponse
 from app.schemas.common import success
+from app.utils.object_stream import stream_stored_object
 from app.models.drone_pad import MusicalKey
 
 router = APIRouter(prefix="/drones", tags=["drones"])
@@ -120,14 +119,11 @@ async def stream_preview(drone_id: uuid.UUID, db: AsyncSession = Depends(get_db)
         from app.exceptions import NotFoundError
         raise NotFoundError(f"Drone {drone_id} has no preview")
     url = await s3_service.generate_presigned_url(pad.preview_s3_key, expiry_seconds=300)
-
-    async def _stream():
-        async with httpx.AsyncClient() as client:
-            async with client.stream("GET", url) as resp:
-                async for chunk in resp.aiter_bytes(8192):
-                    yield chunk
-
-    return StreamingResponse(_stream(), media_type="audio/mpeg")
+    return await stream_stored_object(
+        url,
+        media_type="audio/mpeg",
+        missing_message="This drone pad's preview is missing from storage",
+    )
 
 
 @router.get("/{drone_id}/download")

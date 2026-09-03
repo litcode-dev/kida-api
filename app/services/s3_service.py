@@ -5,6 +5,7 @@ from urllib.parse import urlparse
 import boto3
 import structlog
 from botocore.config import Config
+from botocore.exceptions import ClientError
 from app.config import get_settings
 
 log = structlog.get_logger()
@@ -159,6 +160,31 @@ async def delete_object(key: str) -> None:
         _get_client().delete_object(Bucket=settings.s3_bucket_name, Key=key)
 
     await asyncio.to_thread(_delete)
+
+
+async def object_exists(key: str) -> bool:
+    """Whether the bucket actually holds `key`.
+
+    A row naming an object is not evidence the object is there: a bucket
+    migration that moved the database but not the bytes leaves every key
+    dangling, while the rows go on reporting the loops as ready. Worth one HEAD
+    before an action that costs the caller something.
+
+    Only a 404 answers False. A store that refuses us — a signature it rejects,
+    a bucket that is not there — raises, because reporting that as a missing
+    upload sends whoever reads it looking in the wrong place.
+    """
+    def _head():
+        try:
+            _get_client().head_object(Bucket=settings.s3_bucket_name, Key=key)
+            return True
+        except ClientError as exc:
+            error = exc.response.get("Error", {})
+            if str(error.get("Code")) in ("404", "NoSuchKey", "NotFound"):
+                return False
+            raise
+
+    return await asyncio.to_thread(_head)
 
 
 async def delete_objects_after_commit(keys: list[str]) -> None:

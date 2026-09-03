@@ -1,9 +1,8 @@
 from fastapi import APIRouter, Depends, Query
-from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-import httpx
 from app.database import get_db
 from app.exceptions import parse_model
+from app.utils.object_stream import stream_stored_object
 from app.middleware.auth_middleware import get_current_user
 from app.services import (
     loop_service, s3_service, like_service, free_tier_service, monthly_quota_service,
@@ -105,12 +104,11 @@ async def stream_preview(loop_id: uuid.UUID, db: AsyncSession = Depends(get_db),
     # until the Celery job republishes the mp3.
     loop_service.assert_loop_ready(loop)
     url = await s3_service.generate_presigned_url(loop.preview_s3_key, expiry_seconds=300)
-    async def _stream():
-        async with httpx.AsyncClient() as client:
-            async with client.stream("GET", url) as resp:
-                async for chunk in resp.aiter_bytes(8192):
-                    yield chunk
-    return StreamingResponse(_stream(), media_type="audio/mpeg")
+    return await stream_stored_object(
+        url,
+        media_type="audio/mpeg",
+        missing_message="This loop's preview is missing from storage",
+    )
 
 
 @router.post("/{loop_id}/play")
@@ -131,8 +129,10 @@ async def download_loop(
     loop = await loop_service.get_loop(db, loop_id)
     await loop_service.check_download_entitlement(db, user, loop)
     # Before enforce_loop_cap: a free-tier slot is a lifetime grant, so it must
-    # not be consumed for a loop that cannot actually be downloaded.
+    # not be consumed for a loop that cannot actually be downloaded. The row
+    # saying ready is not enough — the object it names has to be there too.
     loop_service.assert_loop_ready(loop)
+    await loop_service.assert_audio_present(loop)
     await free_tier_service.enforce_loop_cap(db, user, loop)
     await monthly_quota_service.enforce(
         db, user, MonthlyQuotaType.loop, str(loop.id)

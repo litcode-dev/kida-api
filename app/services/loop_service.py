@@ -1,5 +1,6 @@
 import uuid
 import re
+import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import case, func, or_, select
 from app.models.loop import Genre, Loop
@@ -13,6 +14,8 @@ from app.exceptions import AppError, NotFoundError, EntitlementError
 from app.services import price_sync_service, s3_service
 from app.utils.audio_validator import validate_wav_upload
 from fastapi import UploadFile
+
+log = structlog.get_logger()
 
 
 def _slugify(title: str, uid: str) -> str:
@@ -197,6 +200,39 @@ def assert_loop_ready(loop: Loop) -> None:
             status_code=409,
             data={"status": loop.status},
         )
+
+
+async def assert_audio_present(loop: Loop) -> None:
+    """Refuse a loop whose audio is not in the bucket the API is reading.
+
+    assert_loop_ready can only see what the row says, and the row says ready
+    for as long as nobody looks. Downloading spends a free-tier slot — a
+    lifetime grant — or a month's quota before the URL is handed over, so a key
+    that resolves to nothing costs the caller something real and returns a link
+    that 404s.
+
+    Only an answered "not there" refuses. A store that cannot be asked — a HEAD
+    its policy denies, a moment's outage — leaves the caller exactly as well off
+    as before this check existed, since a safeguard against broken links must
+    not become an outage of its own.
+    """
+    if loop.file_s3_key:
+        try:
+            if await s3_service.object_exists(loop.file_s3_key):
+                return
+        except Exception as exc:  # noqa: BLE001 - a safeguard, not a gate
+            log.warning(
+                "audio_presence_unverified",
+                loop_id=str(loop.id),
+                key=loop.file_s3_key,
+                error=str(exc),
+            )
+            return
+    raise AppError(
+        "This loop's audio is missing from storage and cannot be downloaded",
+        status_code=409,
+        data={"status": loop.status, "reason": "missing_object"},
+    )
 
 
 async def check_download_entitlement(

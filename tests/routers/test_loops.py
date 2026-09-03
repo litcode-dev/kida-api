@@ -72,9 +72,13 @@ async def test_download_free_loop_requires_auth(client, db_session):
 
 def _patch_s3():
     from unittest.mock import AsyncMock, patch
-    return patch(
-        "app.services.s3_service.get_download_url",
-        new=AsyncMock(return_value="https://signed.example/file"),
+    # The store holds what the rows say it holds. A test about quota or
+    # entitlement should not depend on reaching it — and must not send a real
+    # request to find out.
+    return patch.multiple(
+        "app.services.s3_service",
+        get_download_url=AsyncMock(return_value="https://signed.example/file"),
+        object_exists=AsyncMock(return_value=True),
     )
 
 

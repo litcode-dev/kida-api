@@ -95,9 +95,13 @@ async def _make_kit(db, user_id):
 
 
 def _patch_s3():
-    return patch(
-        "app.services.s3_service.get_download_url",
-        new=AsyncMock(return_value="https://signed.example/file"),
+    # The store holds what the rows say it holds. A test about quota or
+    # entitlement should not depend on reaching it — and must not send a real
+    # request to find out.
+    return patch.multiple(
+        "app.services.s3_service",
+        get_download_url=AsyncMock(return_value="https://signed.example/file"),
+        object_exists=AsyncMock(return_value=True),
     )
 
 
