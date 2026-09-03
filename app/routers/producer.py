@@ -3,10 +3,9 @@ import uuid
 from datetime import date
 from decimal import Decimal
 from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile
-from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
-from app.exceptions import AppError, ForbiddenError, validation_error_422
+from app.exceptions import AppError, ForbiddenError, parse_model
 from app.middleware.auth_middleware import require_producer
 from app.middleware.rate_limit import limiter
 from app.schemas.common import success
@@ -49,18 +48,16 @@ async def producer_analytics(
     db: AsyncSession = Depends(get_db),
     producer=Depends(require_producer),
 ):
-    try:
-        params = AnalyticsParams(
-            period=period,
-            from_date=from_date,
-            to_date=to_date,
-            loops_page=loops_page,
-            drones_page=drones_page,
-            drum_kits_page=drum_kits_page,
-            page_size=page_size,
-        )
-    except ValidationError as e:
-        raise validation_error_422(e)
+    params = parse_model(
+        AnalyticsParams,
+        period=period,
+        from_date=from_date,
+        to_date=to_date,
+        loops_page=loops_page,
+        drones_page=drones_page,
+        drum_kits_page=drum_kits_page,
+        page_size=page_size,
+    )
 
     data = await get_producer_analytics(db, producer.id, params)
     return success(data)
@@ -99,16 +96,14 @@ async def list_producer_loops(
     db: AsyncSession = Depends(get_db),
     producer=Depends(require_producer),
 ):
-    try:
-        filters = LoopFilter(
-            search=search, genre=genre, bpm_min=bpm_min, bpm_max=bpm_max,
-            key=key, time_signature=time_signature, tempo_feel=tempo_feel,
-            is_free=is_free, sort=sort,
-            tags=[t.strip() for t in tags.split(",") if t.strip()] if tags else None,
-            page=page, page_size=page_size, created_by=producer.id,
-        )
-    except ValidationError as e:
-        raise validation_error_422(e)
+    filters = parse_model(
+        LoopFilter,
+        search=search, genre=genre, bpm_min=bpm_min, bpm_max=bpm_max,
+        key=key, time_signature=time_signature, tempo_feel=tempo_feel,
+        is_free=is_free, sort=sort,
+        tags=[t.strip() for t in tags.split(",") if t.strip()] if tags else None,
+        page=page, page_size=page_size, created_by=producer.id,
+    )
     loops, total = await loop_service.list_loops(db, filters)
     return success({
         "items": [LoopResponse.model_validate(l).model_dump() for l in loops],
@@ -135,7 +130,8 @@ async def upload_loop(
     db: AsyncSession = Depends(get_db),
     producer=Depends(require_producer),
 ):
-    data = LoopCreate(
+    data = parse_model(
+        LoopCreate,
         title=title, genre=genre, bpm=bpm,
         time_signature=time_signature, tempo_feel=tempo_feel,
         price=price, is_free=is_free,
@@ -181,7 +177,8 @@ async def update_loop(
     existing = await loop_service.get_loop(db, loop_id)
     _assert_owns(existing, producer, "loop")
     tags_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else None
-    data = LoopUpdate(
+    data = parse_model(
+        LoopUpdate,
         title=title,
         description=description,
         genre=genre,
@@ -284,7 +281,8 @@ async def upload_drone(
     from app.exceptions import AppError
     if not is_free and price is None:
         raise AppError("price is required for paid drone pads", status_code=422)
-    data = DronePadCreate(
+    data = parse_model(
+        DronePadCreate,
         title=title,
         description=description,
         key=key,
@@ -408,7 +406,8 @@ async def update_drone(
 ):
     existing = await drone_service.get_drone(db, drone_id)
     _assert_owns(existing, producer, "drone")
-    data = DronePadUpdate(
+    data = parse_model(
+        DronePadUpdate,
         title=title,
         description=description,
         price=price,
@@ -480,7 +479,8 @@ async def create_drum_kit(
 ):
     import structlog as _structlog
     labels = [l.strip() for l in sample_labels.split(",") if l.strip()]
-    data = DrumKitCreate(
+    data = parse_model(
+        DrumKitCreate,
         title=title,
         description=description,
         tags=[t.strip() for t in tags.split(",") if t.strip()],
@@ -554,7 +554,10 @@ async def update_drum_kit(
 ):
     existing = await drum_kit_service.get_drum_kit(db, kit_id)
     _assert_owns(existing, producer, "drum kit")
-    data = DrumKitUpdate(title=title, description=description, price=price, is_free=is_free)
+    data = parse_model(
+        DrumKitUpdate,
+        title=title, description=description, price=price, is_free=is_free,
+    )
     kit = await drum_kit_service.update_drum_kit(db, kit_id, data, thumbnail=thumbnail)
     return success(DrumKitResponse.model_validate(kit).model_dump(), "Drum kit updated")
 
