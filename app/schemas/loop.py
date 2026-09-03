@@ -110,6 +110,12 @@ class LoopUpdate(BaseModel):
         return value
 
 
+# Every value Loop.status takes: "processing" from upload until the encode
+# job finishes, then "ready", or "failed" once the job has exhausted its
+# retries. Named here so a filter cannot ask for a spelling no row can hold.
+LOOP_STATUSES = ("ready", "processing", "failed")
+
+
 class LoopResponse(BaseModel):
     id: uuid.UUID
     title: str
@@ -148,10 +154,24 @@ class LoopResponse(BaseModel):
         return self
 
 
+class LoopAdminResponse(LoopResponse):
+    """A loop as an administrator needs to see it.
+
+    `status` is the whole point: a loop being re-encoded is not in the public
+    catalogue, and without it in the payload an admin listing cannot tell a
+    loop that is briefly reprocessing from one whose job failed hours ago.
+    """
+
+    status: str
+
+
 class LoopFilter(BaseModel):
     # Public callers set this; producer and admin listings leave it off so a
     # producer can still watch their own uploads move through processing.
     ready_only: bool = False
+    # Exact status, for an admin asking what is stuck rather than what is
+    # browsable. `ready_only` is the public listing's blunter version.
+    status: str | None = None
     search: str | None = None
     genre: Genre | None = None
     bpm_min: int | None = None
@@ -202,6 +222,18 @@ class LoopFilter(BaseModel):
         # An all-whitespace value is not a filter at all — it must not turn
         # into an empty IN list, which matches no row.
         return signatures or None
+
+    @field_validator("status")
+    @classmethod
+    def known_status(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        value = v.strip().lower()
+        if value not in LOOP_STATUSES:
+            raise ValueError(
+                f"Status must be one of {', '.join(LOOP_STATUSES)}"
+            )
+        return value
 
     @field_validator("page_size")
     @classmethod

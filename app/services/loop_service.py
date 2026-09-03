@@ -128,6 +128,8 @@ async def list_loops(db: AsyncSession, filters: LoopFilter) -> tuple[list[Loop],
         # preview and download both refuse it with a 409, so listing it puts
         # something in the catalogue that cannot be played or bought.
         q = q.where(Loop.status == "ready")
+    if filters.status:
+        q = q.where(Loop.status == filters.status)
     if filters.created_by:
         q = q.where(Loop.created_by == filters.created_by)
     if filters.search:

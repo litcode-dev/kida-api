@@ -8,7 +8,9 @@ from app.middleware.auth_middleware import require_admin, get_redis
 from app.middleware.rate_limit import limiter
 from app.schemas.user import UserResponse, SuspendRequest
 from app.schemas.common import success
-from app.schemas.loop import LoopCreate, LoopUpdate, LoopResponse
+from app.schemas.loop import (
+    LOOP_STATUSES, LoopAdminResponse, LoopCreate, LoopFilter, LoopUpdate, LoopResponse,
+)
 from app.routers.stem_pack_management import build_stem_pack_router
 from app.schemas.drone_pad import (
     DronePadCategoryCreate,
@@ -842,6 +844,58 @@ async def platform_analytics(
 
 
 # --- Loop upload / management (admin mirror of producer endpoints) ---
+
+@router.get(
+    "/loops",
+    summary="Every loop, in any state",
+    description=(
+        "The catalogue as an administrator sees it, `status` included. Unlike "
+        "`/loops`, this lists loops that are not browsable: replacing a loop's "
+        "audio puts it back into `processing` until the encode job finishes, "
+        "and a job that has exhausted its retries leaves it `failed`. Both are "
+        "absent from the public listing, which is how a loop being edited can "
+        "look as though it were deleted.\n\n"
+        "Filters match the public listing; `status` narrows to one of "
+        f"{', '.join(f'`{s}`' for s in LOOP_STATUSES)}."
+    ),
+)
+@limiter.limit("60/minute")
+async def list_all_loops(
+    request: Request,
+    search: str | None = Query(None),
+    genre: Genre | None = None,
+    bpm_min: int | None = None,
+    bpm_max: int | None = None,
+    key: str | None = None,
+    time_signature: list[str] | None = Query(None),
+    tempo_feel: TempoFeel | None = None,
+    is_free: bool | None = None,
+    status: str | None = Query(
+        None, description="`ready`, `processing` or `failed`"
+    ),
+    tags: str | None = Query(None),
+    sort: str = "newest",
+    page: int = 1,
+    page_size: int = 20,
+    db: AsyncSession = Depends(get_db),
+    admin=Depends(require_admin),
+):
+    filters = parse_model(
+        LoopFilter,
+        search=search, genre=genre, bpm_min=bpm_min, bpm_max=bpm_max,
+        key=key, time_signature=time_signature, tempo_feel=tempo_feel,
+        is_free=is_free, status=status, sort=sort,
+        tags=[t.strip() for t in tags.split(",") if t.strip()] if tags else None,
+        page=page, page_size=page_size,
+    )
+    loops, total = await loop_service.list_loops(db, filters)
+    return success({
+        "items": [LoopAdminResponse.model_validate(l).model_dump() for l in loops],
+        "total": total,
+        "page": filters.page,
+        "page_size": filters.page_size,
+    })
+
 
 @router.post("/loops")
 @limiter.limit("10/minute")
