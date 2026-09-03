@@ -1,5 +1,7 @@
 import asyncio
 import hashlib
+from urllib.parse import urlparse
+
 import boto3
 import structlog
 from botocore.config import Config
@@ -18,6 +20,25 @@ def _signing_region(endpoint_url: str) -> str:
     return "auto" if _R2_HOST in endpoint_url else settings.aws_region
 
 
+def _normalize_endpoint(raw: str) -> str:
+    """Accept the endpoint as the storage provider's console displays it.
+
+    Cloudflare shows an R2 endpoint as a bare host, and boto3 refuses anything
+    without a scheme with "Invalid endpoint: <host>" — raised while building
+    the client, so a value pasted as shown took the whole API down rather than
+    failing the requests that use it. A host on its own means https.
+    """
+    endpoint = raw.strip()
+    if not endpoint:
+        return ""
+    if "://" not in endpoint:
+        endpoint = f"https://{endpoint}"
+    endpoint = endpoint.rstrip("/")
+    if not urlparse(endpoint).netloc:
+        raise ValueError(f"S3_ENDPOINT_URL names no host: {raw!r}")
+    return endpoint
+
+
 def build_content_client():
     """A client for the bucket the catalogue lives in, wherever that is.
 
@@ -32,7 +53,7 @@ def build_content_client():
     while the API reads the new one leaves uploads stuck in "processing"
     forever.
     """
-    endpoint_url = settings.s3_endpoint_url.strip()
+    endpoint_url = _normalize_endpoint(settings.s3_endpoint_url)
     return boto3.client(
         "s3",
         endpoint_url=endpoint_url or None,
@@ -45,12 +66,26 @@ def build_content_client():
     )
 
 
-# boto3 clients are thread-safe — reuse one instance to avoid per-call construction overhead
-_client = build_content_client()
+# boto3 clients are thread-safe — reuse one instance to avoid per-call
+# construction overhead. Built on first use rather than at import: boto3
+# validates the endpoint as it constructs the client, and doing that while the
+# module is being imported turns a mistyped setting into a service that cannot
+# start at all — no health check, no login, nothing to read the error from
+# except the crash loop.
+_client = None
 
-# Cloudflare R2 is S3-compatible — a separate client pointed at the R2 endpoint,
-# used for the desktop app installers (the rest of the content lives on AWS S3).
-# Constructed lazily so the app still boots when R2 isn't configured.
+
+def _get_client():
+    global _client
+    if _client is None:
+        _client = build_content_client()
+    return _client
+
+
+# The desktop app installers live in their own bucket with their own
+# credentials, which is a different bucket from the catalogue's above whether
+# or not both are on R2. Constructed lazily so the app still boots when this
+# one isn't configured.
 _r2_client = None
 
 
@@ -83,7 +118,7 @@ async def generate_r2_presigned_url(key: str, expiry_seconds: int = 900) -> str:
 async def upload_bytes(key: str, data: bytes, content_type: str = "application/octet-stream") -> str:
     """Upload bytes to S3 without blocking the event loop. Returns the S3 key."""
     def _upload():
-        _client.put_object(
+        _get_client().put_object(
             Bucket=settings.s3_bucket_name,
             Key=key,
             Body=data,
@@ -97,7 +132,7 @@ async def upload_bytes(key: str, data: bytes, content_type: str = "application/o
 async def generate_presigned_url(key: str, expiry_seconds: int = 900) -> str:
     """Generate a pre-signed GET URL valid for expiry_seconds (default 15 min)."""
     def _presign():
-        return _client.generate_presigned_url(
+        return _get_client().generate_presigned_url(
             "get_object",
             Params={"Bucket": settings.s3_bucket_name, "Key": key},
             ExpiresIn=expiry_seconds,
@@ -121,7 +156,7 @@ async def get_download_url(key: str, expiry_seconds: int = 900) -> str:
 
 async def delete_object(key: str) -> None:
     def _delete():
-        _client.delete_object(Bucket=settings.s3_bucket_name, Key=key)
+        _get_client().delete_object(Bucket=settings.s3_bucket_name, Key=key)
 
     await asyncio.to_thread(_delete)
 

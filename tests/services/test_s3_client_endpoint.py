@@ -46,6 +46,26 @@ def test_another_s3_compatible_store_keeps_the_configured_region(store):
     assert client.meta.region_name == "eu-north-1"
 
 
+def test_a_bare_host_is_read_as_https(store):
+    """Cloudflare displays the R2 endpoint without a scheme, and boto3 rejects
+    it as an invalid endpoint — while building the client, so a value pasted as
+    shown stopped the API from starting at all."""
+    client = store(endpoint_url="abc123.r2.cloudflarestorage.com")
+    assert client.meta.endpoint_url == R2_ENDPOINT
+    assert client.meta.region_name == "auto"
+
+
+def test_a_trailing_slash_is_not_part_of_the_host(store):
+    client = store(endpoint_url=R2_ENDPOINT + "/")
+    assert client.meta.endpoint_url == R2_ENDPOINT
+
+
+def test_an_http_endpoint_is_left_alone(store):
+    """A local MinIO is plain http; the scheme is only supplied when missing."""
+    client = store(endpoint_url="http://localhost:9000")
+    assert client.meta.endpoint_url == "http://localhost:9000"
+
+
 def test_surrounding_whitespace_does_not_become_an_endpoint(store):
     """An env var edited by hand often keeps a trailing space; treating that as
     a value sends every request to a host that does not resolve."""
@@ -71,3 +91,28 @@ def test_the_worker_builds_its_client_the_same_way(store, monkeypatch):
         # this process does not inherit the R2 client.
         if hasattr(upload_tasks._s3, "_client"):
             del upload_tasks._s3._client
+
+
+def test_importing_the_module_does_not_build_a_client():
+    """boto3 validates the endpoint as it constructs the client. Doing that at
+    import turned a mistyped setting into a service that could not start — no
+    health check, no login, nothing but a crash loop to read the error from."""
+    import importlib
+
+    module = importlib.reload(s3_service)
+    try:
+        assert module._client is None
+    finally:
+        importlib.reload(s3_service)
+
+
+def test_an_unusable_endpoint_fails_the_call_not_the_import(monkeypatch):
+    import importlib
+
+    module = importlib.reload(s3_service)
+    try:
+        monkeypatch.setattr(module.settings, "s3_endpoint_url", "https://")
+        with pytest.raises(ValueError):
+            module._get_client()
+    finally:
+        importlib.reload(s3_service)
