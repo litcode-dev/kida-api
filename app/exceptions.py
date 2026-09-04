@@ -297,7 +297,7 @@ def validation_error_422(exc: ValidationError) -> AppError:
     which the catch-all handler would log and return as a 500.
 
     Every error is reported, named by its field, the way the handler for
-    signature-level failures already spells them ("bpm: BPM must be between 60
+    signature-level failures already spells them ("bpm: BPM must be between 40
     and 250"): a form with two bad values must not answer as though only the
     first one were wrong. Each message is the validator's own, since pydantic's
     "Value error, " prefix says nothing to the caller.

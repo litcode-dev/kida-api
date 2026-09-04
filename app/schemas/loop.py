@@ -44,7 +44,10 @@ def equivalent_time_signatures(signature: str) -> list[str]:
 # The ceiling was 140, which pre-dates half the catalogue: drill sits around
 # 140-145, seben and soukous run past 150, and anything counted in double time
 # reads higher still. 250 covers those without letting a typo through.
-BPM_MIN = 60
+# The floor was 60, which refused the slow end for the same reason: half-time
+# trap counts near 60-70, ambient and downtempo beds sit below that, and a
+# 6/8 groove counted in dotted beats reads lower still. 40 covers those.
+BPM_MIN = 40
 BPM_MAX = 250
 
 
