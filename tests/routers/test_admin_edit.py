@@ -328,7 +328,7 @@ async def test_update_loop_with_out_of_range_values_is_422_not_500(client, db_se
     message = resp.json()["message"]
     # Both bad fields are named — reporting only the first sends the client
     # back for a second round trip.
-    assert "bpm" in message and "BPM must be between 60 and 250" in message
+    assert "bpm" in message and "BPM must be between 40 and 250" in message
     assert "time_signature" in message and "numerator/denominator" in message
 
 

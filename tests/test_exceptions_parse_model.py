@@ -12,8 +12,8 @@ class _Model(BaseModel):
     @field_validator("bpm")
     @classmethod
     def in_range(cls, v: int) -> int:
-        if not 60 <= v <= 250:
-            raise ValueError("BPM must be between 60 and 250")
+        if not 40 <= v <= 250:
+            raise ValueError("BPM must be between 40 and 250")
         return v
 
 
@@ -27,7 +27,7 @@ def test_parse_model_raises_app_error_422_on_a_failed_validator():
 
     assert exc_info.value.status_code == 422
     # The validator's own wording, not pydantic's "Value error, ..." wrapper.
-    assert exc_info.value.message == "bpm: BPM must be between 60 and 250"
+    assert exc_info.value.message == "bpm: BPM must be between 40 and 250"
 
 
 def test_parse_model_reports_every_bad_field():
@@ -35,7 +35,7 @@ def test_parse_model_reports_every_bad_field():
         parse_model(_Model, bpm=0, label=None)
 
     message = exc_info.value.message
-    assert "bpm: BPM must be between 60 and 250" in message
+    assert "bpm: BPM must be between 40 and 250" in message
     assert "label" in message
 
 
@@ -49,4 +49,4 @@ def test_validation_error_422_names_nested_fields():
         error = validation_error_422(exc)
 
     assert error.status_code == 422
-    assert error.message == "inner -> bpm: BPM must be between 60 and 250"
+    assert error.message == "inner -> bpm: BPM must be between 40 and 250"

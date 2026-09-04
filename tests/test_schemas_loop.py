@@ -68,18 +68,29 @@ def test_loop_create_accepts_the_fast_end_of_the_catalogue():
     assert _loop(bpm=250).bpm == 250
 
 
+def test_loop_create_accepts_the_slow_end_of_the_catalogue():
+    # Half-time trap counts near 60-70 and downtempo beds sit below that; the
+    # old 60 floor refused everything under it.
+    assert _loop(bpm=40).bpm == 40
+    assert _loop(bpm=59).bpm == 59
+
+
 def test_loop_create_rejects_bpm_above_the_ceiling():
     with pytest.raises(ValidationError) as excinfo:
         _loop(bpm=251)
-    assert "between 60 and 250" in str(excinfo.value)
+    assert "between 40 and 250" in str(excinfo.value)
 
 
 def test_loop_create_still_rejects_bpm_below_the_floor():
-    with pytest.raises(ValidationError):
-        _loop(bpm=59)
+    with pytest.raises(ValidationError) as excinfo:
+        _loop(bpm=39)
+    assert "between 40 and 250" in str(excinfo.value)
 
 
 def test_loop_update_shares_the_same_bpm_range():
+    assert LoopUpdate(bpm=40).bpm == 40
     assert LoopUpdate(bpm=250).bpm == 250
+    with pytest.raises(ValidationError):
+        LoopUpdate(bpm=39)
     with pytest.raises(ValidationError):
         LoopUpdate(bpm=251)
