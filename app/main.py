@@ -14,10 +14,11 @@ from slowapi.errors import RateLimitExceeded
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.config import get_settings
 from app.exceptions import (
-    AppError, FreeTierLimitError, MonthlyDownloadLimitError,
+    AppError, FreeTierLimitError, LoopRequestLimitError, MonthlyDownloadLimitError,
     SERVICE_UNAVAILABLE_ERRORS,
     app_error_handler, dbapi_error_handler, free_tier_limit_handler,
-    monthly_limit_handler, service_unavailable_handler, unexpected_error_response,
+    loop_request_limit_handler, monthly_limit_handler, service_unavailable_handler,
+    unexpected_error_response,
 )
 import sqlalchemy.exc
 from app.middleware.error_middleware import UnhandledErrorMiddleware
@@ -148,6 +149,7 @@ app.add_exception_handler(AppError, app_error_handler)
 # app parses to show the paywall (most-derived handler wins over AppError's).
 app.add_exception_handler(FreeTierLimitError, free_tier_limit_handler)
 app.add_exception_handler(MonthlyDownloadLimitError, monthly_limit_handler)
+app.add_exception_handler(LoopRequestLimitError, loop_request_limit_handler)
 
 # Redis or Postgres being unreachable answers 503 instead of falling through to
 # the catch-all below. See SERVICE_UNAVAILABLE_ERRORS for what does and does not

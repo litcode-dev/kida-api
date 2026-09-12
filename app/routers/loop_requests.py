@@ -14,6 +14,7 @@ from app.schemas.loop_request import (
     LoopRequestStatus,
     LoopRequestType,
 )
+from app.services import loop_request_quota_service
 from app.tasks.notification_tasks import send_loop_request_admin_notification
 
 log = structlog.get_logger()
@@ -28,11 +29,17 @@ router = APIRouter(prefix="/loop-requests", tags=["loop-requests"])
     description=(
         "Saves a request for a loop inspired by a reference track. Include an artist, "
         "song title, request type (`loop` or `stems`), and—when available—a link to "
-        "the reference. The Kida team inbox is notified by email."
+        "the reference. The Kida team inbox is notified by email.\n\n"
+        "A free account may submit one request per UTC calendar month, loops and "
+        "stems counted together; Kiɗa Premium may submit as many as it likes. "
+        "Past the allowance this answers 403 with `error: \"loop_request_limit\"`, "
+        "the `limit`, and the `resets_at` instant the next month begins. "
+        "GET /loop-requests/quota reports the same numbers before the form is sent."
     ),
     responses={
         201: {"description": "Loop request created"},
         401: {"description": "Authentication required"},
+        403: {"description": "This month's free-tier request allowance is spent"},
         422: {"description": "Invalid or incomplete request"},
     },
 )
@@ -41,6 +48,11 @@ async def create_loop_request(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    # Checked inside the request's own transaction: the advisory lock this
+    # takes is held until the insert below commits, so two submissions arriving
+    # at once cannot both be counted against an empty month.
+    await loop_request_quota_service.enforce(db, user)
+
     loop_request = LoopRequest(
         user_id=user.id,
         request_type=body.request_type,
@@ -68,6 +80,30 @@ async def create_loop_request(
         data=LoopRequestResponse.model_validate(loop_request).model_dump(mode="json"),
         message="Loop request submitted",
     )
+
+
+@router.get(
+    "/quota",
+    summary="Your loop request allowance for this month",
+    description=(
+        "How many of this month's loop and stems requests the caller has used, "
+        "with the UTC instant the allowance resets.\n\n"
+        "Loops and stems are counted together, and a request counts from the "
+        "moment it is submitted — it is not given back if an admin declines it.\n\n"
+        "A subscriber, or a deployment with the cap turned off, reports `limit` "
+        "and `remaining` as the string `\"unlimited\"`; branch on the `unlimited` "
+        "boolean rather than comparing strings."
+    ),
+    responses={
+        200: {"description": "The caller's allowance"},
+        401: {"description": "Authentication required"},
+    },
+)
+async def get_loop_request_quota(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    return success(await loop_request_quota_service.summary(db, user.id))
 
 
 @router.get(
