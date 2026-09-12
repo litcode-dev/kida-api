@@ -95,6 +95,42 @@ class MonthlyDownloadLimitError(AppError):
         )
 
 
+class LoopRequestLimitError(AppError):
+    """A free account used up its loop requests for the month. Rendered with its
+    own stable machine-readable body (see loop_request_limit_handler) so the app
+    can tell it from the download limits: this one IS cleared by subscribing, so
+    the premium paywall is the right thing to show, and ``resets_at`` carries the
+    other way out for someone who does not want to.
+    """
+
+    def __init__(self, limit: int, resets_at: str):
+        self.limit = limit
+        self.resets_at = resets_at
+        allowance = (
+            "no loop requests" if limit == 0
+            else f"{limit} loop request{'' if limit == 1 else 's'} a month"
+        )
+        super().__init__(
+            f"Free accounts get {allowance}. Kiɗa Premium is unlimited.",
+            status_code=status.HTTP_403_FORBIDDEN,
+        )
+
+
+async def loop_request_limit_handler(
+    request: Request, exc: LoopRequestLimitError
+) -> JSONResponse:
+    # Stable contract parsed by the app — do not change field names or shape.
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "error": "loop_request_limit",
+            "limit": exc.limit,
+            "resets_at": exc.resets_at,
+            "message": exc.message,
+        },
+    )
+
+
 async def monthly_limit_handler(
     request: Request, exc: MonthlyDownloadLimitError
 ) -> JSONResponse:

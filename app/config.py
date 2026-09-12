@@ -171,6 +171,7 @@ class Settings(BaseSettings):
 
     @field_validator(
         "monthly_loop_downloads", "monthly_drone_downloads", "monthly_drum_kit_downloads",
+        "free_tier_monthly_loop_requests",
         mode="before",
     )
     @classmethod
@@ -197,6 +198,12 @@ class Settings(BaseSettings):
     free_tier_drone_pad_downloads: int = 1
     # Free users may download one whole free drone group (all its keys).
     free_tier_drone_group_downloads: int = 1
+
+    # Loop/stems requests a free account may submit per UTC calendar month.
+    # Subscribers are exempt — Premium may ask for as many as it likes. Takes a
+    # whole number or "unlimited" like the allowances above; 0 closes the form
+    # to free accounts entirely.
+    free_tier_monthly_loop_requests: int | None = 1
 
     # Subscription pricing (amounts in kobo for Paystack; divide by 100 for Flutterwave major units)
     subscription_monthly_price: int = 200000   # ₦2,000 in kobo
