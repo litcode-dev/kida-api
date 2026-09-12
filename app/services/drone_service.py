@@ -1,4 +1,6 @@
 import uuid
+from collections.abc import Iterable
+
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import selectinload
@@ -17,6 +19,49 @@ from app.schemas.drone_pad import (
 from app.exceptions import NotFoundError, EntitlementError
 from app.services import monthly_quota_service, price_sync_service, readiness, s3_service
 from app.utils.audio_validator import validate_wav_upload
+
+
+# The keys a drone group has to cover before it is worth publishing. A player
+# transposes from these four, so a group missing one leaves a hole nothing else
+# fills — which is why the set is checked at upload rather than left to whoever
+# notices later. Extra keys on top are welcome; only these are compulsory.
+REQUIRED_KEYS: tuple[MusicalKey, ...] = (
+    MusicalKey.C_sharp,
+    MusicalKey.E,
+    MusicalKey.G,
+    MusicalKey.A_sharp,
+)
+
+
+def ensure_required_keys(keys: Iterable[MusicalKey]) -> None:
+    """Refuse a drone whose pads do not cover REQUIRED_KEYS.
+
+    Named in the error both ways round — what is required and what is actually
+    missing — because the uploader is looking at a directory of files and needs
+    to know which ones to go and render, not just that something is wrong. The
+    lists are in ``data`` too, so the upload form can mark the gaps itself.
+
+    One pad can never satisfy four keys, so this is also what closes the
+    single-pad upload endpoints: a whole group goes up at once, or not at all.
+    """
+    present = set(keys)
+    missing = [key.value for key in REQUIRED_KEYS if key not in present]
+    if not missing:
+        return
+
+    from app.exceptions import AppError
+
+    required = ", ".join(key.value for key in REQUIRED_KEYS)
+    raise AppError(
+        f"A drone must cover at least the keys {required} — "
+        f"missing {', '.join(missing)}. Upload the whole set in one request "
+        "(POST /drones/bulk, one file per key).",
+        status_code=422,
+        data={
+            "required_keys": [key.value for key in REQUIRED_KEYS],
+            "missing_keys": missing,
+        },
+    )
 
 
 async def create_category(
@@ -84,6 +129,10 @@ async def create_drone(
     created_by: uuid.UUID,
     thumbnail: UploadFile | None = None,
 ) -> Drone:
+    # A one-pad group cannot cover the required keys, so this always refuses.
+    # Kept as the one place the rule is written rather than a bespoke "use the
+    # bulk endpoint" error the two routers would each have to carry.
+    ensure_required_keys([data.key])
     if data.category_id is not None:
         await get_category(db, data.category_id)
     wav_bytes = await validate_wav_upload(file)
@@ -241,6 +290,10 @@ async def bulk_create_drones(
     if len(files) != len(keys):
         from app.exceptions import AppError
         raise AppError("Number of files must match number of keys", status_code=422)
+
+    # Before the thumbnail and the pads go to S3: a refused upload should leave
+    # nothing behind to clean up.
+    ensure_required_keys(keys)
 
     if category_id is not None:
         await get_category(db, category_id)
