@@ -61,13 +61,13 @@ def _fake_drone(user_id: uuid.UUID) -> Drone:
 
 
 @pytest.mark.asyncio
-async def test_upload_drone_invalidates_list_cache(client, db_session):
+async def test_single_pad_upload_leaves_the_cache_alone(client, db_session):
+    """It is refused outright — see test_drone_required_keys — so there is
+    nothing new to show and nothing to invalidate."""
     user = await _create_user(db_session, role=UserRole.admin)
     token = create_access_token(str(user.id), user.role.value)
-    fake_drone = _fake_drone(user.id)
 
-    with patch("app.routers.admin.drone_service.create_drone", new=AsyncMock(return_value=fake_drone)), \
-         patch("app.routers.admin.cache_service.delete_pattern", new=AsyncMock()) as mock_invalidate:
+    with patch("app.routers.admin.cache_service.delete_pattern", new=AsyncMock()) as mock_invalidate:
         resp = await client.post(
             "/api/v1/admin/drones",
             data={"title": "New Drone", "key": "C", "is_free": "true"},
@@ -75,8 +75,8 @@ async def test_upload_drone_invalidates_list_cache(client, db_session):
             headers={"Authorization": f"Bearer {token}"},
         )
 
-    assert resp.status_code == 200
-    mock_invalidate.assert_awaited_once_with("drone:list:*")
+    assert resp.status_code == 422
+    mock_invalidate.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -89,8 +89,8 @@ async def test_bulk_upload_drones_invalidates_list_cache(client, db_session):
          patch("app.routers.admin.cache_service.delete_pattern", new=AsyncMock()) as mock_invalidate:
         resp = await client.post(
             "/api/v1/admin/drones/bulk",
-            data={"title": "Bulk Drone", "keys": "C", "is_free": "true"},
-            files={"files": ("test.wav", b"RIFF....", "audio/wav")},
+            data={"title": "Bulk Drone", "keys": "C#,E,G,A#", "is_free": "true"},
+            files=[("files", (f"pad{i}.wav", b"RIFF....", "audio/wav")) for i in range(4)],
             headers={"Authorization": f"Bearer {token}"},
         )
 

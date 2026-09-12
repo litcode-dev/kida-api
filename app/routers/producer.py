@@ -278,6 +278,16 @@ async def upload_drone(
     db: AsyncSession = Depends(get_db),
     producer=Depends(require_producer),
 ):
+    """Refused: a drone goes up as a whole set of keys, not one pad at a time.
+
+    Kept so an old client gets the rule spelled out (422, with the required and
+    missing keys in ``data``) rather than a 404 it cannot act on. Use
+    /api/v1/producer/drones/bulk instead.
+    """
+    # Said first, so the answer is the rule itself rather than whichever other
+    # field the request also happens to be missing.
+    drone_service.ensure_required_keys([key])
+
     from app.exceptions import AppError
     if not is_free and price is None:
         raise AppError("price is required for paid drone pads", status_code=422)
@@ -316,6 +326,12 @@ async def bulk_upload_drones(
     db: AsyncSession = Depends(get_db),
     producer=Depends(require_producer),
 ):
+    """Upload one drone as a set of pads, one file per key.
+
+    ``keys`` is a comma-separated list lining up with ``files`` in order, and it
+    must cover at least C#, E, G, A# — anything beyond that is optional. A set
+    that misses one of them is refused with 422 before anything is stored.
+    """
     from app.exceptions import AppError
 
     if not is_free and price is None:
