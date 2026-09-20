@@ -216,6 +216,11 @@ async def send_broadcast(
         "Each run also carries `push_status`: the digest goes out as one push to "
         "every device alongside the mail, and a push that failed leaves the run "
         "itself recorded as `sent`, because the email is what the run succeeds on."
+        "\n\n"
+        "When `email_enabled` is false the mail half is switched off: runs are "
+        "recorded as `push_only`, `recipients`/`sent` are 0, and the push is the "
+        "whole announcement — so a push that does not deliver releases the "
+        "content back into the next digest instead."
     ),
     responses={403: {"description": "Admin role required"}},
 )
@@ -245,6 +250,7 @@ async def digest_status(
 
     return success({
         "enabled": settings.content_digest_enabled,
+        "email_enabled": settings.content_digest_email_enabled,
         "hour_utc": hour,
         "in_process_scheduler": settings.content_digest_scheduler_enabled,
         "last_due_run": due.isoformat(),
@@ -287,7 +293,8 @@ async def digest_status(
     description=(
         "Runs the digest immediately instead of waiting for the scheduled hour, and "
         "waits for it to finish so the response says what happened.\n\n"
-        "It sends real mail to the full audience, and one push to every device. "
+        "It sends one push to every device, and — unless "
+        "`CONTENT_DIGEST_EMAIL_ENABLED` is false — real mail to the full audience. "
         "Nothing goes out when there is no new content — check `/admin/email/digest` "
         "first. A manual run gets its own slot, so it never cancels the day's "
         "scheduled digest."

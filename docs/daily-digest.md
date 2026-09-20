@@ -1,8 +1,35 @@
-# The daily new-content email
+# The daily new-content digest
 
-One email a day listing everything that went live since the last one, and one
-push notification saying the same thing. Per-item pushes still fire the moment
-something is ready — this is the roundup, not the alert.
+One roundup a day of everything that went live since the last one: a push
+notification to every device, and — when `CONTENT_DIGEST_EMAIL_ENABLED` is true
+— an email saying the same thing. Per-item pushes still fire the moment
+something is ready; this is the roundup, not the alert.
+
+## The email is currently off
+
+`CONTENT_DIGEST_EMAIL_ENABLED` defaults to **false**, so no digest mail is sent
+about new loops, drum kits, drones or stem packs. Everything else is unchanged:
+the daily slot, the lock, the sweep and the claim all run, and the push goes out
+as the whole announcement. Runs are recorded as `push_only`, with `recipients`,
+`sent` and `failed` all zero.
+
+Set `CONTENT_DIGEST_EMAIL_ENABLED=true` to bring the mail back. Nothing else has
+to change, and nothing is lost in the meantime — items announced by push are
+stamped as announced, exactly as a mailed digest stamps them, so switching the
+mail on does not re-announce them.
+
+With the mail off, the push becomes what the run succeeds or fails on, and it
+inherits the email path's rules about not burying content:
+
+* the push being disabled, or OneSignal having no credentials, is a refusal —
+  the run records `not_configured` and claims nothing, rather than stamping the
+  day's content and announcing none of it;
+* a push that is rejected, or accepted with nobody subscribed, releases the
+  claim again (`failed` / `no_recipients`), so the content returns to the next
+  digest. Nobody received it, so there is no inbox for a repeat to annoy.
+
+Transactional mail — verification, purchases, loop requests, admin broadcasts —
+is untouched by this setting. It only switches off the daily roundup.
 
 ## What sends it
 
@@ -24,19 +51,19 @@ day's slot, because "today's drops" at 4am is not a fix).
 
 Running the digest means claiming its slot: a unique `run_key` row in
 `digest_runs`. Beat, several API replicas and an admin pressing the button can
-all fire at once and the list still receives one email. A manual run takes its
-own timestamped key, so it never consumes the day's scheduled digest.
+all fire at once and the audience still gets one announcement. A manual run
+takes its own timestamped key, so it never consumes the day's scheduled digest.
 
 Set `CONTENT_DIGEST_SCHEDULER_ENABLED=false` on deployments that do run beat and
 want it to be the only sender.
 
-## The push that goes with it
+## The push
 
 The same digest goes out as a single OneSignal broadcast to every subscribed
-device, immediately after the mail. It reaches the people who are on the app
-rather than in an inbox, and it is the only announcement a stem pack gets when
-its producer publishes it days after upload — by then its per-item push has long
-since fired.
+device, immediately after the mail — or on its own, when the mail is off. It
+reaches the people who are on the app rather than in an inbox, and it is the
+only announcement a stem pack gets when its producer publishes it days after
+upload — by then its per-item push has long since fired.
 
 The heading is the email's subject line ("3 new drops on Kida"), so somebody who
 gets both reads the second as the first rather than as a second batch. The body
@@ -45,22 +72,25 @@ names the item when there is one and counts by type when there are several
 list of twelve titles arrives as an ellipsis. The payload carries
 `{"type": "content_digest"}` for the app to route on.
 
-The mail is what a run succeeds or fails on. The push happens after the send and
-its outcome only ever lands on the run row, in `push_status`:
+When the mail is on, it is what a run succeeds or fails on: the push happens
+after the send and its outcome only ever lands on the run row, in `push_status`.
+When the mail is off, `push_status` is the run's own outcome as well — see
+[The email is currently off](#the-email-is-currently-off).
 
 | `push_status` | Meaning |
 | --- | --- |
 | `sent` | OneSignal accepted the broadcast; `push_detail` says for how many devices |
-| `disabled` | `CONTENT_DIGEST_PUSH_ENABLED` is false — the mail still went |
+| `disabled` | `CONTENT_DIGEST_PUSH_ENABLED` is false — the mail still went, unless it too is off |
 | `not_configured` | `ONESIGNAL_APP_ID`/`ONESIGNAL_API_KEY` is empty |
 | `no_devices` | accepted, but nobody is subscribed |
 | `failed` | OneSignal rejected it, or the call blew up |
-| *empty* | no push was attempted, because no mail was sent either |
+| *empty* | no push was attempted, because nothing was announced at all |
 
-A failed push never releases the content. The items are already in thousands of
-inboxes; re-announcing them tomorrow to make a notification work would be the
-more expensive mistake, so the run stays `sent` and the failure is recorded
-beside it.
+With the mail on, a failed push never releases the content. The items are
+already in thousands of inboxes; re-announcing them tomorrow to make a
+notification work would be the more expensive mistake, so the run stays `sent`
+and the failure is recorded beside it. With the mail off there is no such inbox,
+so the same failure does release the content.
 
 ## What each run records
 
@@ -70,9 +100,10 @@ answerable:
 | Status | Meaning |
 | --- | --- |
 | `sent` | mail was handed to the provider — `sent`/`failed` count the addresses |
+| `push_only` | the digest email is off; the content was announced by push alone |
 | `empty` | nothing new was ready; no mail, nothing claimed |
-| `no_recipients` | nobody to send to; nothing claimed |
-| `not_configured` | the mail backend has no credentials, so the run refused to start |
+| `no_recipients` | nobody to deliver to — no addresses, or (push-only) no devices |
+| `not_configured` | the channel it would have sent on has no credentials, so the run refused to start |
 | `failed` | the send failed — see `detail` and `claimed_ids` |
 | `running` | claimed and still going, or the process died mid-run |
 
@@ -97,12 +128,17 @@ on a run mean something.
   nothing was delivered the claim is released and the content returns to the
   next digest. A *partial* send keeps its claim — some people already have it.
 
-## When no mail arrived
+## When nothing arrived
+
+First: is the mail meant to arrive at all? With `CONTENT_DIGEST_EMAIL_ENABLED`
+false — the default — "no email" is the configured behaviour, and the question
+is whether the push went out. Both tools below report the setting.
 
 From an admin token, without shell access:
 
     GET  /api/v1/admin/email/digest       # schedule, credentials, queue, last runs
-                                          # including push_enabled/push_problem
+                                          # including email_enabled, push_enabled
+                                          # and push_problem
     POST /api/v1/admin/email/digest/run   # send it now, and report what happened
 
 From a shell on the service:
@@ -112,9 +148,10 @@ From a shell on the service:
     python -m scripts.digest_status --release loop:<uuid> # put an item back in the queue
 
 Read the verdict at the bottom of `digest_status`. The usual causes, in the
-order it checks them: the feature is off, the migration has not run, the mail
-backend has no credentials, no recipients resolve, nothing triggered the run, the
-run failed, or the content simply is not ready yet (a drum kit, drone or stem
+order it checks them: the feature is off, the migration has not run, the digest
+email is off (so the announcement was a push — check `push_status`), the channel
+it sends on has no credentials, no recipients resolve, nothing triggered the run,
+the run failed, or the content simply is not ready yet (a drum kit, drone or stem
 pack is only announceable once every one of its files has finished processing,
 and a stem pack also needs its producer to publish it).
 

@@ -19,6 +19,12 @@ The same digest also goes out as one push to every device, after the mail. Its
 outcome is recorded on the run row and nowhere else: the email is what the run
 succeeds or fails on, so a rejected broadcast can never release content that
 thousands of inboxes have already received.
+
+The mail half can be switched off on its own with CONTENT_DIGEST_EMAIL_ENABLED,
+which is how it currently ships: the sweep, the daily slot and the claim are
+unchanged, and the push becomes the whole announcement. That inverts the
+sentence above for those runs only — see :func:`_push_only`, where an
+undelivered push does release the content, because then nobody was told at all.
 """
 from datetime import datetime, timezone
 
@@ -50,10 +56,13 @@ async def _send_push(
 ) -> tuple[str, str | None]:
     """Announce the same digest to every device. Never raises.
 
-    The mail is the digest; this is the copy that reaches the app. It runs
-    after the send, and its outcome only ever lands on the run row: a push that
-    fails must not fail the run, because the run's claim is what stops the mail
-    that already went out from being sent again tomorrow.
+    When the mail goes out, the mail is the digest and this is the copy that
+    reaches the app: it runs after the send, and its outcome only ever lands on
+    the run row, because a push that failed must not fail a run whose claim is
+    what stops the mail that already went out from being sent again tomorrow.
+
+    With the mail switched off it is the announcement rather than the copy, and
+    :func:`_push_only` — not this function — decides what its failure costs.
     """
     if not settings.content_digest_push_enabled:
         return DigestPushStatus.disabled, "CONTENT_DIGEST_PUSH_ENABLED is false"
@@ -103,6 +112,91 @@ async def _send_push(
     )
 
 
+async def _push_only(
+    db, run: DigestRun, *, settings, key: str, digest, claim_ids: dict
+) -> DigestRun:
+    """The digest with CONTENT_DIGEST_EMAIL_ENABLED false: push, and no mail.
+
+    The roundup email is off, so the broadcast is no longer the copy of the
+    announcement — it is the announcement. Every rule the email path has about
+    not burying content therefore transfers to the push here:
+
+    * nothing is stamped until something can deliver it, so a push that is
+      switched off or has no credentials is a refusal (``not_configured``)
+      rather than a run that claims the day's content and announces none of it;
+    * a push that fails after the claim releases the content again, the way a
+      send where every message failed does — this time nobody received it, so
+      there is no inbox for tomorrow's digest to repeat itself into.
+    """
+    total = digest.total
+    sections = digest.sections()
+
+    if not settings.content_digest_push_enabled:
+        detail = (
+            "CONTENT_DIGEST_EMAIL_ENABLED and CONTENT_DIGEST_PUSH_ENABLED are "
+            "both false — the digest has no way to announce anything"
+        )
+        log.error("content_digest.no_channel", run_key=key, items=total)
+        return await digest_run_service.finish(
+            db, run, DigestRunStatus.not_configured, items=total, detail=detail,
+            push_status=DigestPushStatus.disabled, push_detail=detail,
+        )
+
+    problem = onesignal_service.delivery_problem(settings)
+    if problem:
+        log.error(
+            "content_digest.push_not_configured",
+            run_key=key, items=total, reason=problem,
+        )
+        return await digest_run_service.finish(
+            db, run, DigestRunStatus.not_configured, items=total, detail=problem,
+            push_status=DigestPushStatus.not_configured, push_detail=problem,
+        )
+
+    json_ids = _as_json_ids(claim_ids)
+    claimed = await content_digest_service.claim(db, claim_ids)
+    run.claimed_ids = json_ids
+    db.add(run)
+    await db.commit()
+    log.info(
+        "content_digest.claimed",
+        run_key=key, items=claimed, recipients=0, channel="push", ids=json_ids,
+    )
+
+    push_status, push_detail = await _send_push(settings, sections, total, key)
+
+    if push_status != DigestPushStatus.sent:
+        # Nobody was told, by any channel: hand the content back to the next
+        # digest rather than leaving it stamped and never mentioned again.
+        released = await content_digest_service.release(db, claim_ids)
+        # An accepted broadcast with nobody subscribed is not a broken send,
+        # so it is recorded the way an empty mailing list is.
+        status = (
+            DigestRunStatus.no_recipients
+            if push_status == DigestPushStatus.no_devices
+            else DigestRunStatus.failed
+        )
+        log.error(
+            "content_digest.push_only_undelivered",
+            run_key=key, items=total, push=push_status, released=released,
+        )
+        return await digest_run_service.finish(
+            db, run, status, items=total, claimed_ids=json_ids,
+            detail=(
+                f"push did not deliver ({push_status}) and the digest email is "
+                "off — content released for the next digest"
+            ),
+            push_status=push_status, push_detail=push_detail,
+        )
+
+    log.info("content_digest.push_only_sent", run_key=key, items=total)
+    return await digest_run_service.finish(
+        db, run, DigestRunStatus.push_only, items=total, claimed_ids=json_ids,
+        detail="CONTENT_DIGEST_EMAIL_ENABLED is false — announced by push only",
+        push_status=push_status, push_detail=push_detail,
+    )
+
+
 async def run_digest(
     *, trigger: str, force: bool = False, now: datetime | None = None
 ) -> DigestRun | None:
@@ -140,6 +234,19 @@ async def run_digest(
         if digest.is_empty():
             log.info("content_digest.nothing_new", run_key=key)
             return await digest_run_service.finish(db, run, DigestRunStatus.empty)
+
+        # The mail can be switched off on its own, leaving the push to carry
+        # the digest by itself. Everything above this point is shared — the
+        # slot, the lock, the sweep — because a push-only digest is still one
+        # digest a day announcing each item exactly once.
+        if not settings.content_digest_email_enabled:
+            log.info(
+                "content_digest.email_disabled", run_key=key, items=digest.total
+            )
+            return await _push_only(
+                db, run, settings=settings, key=key,
+                digest=digest, claim_ids=claim_ids,
+            )
 
         # Before anything is stamped: a backend with no credentials would skip
         # every message while the send still reported success, and the content

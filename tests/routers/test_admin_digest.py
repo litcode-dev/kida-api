@@ -59,6 +59,7 @@ def _headers(user):
 def digest_env():
     settings = digest_sender.get_settings().model_copy(update={
         "content_digest_enabled": True,
+        "content_digest_email_enabled": True,
         "content_digest_hour_utc": 0,
         "email_backend": "resend",
         "resend_api_key": "test-key",
@@ -147,6 +148,37 @@ async def test_the_run_shows_up_in_the_history(client, db_session, digest_env):
     assert body["runs"][0]["push_status"] == "sent"
     assert body["push_enabled"] is True
     assert body["push_problem"] is None
+
+
+@pytest.mark.asyncio
+async def test_status_says_whether_the_mail_is_switched_on(client, db_session):
+    """The first question when no email arrived: was one meant to?"""
+    admin = await _user(db_session, role=UserRole.admin)
+
+    body = (await client.get(STATUS, headers=_headers(admin))).json()["data"]
+
+    assert body["email_enabled"] is False, "the digest ships with the mail off"
+
+
+@pytest.mark.asyncio
+async def test_running_it_with_the_mail_off_pushes_and_sends_nothing(
+    client, db_session, digest_env
+):
+    admin = await _user(db_session, role=UserRole.admin)
+    loop = await _ready_loop(db_session, admin.id)
+    digest_env.content_digest_email_enabled = False
+
+    with patch.object(email_service, "send_bulk_email", new=AsyncMock()) as send:
+        body = (await client.post(RUN, headers=_headers(admin))).json()["data"]
+
+    send.assert_not_awaited()
+    assert body["status"] == "push_only"
+    assert body["items"] == 1
+    assert body["recipients"] == 0
+
+    # Announced by push is still announced — it does not go out again tomorrow.
+    await db_session.refresh(loop)
+    assert loop.announced_at is not None
 
 
 @pytest.mark.asyncio
