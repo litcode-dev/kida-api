@@ -1,4 +1,4 @@
-"""What goes into the daily new-content email, and how it is claimed.
+"""What goes into the daily new-content digest, and how it is claimed.
 
 The old scheme sent one email per item to every user and newsletter subscriber,
 at upload time. That cost recipients × items, interrupted people once per
@@ -6,13 +6,18 @@ upload, and announced content before the processing job had finished — so a
 failed encode still went out to the whole list.
 
 This replaces it with a sweep. Once a day the digest asks "what is live and has
-not been announced?", sends one email listing it, and stamps each item. Push
-notifications still fire per item the moment it is ready, so nothing here slows
-down the signal that something new exists; the email is the roundup.
+not been announced?", announces the lot in one message, and stamps each item.
+Per-item push notifications still fire the moment something is ready, so nothing
+here slows down the signal that new content exists; this is the roundup.
+
+The roundup goes out as one push to every device, and — when
+CONTENT_DIGEST_EMAIL_ENABLED is true, which it is not by default — as one email
+saying the same thing. Either way each item is announced exactly once, which is
+what the stamping below is for.
 
 Readiness differs by type. A loop, drone or drum kit is announceable as soon as
 its audio is processed. A stem pack also needs its producer to publish it — a
-breakdown pack sitting half-uploaded is not something to email anyone about.
+breakdown pack sitting half-uploaded is not something to announce to anyone.
 """
 import uuid
 from dataclasses import dataclass, field

@@ -12,8 +12,9 @@ of a handful of things, and none of them are visible from outside the database:
   * the sweep ran and claimed the item, but the send then failed
   * the mail backend has no credentials, so nothing could be delivered
   * the mail went out but the push that accompanies it did not
+  * the digest email is switched off, and the push is the whole announcement
 
-This prints all seven, plus the digest's own run history and what the next digest
+This prints all eight, plus the digest's own run history and what the next digest
 currently holds. Every run writes a digest_runs row, so "did it even fire, and
 what did it decide" is a question this can answer directly.
 
@@ -204,6 +205,10 @@ async def report() -> None:
     print("Digest configuration")
     print("--------------------")
     print(f"  enabled            {settings.content_digest_enabled}")
+    mail_off = "" if settings.content_digest_email_enabled else (
+        " (push-only — CONTENT_DIGEST_EMAIL_ENABLED is false)"
+    )
+    print(f"  email              {settings.content_digest_email_enabled}{mail_off}")
     print(f"  scheduled hour     {settings.content_digest_hour_utc:02d}:00 UTC")
     print(f"  now                {_both_zones(now)}")
     print(f"  last due run       {_both_zones(last_run)}")
@@ -212,8 +217,15 @@ async def report() -> None:
           f"(every {settings.content_digest_scheduler_interval_seconds}s, "
           f"catch-up window {settings.content_digest_catch_up_hours}h)")
     print(f"  email backend      {settings.email_backend}")
-    delivery = _delivery_problem(settings)
-    print(f"  credentials        {delivery or 'present for this backend'}")
+    # With the mail off, the backend's credentials cannot block anything: the
+    # run never reaches the send, so a missing key is not the answer to "why
+    # did nothing arrive".
+    if settings.content_digest_email_enabled:
+        delivery = _delivery_problem(settings)
+        print(f"  credentials        {delivery or 'present for this backend'}")
+    else:
+        delivery = None
+        print("  credentials        not checked — the digest email is off")
     push_problem = onesignal_service.delivery_problem(settings)
     print(f"  push               {settings.content_digest_push_enabled} "
           f"({push_problem or 'OneSignal credentials present'})")
@@ -239,7 +251,7 @@ async def report() -> None:
         _section(
             f"Queued for the next digest ({digest.total} item(s))",
             queued,
-            "Nothing is waiting. The next run will send no mail at all.",
+            "Nothing is waiting. The next run will announce nothing at all.",
         )
 
         blocked = await _blocked_loops(db)
@@ -269,10 +281,17 @@ async def report() -> None:
         )
 
         recipients = await broadcast_service.resolve_recipients(db, BroadcastAudience.all)
-        print(f"\nRecipients: {len(recipients)} address(es) would receive the next digest.")
+        if settings.content_digest_email_enabled:
+            print(f"\nRecipients: {len(recipients)} address(es) would receive the next digest.")
+        else:
+            print(f"\nRecipients: {len(recipients)} address(es) would receive the next digest "
+                  "if the mail were on. It is off — the next digest goes out as a push only.")
 
     print("\nVerdict")
     print("-------")
+    if settings.content_digest_enabled and not settings.content_digest_email_enabled:
+        print("  The digest email is off (CONTENT_DIGEST_EMAIL_ENABLED=false). Runs still")
+        print("  sweep, claim and announce — by push alone, recorded as push_only.")
     if not settings.content_digest_enabled:
         print("  CONTENT_DIGEST_ENABLED is false — every run returns before doing anything.")
     elif missing:
@@ -284,7 +303,20 @@ async def report() -> None:
         print("  lost — set the credentials and the next run sends the backlog. Release")
         print("  anything an older build already claimed:")
         print("    python -m scripts.digest_status --release <type>:<id>")
-    elif not recipients:
+    elif not settings.content_digest_email_enabled and (
+        not settings.content_digest_push_enabled or push_problem
+    ):
+        # The push is the only channel left, so what would normally be a note
+        # beside a delivered email is the whole failure.
+        if not settings.content_digest_push_enabled:
+            print("  Both channels are off: CONTENT_DIGEST_EMAIL_ENABLED and")
+            print("  CONTENT_DIGEST_PUSH_ENABLED are false, so a run has no way to announce")
+            print("  anything. It refuses before claiming, so nothing has been lost.")
+        else:
+            print(f"  The push has no credentials: {push_problem}.")
+            print("  With the mail off that is the only channel, so the run refuses before")
+            print("  claiming — set the credentials and the next run sends the backlog.")
+    elif settings.content_digest_email_enabled and not recipients:
         print("  No recipients resolve. The run exits before sending and claims nothing.")
     elif due_run is None and digest.total:
         print(f"  {digest.total} item(s) were ready at {_both_zones(last_run)} and no run")
@@ -299,6 +331,11 @@ async def report() -> None:
         print("  Content it released is back in the queue above; content it kept is listed")
         print("  in its claimed_ids and can be released by id:")
         print("    python -m scripts.digest_status --release <type>:<id>")
+    elif due_run is not None and due_run.status == "push_only":
+        print(f"  The last due run announced {due_run.items} item(s) by push"
+              f" ({due_run.push_detail or due_run.push_status}), and sent no mail —")
+        print("  which is what CONTENT_DIGEST_EMAIL_ENABLED=false means. Anything queued")
+        print(f"  above arrived after {last_run:%H:%M} UTC and goes out at {_both_zones(next_run)}.")
     elif due_run is not None and due_run.status == "sent":
         print(f"  The last due run sent {due_run.sent} message(s) to {due_run.recipients}")
         print(f"  recipient(s), {due_run.failed} of which failed. Anything queued above")

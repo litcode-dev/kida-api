@@ -9,6 +9,10 @@ content, and both leave a row saying what happened.
 The rest cover the lock: several things can start a digest now, and only one of
 them may send it, and the push that goes out with the mail — which is recorded
 but never allowed to cost the run.
+
+The last group covers the digest with its email switched off, which is how it
+ships: the push is then the whole announcement, and it inherits the email path's
+refusals rather than quietly stamping content nobody was told about.
 """
 import uuid
 from decimal import Decimal
@@ -78,6 +82,7 @@ def digest_env(push_ok):
     """Point the sender at the test database, with a delivering mail backend."""
     settings = digest_sender.get_settings().model_copy(update={
         "content_digest_enabled": True,
+        "content_digest_email_enabled": True,  # the email path; see the push-only tests
         "content_digest_hour_utc": 0,  # always past due, so a run is always claimable
         "email_backend": "resend",
         "resend_api_key": "test-key",
@@ -385,3 +390,159 @@ async def test_a_run_that_sends_no_mail_sends_no_push(
     assert run.status == DigestRunStatus.no_recipients
     assert run.push_status is None, "not attempted is not the same as failed"
     push_ok.assert_not_awaited()
+
+
+# --- With the digest email switched off (CONTENT_DIGEST_EMAIL_ENABLED=false) ---
+#
+# The mail is off by default now, and the push carries the whole digest. What
+# these cover is that switching the mail off did not quietly turn the digest
+# into something that loses content: the sweep, the daily slot and the claim are
+# the same, and every rule the email path has about not stamping what nobody
+# received applies to the push instead.
+
+
+@pytest.fixture
+def push_only_env(digest_env):
+    digest_env.content_digest_email_enabled = False
+    return digest_env
+
+
+@pytest.mark.asyncio
+async def test_with_the_mail_off_the_digest_is_pushed_and_nothing_is_emailed(
+    db_session, push_only_env, sent_ok, push_ok
+):
+    producer = await _user(db_session, role=UserRole.producer)
+    loop = await _ready_loop(db_session, producer.id, title="Harmattan Pad")
+
+    run = await digest_sender.run_digest(trigger="beat")
+
+    assert run.status == DigestRunStatus.push_only
+    assert run.push_status == DigestPushStatus.sent
+    assert (run.items, run.recipients, run.sent, run.failed) == (1, 0, 0, 0)
+    sent_ok.assert_not_awaited()
+
+    push_ok.assert_awaited_once()
+    assert push_ok.await_args.kwargs["title"] == "1 new drop on Kida"
+    assert "Harmattan Pad" in push_ok.await_args.kwargs["message"]
+
+    # Announced is announced, whichever channel said it: turning the mail back
+    # on must not re-announce everything the pushes already covered.
+    await db_session.refresh(loop)
+    assert loop.announced_at is not None
+    assert run.claimed_ids["loop"] == [str(loop.id)]
+
+
+@pytest.mark.asyncio
+async def test_with_the_mail_off_an_unsendable_backend_is_beside_the_point(
+    db_session, push_only_env, sent_ok, push_ok
+):
+    """No credentials, no problem: the run was never going to send mail."""
+    producer = await _user(db_session, role=UserRole.producer)
+    await _ready_loop(db_session, producer.id)
+    push_only_env.resend_api_key = ""
+
+    run = await digest_sender.run_digest(trigger="beat")
+
+    assert run.status == DigestRunStatus.push_only
+    sent_ok.assert_not_awaited()
+    push_ok.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_with_the_mail_off_a_failed_push_releases_the_content(
+    db_session, push_only_env, sent_ok, push_ok
+):
+    """The mirror of a send where every message failed.
+
+    With the mail on, a failed push keeps the claim because the content is
+    already in thousands of inboxes. With the mail off there are no inboxes —
+    nobody was told at all — so the content goes back in the queue.
+    """
+    producer = await _user(db_session, role=UserRole.producer)
+    loop = await _ready_loop(db_session, producer.id)
+    push_ok.side_effect = RuntimeError("onesignal is down")
+
+    run = await digest_sender.run_digest(trigger="beat")
+
+    assert run.status == DigestRunStatus.failed
+    assert run.push_status == DigestPushStatus.failed
+    assert run.claimed_ids["loop"] == [str(loop.id)]
+
+    await db_session.refresh(loop)
+    assert loop.announced_at is None, "nobody heard about it, so it is not announced"
+
+
+@pytest.mark.asyncio
+async def test_with_the_mail_off_nobody_subscribed_returns_the_content(
+    db_session, push_only_env, sent_ok, push_ok
+):
+    """An accepted broadcast with no devices is the push's empty mailing list."""
+    producer = await _user(db_session, role=UserRole.producer)
+    loop = await _ready_loop(db_session, producer.id)
+    push_ok.return_value = {
+        "status_code": 200,
+        "body": {"errors": ["All included players are not subscribed"]},
+    }
+
+    run = await digest_sender.run_digest(trigger="beat")
+
+    assert run.status == DigestRunStatus.no_recipients
+    assert run.push_status == DigestPushStatus.no_devices
+
+    await db_session.refresh(loop)
+    assert loop.announced_at is None
+
+
+@pytest.mark.asyncio
+async def test_with_the_mail_off_an_unconfigured_push_claims_nothing(
+    db_session, push_only_env, sent_ok, push_ok
+):
+    producer = await _user(db_session, role=UserRole.producer)
+    loop = await _ready_loop(db_session, producer.id)
+    push_only_env.onesignal_api_key = ""
+
+    run = await digest_sender.run_digest(trigger="beat")
+
+    assert run.status == DigestRunStatus.not_configured
+    assert run.push_status == DigestPushStatus.not_configured
+    assert "ONESIGNAL_API_KEY" in run.detail
+    push_ok.assert_not_awaited()
+
+    await db_session.refresh(loop)
+    assert loop.announced_at is None, "content must survive a run that cannot announce"
+
+
+@pytest.mark.asyncio
+async def test_with_both_channels_off_the_run_refuses_rather_than_claims(
+    db_session, push_only_env, sent_ok, push_ok
+):
+    producer = await _user(db_session, role=UserRole.producer)
+    loop = await _ready_loop(db_session, producer.id)
+    push_only_env.content_digest_push_enabled = False
+
+    run = await digest_sender.run_digest(trigger="beat")
+
+    assert run.status == DigestRunStatus.not_configured
+    assert run.push_status == DigestPushStatus.disabled
+    assert "CONTENT_DIGEST_EMAIL_ENABLED" in run.detail
+    sent_ok.assert_not_awaited()
+    push_ok.assert_not_awaited()
+
+    await db_session.refresh(loop)
+    assert loop.announced_at is None
+
+
+@pytest.mark.asyncio
+async def test_with_the_mail_off_a_slot_is_still_claimed_once(
+    db_session, push_only_env, sent_ok, push_ok
+):
+    """One push a day, not one per scheduler: the lock is unchanged."""
+    producer = await _user(db_session, role=UserRole.producer)
+    await _ready_loop(db_session, producer.id)
+
+    first = await digest_sender.run_digest(trigger="beat")
+    second = await digest_sender.run_digest(trigger="api")
+
+    assert first.status == DigestRunStatus.push_only
+    assert second is None
+    assert push_ok.await_count == 1

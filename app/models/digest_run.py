@@ -27,19 +27,25 @@ class DigestRunStatus(str):
 
     running = "running"                  # claimed, still going (or died mid-run)
     sent = "sent"                        # mail handed to the provider
+    push_only = "push_only"              # pushed; the digest email is switched off
     empty = "empty"                      # nothing new was ready to announce
     no_recipients = "no_recipients"      # nobody to send to
-    not_configured = "not_configured"    # mail backend has no credentials
+    not_configured = "not_configured"    # the channel it would send on has no credentials
     failed = "failed"                    # the send itself failed
 
 
 class DigestPushStatus(str):
     """What became of the digest's push notification.
 
-    Kept apart from the run's own status because the push is not what the run
-    succeeds or fails on: the mail is the digest, and a rejected broadcast must
-    not release content that thousands of inboxes already have. NULL on the row
-    means no push was attempted — the mail never went out either.
+    Kept apart from the run's own status because the push is not normally what
+    the run succeeds or fails on: the mail is the digest, and a rejected
+    broadcast must not release content that thousands of inboxes already have.
+    NULL on the row means no push was attempted — the mail never went out
+    either.
+
+    The exception is a ``push_only`` run, where CONTENT_DIGEST_EMAIL_ENABLED is
+    false and the push is the only announcement there is. Then a failed push
+    does release the content, because nobody heard about it at all.
     """
 
     sent = "sent"                        # OneSignal accepted the broadcast
@@ -77,9 +83,10 @@ class DigestRun(Base):
     failed: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
 
     # What became of the push that goes out with the mail, and why. NULL means
-    # none was attempted, which is what a run that sent no mail looks like.
-    # Separate from ``status`` so "the email arrived but no push did" is a
-    # question the row answers on its own.
+    # none was attempted, which is what a run that announced nothing looks
+    # like. Separate from ``status`` so "the email arrived but no push did" is
+    # a question the row answers on its own — and on a ``push_only`` run it is
+    # the only record of whether anything was announced at all.
     push_status: Mapped[str | None] = mapped_column(String(24), nullable=True)
     push_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
 

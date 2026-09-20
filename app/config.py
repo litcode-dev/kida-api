@@ -78,16 +78,25 @@ class Settings(BaseSettings):
     app_deep_link_url: str = "https://kida.litcode.com.ng"
 
     # New-content digest
-    # One email a day listing everything that went live, instead of one email
-    # per item to every recipient. Push notifications still fire per item, so
+    # One roundup a day of everything that went live, instead of one email per
+    # item to every recipient. Push notifications still fire per item, so
     # nothing here delays the "it's live" signal — this is the roundup.
     content_digest_enabled: bool = True
+    # Whether the roundup goes out as mail at all. Off: the digest still runs,
+    # still claims what it announces, and still pushes — the email half is what
+    # is switched off. The audience is on the app rather than in an inbox, and
+    # a daily marketing mail to the whole list is not what most of them signed
+    # up for, so this stays false until the mail is worth sending again. Set
+    # CONTENT_DIGEST_EMAIL_ENABLED=true to bring it back; nothing else changes.
+    content_digest_email_enabled: bool = False
     # The digest also goes out as one push to every subscribed device, sent
     # with the mail and saying the same thing. Most of the audience is on the
     # app rather than in an inbox, and a stem pack the producer publishes days
     # after upload has no per-item push left to fire — the roundup is the only
     # announcement it gets. Turn it off to leave the digest email-only; the
     # mail sends either way, because a failed push must not cost the roundup.
+    # With CONTENT_DIGEST_EMAIL_ENABLED false the push is the whole digest, so
+    # turning both off leaves the run nothing to send and it claims nothing.
     content_digest_push_enabled: bool = True
     # Hour (UTC) the digest is sent. 17:00 UTC is 18:00 in Lagos — evening,
     # after work, for the audience this catalogue is built for.

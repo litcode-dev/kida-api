@@ -371,7 +371,11 @@ def send_purchase_confirmation(user_id: str, purchase_id: str):
 
 @celery_app.task
 def send_content_digest(trigger: str = "beat", force: bool = False):
-    """One email listing everything that went live since the last run.
+    """One roundup of everything that went live since the last run.
+
+    A push to every device, plus the same thing as an email when
+    CONTENT_DIGEST_EMAIL_ENABLED is true — it is false by default, so what goes
+    out is the push alone.
 
     The work itself lives in ``digest_sender.run_digest``, because beat is not
     the only thing that starts it: the API runs the same function on a catch-up
