@@ -124,6 +124,19 @@ def test_parse_other_entitlement_ignored(monkeypatch):
     assert parsed is None
 
 
+def test_parse_collects_every_identity(monkeypatch):
+    monkeypatch.setattr(get_settings(), "revenuecat_entitlement_id", "premium")
+    ent = revenuecat_service.parse_webhook_event({"event": {
+        "type": "INITIAL_PURCHASE",
+        "app_user_id": "someone@example.com",
+        "original_app_user_id": "$RCAnonymousID:abc",
+        "aliases": ["$RCAnonymousID:abc", "someone@example.com", None],
+        "expiration_at_ms": _future_ms(30),
+    }})
+    assert ent.app_user_id == "someone@example.com"
+    assert ent.aliases == ("someone@example.com", "$RCAnonymousID:abc")
+
+
 def test_parse_missing_event_raises():
     with pytest.raises(AppError):
         revenuecat_service.parse_webhook_event({"nope": True})

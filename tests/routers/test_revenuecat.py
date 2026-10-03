@@ -167,6 +167,85 @@ async def test_webhook_anonymous_user_no_op(client, db_session, monkeypatch):
     assert resp.json()["applied"] is False
 
 
+def _purchase_event(**event):
+    """An INITIAL_PURCHASE shaped like a real Play Store delivery."""
+    return {"api_version": "1.0", "event": {
+        "type": "INITIAL_PURCHASE",
+        "product_id": "kida.premium.monthly:monthly",
+        "entitlement_ids": ["Kida Pro"],
+        "expiration_at_ms": _future_ms(30),
+        "store": "PLAY_STORE",
+        "original_transaction_id": f"GPA.{uuid.uuid4()}",
+        **event,
+    }}
+
+
+@pytest.mark.asyncio
+async def test_webhook_maps_email_app_user_id(client, db_session, monkeypatch):
+    # RevenueCat customers created before the app logged in with the user's id
+    # carry the account email as their app_user_id.
+    monkeypatch.setattr(get_settings(), "revenuecat_webhook_auth_header", "hook-secret")
+    monkeypatch.setattr(get_settings(), "revenuecat_entitlement_id", "Kida Pro")
+    user = await _create_user(db_session)
+    rc_id = user.email.upper()
+
+    resp = await client.post(
+        "/api/v1/subscriptions/webhook/revenuecat",
+        headers={"Authorization": "hook-secret"},
+        json=_purchase_event(
+            app_user_id=rc_id,
+            original_app_user_id="$RCAnonymousID:17dd35d141304f46a820fdf174112f90",
+            aliases=["$RCAnonymousID:17dd35d141304f46a820fdf174112f90", rc_id],
+        ),
+    )
+    assert resp.status_code == 200
+    assert resp.json()["applied"] is True
+
+    sub = await _get_sub(db_session, user.id)
+    assert sub.status == IapSubscriptionStatus.active
+    assert sub.product_id == "kida.premium.monthly:monthly"
+    # Kept as RevenueCat knows it, so account deletion reaches that customer.
+    assert sub.app_user_id == rc_id
+
+
+@pytest.mark.asyncio
+async def test_webhook_maps_user_id_found_in_aliases(client, db_session, monkeypatch):
+    monkeypatch.setattr(get_settings(), "revenuecat_webhook_auth_header", "hook-secret")
+    monkeypatch.setattr(get_settings(), "revenuecat_entitlement_id", "Kida Pro")
+    user = await _create_user(db_session)
+    other = await _create_user(db_session)
+
+    resp = await client.post(
+        "/api/v1/subscriptions/webhook/revenuecat",
+        headers={"Authorization": "hook-secret"},
+        json=_purchase_event(
+            app_user_id="$RCAnonymousID:abc",
+            # An id beats an email: logIn(user.id) is the binding the app makes.
+            aliases=["$RCAnonymousID:abc", other.email, str(user.id)],
+        ),
+    )
+    assert resp.status_code == 200
+    assert resp.json()["applied"] is True
+    assert (await _get_sub(db_session, user.id)).status == IapSubscriptionStatus.active
+    assert await _get_sub(db_session, other.id) is None
+
+
+@pytest.mark.asyncio
+async def test_webhook_unknown_identities_no_op(client, db_session, monkeypatch):
+    monkeypatch.setattr(get_settings(), "revenuecat_webhook_auth_header", "hook-secret")
+    monkeypatch.setattr(get_settings(), "revenuecat_entitlement_id", "Kida Pro")
+    resp = await client.post(
+        "/api/v1/subscriptions/webhook/revenuecat",
+        headers={"Authorization": "hook-secret"},
+        json=_purchase_event(
+            app_user_id="nobody@example.com",
+            aliases=["nobody@example.com", str(uuid.uuid4())],
+        ),
+    )
+    assert resp.status_code == 200
+    assert resp.json()["applied"] is False
+
+
 # --- REST reconcile ----------------------------------------------------------
 
 
@@ -208,6 +287,29 @@ async def test_verify_revenuecat_no_entitlement_is_inactive(client, db_session, 
     )
     assert resp.status_code == 200
     assert resp.json()["active"] is False
+
+
+@pytest.mark.asyncio
+async def test_verify_revenuecat_falls_back_to_email(client, db_session, monkeypatch):
+    user = await _create_user(db_session)
+    entitlement = RevenueCatEntitlement(
+        app_user_id=user.email,
+        product_id="kida.premium.monthly:monthly",
+        status=IapSubscriptionStatus.active,
+        expires_at=datetime.now(timezone.utc) + timedelta(days=20),
+        platform=None,
+        store_transaction_id="gpa-email",
+    )
+    fetch = AsyncMock(side_effect=lambda rc_id: entitlement if rc_id == user.email else None)
+    monkeypatch.setattr(RevenueCatClient, "fetch_entitlement", fetch)
+
+    resp = await client.post(
+        "/api/v1/subscriptions/verify/revenuecat", headers=_auth_headers(user)
+    )
+    assert resp.status_code == 200
+    assert resp.json()["active"] is True
+    assert [c.args[0] for c in fetch.await_args_list] == [str(user.id), user.email]
+    assert (await _get_sub(db_session, user.id)).app_user_id == user.email
 
 
 @pytest.mark.asyncio

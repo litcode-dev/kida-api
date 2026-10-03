@@ -89,6 +89,10 @@ async def verify_revenuecat_subscription(
     client = revenuecat_service.RevenueCatClient()
     parsed = await client.fetch_entitlement(str(user.id))
     if parsed is None:
+        # Customers created before the app logged in with the user id are
+        # keyed by the account email in RevenueCat.
+        parsed = await client.fetch_entitlement(user.email)
+    if parsed is None:
         # No RevenueCat premium entitlement; report whatever is already on file
         # (e.g. an admin grant) without overwriting it.
         sub = await iap_subscription_service.get_subscription(db, user.id)
@@ -232,12 +236,18 @@ async def subscription_revenuecat_webhook(
     if parsed is None:
         return {"received": True, "applied": False}
 
-    # app_user_id is our user UUID when the app called Purchases.logIn(user.id).
-    # Anonymous ($RCAnonymousID:...) or otherwise non-UUID ids can't be mapped.
-    try:
-        user_id = uuid.UUID(parsed.app_user_id)
-    except (ValueError, AttributeError, TypeError):
-        logger.info("revenuecat_webhook_unmappable_user", app_user_id=parsed.app_user_id)
+    # app_user_id is our user UUID when the app called Purchases.logIn(user.id),
+    # but older customers are keyed by email and a purchase made before logIn
+    # starts anonymous — so try every alias RevenueCat sent.
+    user_id = await iap_subscription_service.user_for_revenuecat_ids(
+        db, parsed.aliases or (parsed.app_user_id,)
+    )
+    if user_id is None:
+        logger.info(
+            "revenuecat_webhook_unmappable_user",
+            app_user_id=parsed.app_user_id,
+            aliases=list(parsed.aliases),
+        )
         return {"received": True, "applied": False}
 
     await iap_subscription_service.apply_revenuecat_state(

@@ -17,7 +17,10 @@ Two surfaces feed the same ``IapSubscription`` row, both normalized here into a
   entitlements on demand. See :class:`RevenueCatClient` / :func:`parse_subscriber`.
 
 Identity: the app calls ``Purchases.logIn(user.id)`` so RevenueCat's
-``app_user_id`` equals our ``user_id`` (a UUID string), mapping 1:1 to a row.
+``app_user_id`` is normally our ``user_id`` (a UUID string). Some customers were
+created under the account email instead, and a purchase made before ``logIn``
+starts out anonymous, so webhooks also carry every alias RevenueCat holds for
+the customer and the user is resolved from the whole set.
 """
 from __future__ import annotations
 
@@ -66,6 +69,8 @@ class RevenueCatEntitlement:
     expires_at: datetime | None
     platform: IapPlatform | None
     store_transaction_id: str | None
+    # Every app_user_id RevenueCat knows this customer by, app_user_id first.
+    aliases: tuple[str, ...] = ()
 
 
 def _to_dt(value) -> datetime | None:
@@ -131,6 +136,15 @@ def verify_webhook_auth(authorization: str | None) -> bool:
 # --- Webhook event parsing ---------------------------------------------------
 
 
+def _identities(event: dict) -> tuple[str, ...]:
+    """The event's app_user_id, original_app_user_id and aliases, deduplicated."""
+    ids = [event.get("app_user_id"), event.get("original_app_user_id")]
+    aliases = event.get("aliases")
+    if isinstance(aliases, list):
+        ids.extend(aliases)
+    return tuple(dict.fromkeys(str(i) for i in ids if i))
+
+
 def parse_webhook_event(payload: dict) -> RevenueCatEntitlement | None:
     """Normalize a RevenueCat webhook body into a :class:`RevenueCatEntitlement`.
 
@@ -193,6 +207,7 @@ def parse_webhook_event(payload: dict) -> RevenueCatEntitlement | None:
         store_transaction_id=(
             event.get("original_transaction_id") or event.get("transaction_id")
         ),
+        aliases=_identities(event),
     )
 
 

@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 import structlog
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,6 +15,7 @@ from app.models.iap_subscription import (
     IapSubscriptionStatus,
     PremiumPlan,
 )
+from app.models.user import User
 
 logger = structlog.get_logger()
 
@@ -149,6 +150,35 @@ async def verify_and_upsert(
 
     await db.refresh(sub)
     return sub
+
+
+async def user_for_revenuecat_ids(
+    db: AsyncSession, app_user_ids: tuple[str, ...] | list[str]
+) -> uuid.UUID | None:
+    """The account a RevenueCat customer belongs to, or None if none matches.
+
+    An id that is one of our user UUIDs wins, since that is what the app's
+    ``Purchases.logIn(user.id)`` binds. Failing that, an id equal to an account
+    email (case-insensitive) — the shape of customers created under the email.
+    Anonymous ``$RCAnonymousID:`` ids match neither and are skipped.
+    """
+    emails: list[str] = []
+    for raw in app_user_ids:
+        try:
+            candidate = uuid.UUID(raw)
+        except (ValueError, AttributeError, TypeError):
+            if isinstance(raw, str) and "@" in raw:
+                emails.append(raw.strip().lower())
+            continue
+        found = await db.scalar(select(User.id).where(User.id == candidate))
+        if found is not None:
+            return found
+
+    for email in dict.fromkeys(emails):
+        found = await db.scalar(select(User.id).where(func.lower(User.email) == email))
+        if found is not None:
+            return found
+    return None
 
 
 async def apply_revenuecat_state(
