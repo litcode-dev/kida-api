@@ -870,7 +870,8 @@ async def platform_analytics(
         "absent from the public listing, which is how a loop being edited can "
         "look as though it were deleted.\n\n"
         "Filters match the public listing; `status` narrows to one of "
-        f"{', '.join(f'`{s}`' for s in LOOP_STATUSES)}."
+        f"{', '.join(f'`{s}`' for s in LOOP_STATUSES)}.\n\n"
+        "Each item carries `like_count`, and `sort=most_liked` orders by it."
     ),
 )
 @limiter.limit("60/minute")
@@ -903,8 +904,14 @@ async def list_all_loops(
         page=page, page_size=page_size,
     )
     loops, total = await loop_service.list_loops(db, filters)
+    likes = await loop_service.like_counts(db, [l.id for l in loops])
     return success({
-        "items": [LoopAdminResponse.model_validate(l).model_dump() for l in loops],
+        "items": [
+            LoopAdminResponse.model_validate(l)
+            .model_copy(update={"like_count": likes.get(l.id, 0)})
+            .model_dump()
+            for l in loops
+        ],
         "total": total,
         "page": filters.page,
         "page_size": filters.page_size,

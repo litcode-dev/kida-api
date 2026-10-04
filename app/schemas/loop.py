@@ -166,6 +166,7 @@ class LoopAdminResponse(LoopResponse):
     """
 
     status: str
+    like_count: int = 0
 
 
 class LoopFilter(BaseModel):

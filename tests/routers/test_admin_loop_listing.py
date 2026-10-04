@@ -10,6 +10,7 @@ from decimal import Decimal
 
 import pytest
 
+from app.models.like import Like
 from app.models.loop import Loop, Genre, TempoFeel
 from app.models.user import User, UserRole
 from app.services.auth_service import create_access_token, hash_password
@@ -145,3 +146,46 @@ async def test_the_listing_is_admin_only(client, db_session):
     resp = await client.get("/api/v1/admin/loops", headers=_headers(user))
 
     assert resp.status_code == 403
+
+
+async def _like(db, loop, times):
+    """`times` distinct users each like `loop` once."""
+    for _ in range(times):
+        user = await _admin(db)
+        db.add(Like(id=uuid.uuid4(), user_id=user.id, loop_id=loop.id))
+    await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_each_loop_carries_its_like_count(client, db_session):
+    admin = await _admin(db_session)
+    popular = await _loop(db_session, admin.id, "Popular", "ready")
+    liked_once = await _loop(db_session, admin.id, "Liked Once", "processing")
+    await _loop(db_session, admin.id, "Unliked", "ready")
+    await _like(db_session, popular, 3)
+    await _like(db_session, liked_once, 1)
+
+    resp = await client.get("/api/v1/admin/loops", headers=_headers(admin))
+
+    assert resp.status_code == 200
+    counts = {i["title"]: i["like_count"] for i in resp.json()["data"]["items"]}
+    assert counts == {"Popular": 3, "Liked Once": 1, "Unliked": 0}
+
+
+@pytest.mark.asyncio
+async def test_most_liked_sort_orders_by_like_count(client, db_session):
+    admin = await _admin(db_session)
+    # Created least-liked first, so newest-first order would be the reverse.
+    two = await _loop(db_session, admin.id, "Two", "ready")
+    await _loop(db_session, admin.id, "Zero", "ready")
+    five = await _loop(db_session, admin.id, "Five", "ready")
+    await _like(db_session, two, 2)
+    await _like(db_session, five, 5)
+
+    resp = await client.get(
+        "/api/v1/admin/loops?sort=most_liked", headers=_headers(admin)
+    )
+
+    assert resp.status_code == 200
+    titles = [i["title"] for i in resp.json()["data"]["items"]]
+    assert titles == ["Five", "Two", "Zero"]
