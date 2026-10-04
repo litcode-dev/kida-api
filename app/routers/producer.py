@@ -17,7 +17,9 @@ from app.schemas.drone_pad import (
     DronePadUpdate,
     DroneResponse,
 )
-from app.schemas.loop import LoopCreate, LoopFilter, LoopUpdate, LoopResponse
+from app.schemas.loop import (
+    LoopCreate, LoopFilter, LoopUpdate, LoopResponse, LoopWithLikesResponse,
+)
 from app.schemas.producer_analytics import AnalyticsParams, AnalyticsPeriod
 from app.routers.stem_pack_management import build_stem_pack_router
 from app.models.drone_pad import MusicalKey
@@ -105,8 +107,14 @@ async def list_producer_loops(
         page=page, page_size=page_size, created_by=producer.id,
     )
     loops, total = await loop_service.list_loops(db, filters)
+    likes = await loop_service.like_counts(db, [l.id for l in loops])
     return success({
-        "items": [LoopResponse.model_validate(l).model_dump() for l in loops],
+        "items": [
+            LoopWithLikesResponse.model_validate(l)
+            .model_copy(update={"like_count": likes.get(l.id, 0)})
+            .model_dump()
+            for l in loops
+        ],
         "total": total,
         "page": page,
         "page_size": page_size,

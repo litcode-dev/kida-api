@@ -157,7 +157,17 @@ class LoopResponse(BaseModel):
         return self
 
 
-class LoopAdminResponse(LoopResponse):
+class LoopWithLikesResponse(LoopResponse):
+    """A loop in a management listing, where the owner wants to see its likes.
+
+    Kept off the public `LoopResponse`: the catalogue listing never loads the
+    counts, and a default 0 there would read as "nobody likes this".
+    """
+
+    like_count: int = 0
+
+
+class LoopAdminResponse(LoopWithLikesResponse):
     """A loop as an administrator needs to see it.
 
     `status` is the whole point: a loop being re-encoded is not in the public
@@ -166,7 +176,6 @@ class LoopAdminResponse(LoopResponse):
     """
 
     status: str
-    like_count: int = 0
 
 
 class LoopFilter(BaseModel):
