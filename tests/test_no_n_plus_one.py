@@ -263,7 +263,7 @@ CASES = [
     ("/api/v1/likes/loops", UserRole.user, _seed_liked_loops),
     ("/api/v1/likes/stem-packs", UserRole.user, _seed_liked_stem_packs),
     ("/api/v1/downloads", UserRole.user, _seed_downloads),
-    ("/api/v1/producer/loops", UserRole.producer, _seed_loops),
+    ("/api/v1/producer/loops", UserRole.producer, _seed_liked_loops),
     ("/api/v1/producer/drones", UserRole.producer, _seed_drones),
     ("/api/v1/producer/drum-kits", UserRole.producer, _seed_drum_kits),
     ("/api/v1/producer/stem-packs", UserRole.producer, _seed_stem_packs),
