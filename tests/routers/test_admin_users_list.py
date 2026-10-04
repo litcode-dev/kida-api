@@ -65,3 +65,34 @@ async def test_ordering_holds_across_pages(client, db_session):
         seen += [item["id"] for item in resp.json()["data"]["items"]]
 
     assert seen == expected
+
+
+@pytest.mark.asyncio
+async def test_search_matches_name_or_email(client, db_session):
+    admin = await _create_user(db_session, role=UserRole.admin)
+    by_name = await _create_user(db_session)
+    by_name.full_name = "Ada Lovelace"
+    by_email = await _create_user(db_session)
+    by_email.email = "lovelace.fan@example.com"
+    await _create_user(db_session)  # matches neither
+    await db_session.commit()
+
+    resp = await client.get(
+        "/api/v1/admin/users?search=LOVELACE", headers=_headers(admin)
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert data["total"] == 2
+    assert {i["id"] for i in data["items"]} == {str(by_name.id), str(by_email.id)}
+
+
+@pytest.mark.asyncio
+async def test_blank_search_lists_everyone(client, db_session):
+    admin = await _create_user(db_session, role=UserRole.admin)
+    await _seed_dated_users(db_session, 2)
+
+    resp = await client.get("/api/v1/admin/users?search=%20", headers=_headers(admin))
+
+    assert resp.status_code == 200
+    assert resp.json()["data"]["total"] == 3
