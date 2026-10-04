@@ -8,7 +8,7 @@ from app.services import (
     loop_service, s3_service, like_service, free_tier_service, monthly_quota_service,
 )
 from app.models.monthly_download_usage import MonthlyQuotaType
-from app.schemas.loop import LoopFilter, LoopResponse
+from app.schemas.loop import LoopFilter
 from app.schemas.common import success
 from app.models.loop import Genre, TempoFeel
 import uuid
@@ -84,7 +84,7 @@ async def list_loops(
     )
     loops, total = await loop_service.list_loops(db, filters)
     return success({
-        "items": [LoopResponse.model_validate(l).model_dump() for l in loops],
+        "items": await loop_service.serialize_loops(db, loops),
         "total": total,
         "page": filters.page,
         "page_size": filters.page_size,
@@ -94,7 +94,8 @@ async def list_loops(
 @router.get("/{loop_id}")
 async def get_loop(loop_id: uuid.UUID, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
     loop = await loop_service.get_loop(db, loop_id)
-    return success(LoopResponse.model_validate(loop).model_dump())
+    [data] = await loop_service.serialize_loops(db, [loop])
+    return success(data)
 
 
 @router.get("/{loop_id}/preview")
@@ -166,7 +167,8 @@ async def like_loop(
     user=Depends(get_current_user),
 ):
     await like_service.like_loop(db, user.id, loop_id)
-    return success(message="Loop liked")
+    likes = await loop_service.like_counts(db, [loop_id])
+    return success({"like_count": likes.get(loop_id, 0)}, "Loop liked")
 
 
 @router.delete("/{loop_id}/like")
@@ -176,4 +178,5 @@ async def unlike_loop(
     user=Depends(get_current_user),
 ):
     await like_service.unlike_loop(db, user.id, loop_id)
-    return success(message="Loop unliked")
+    likes = await loop_service.like_counts(db, [loop_id])
+    return success({"like_count": likes.get(loop_id, 0)}, "Loop unliked")

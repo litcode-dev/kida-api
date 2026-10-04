@@ -2,8 +2,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.middleware.auth_middleware import get_current_user
-from app.services import like_service
-from app.schemas.loop import LoopResponse
+from app.services import like_service, loop_service
 from app.schemas.stem_pack import StemPackResponse
 from app.schemas.common import success
 
@@ -19,7 +18,7 @@ async def get_liked_loops(
 ):
     loops, total = await like_service.get_liked_loops(db, user.id, page, page_size)
     return success({
-        "items": [LoopResponse.model_validate(l).model_dump() for l in loops],
+        "items": await loop_service.serialize_loops(db, loops),
         "total": total,
         "page": page,
         "page_size": page_size,
