@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, Query, Request, UploadFile, File, Form
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select, func, or_
 from decimal import Decimal
 from app.database import get_db
 from app.middleware.auth_middleware import require_admin, get_redis
@@ -372,13 +372,20 @@ async def list_users(
     request: Request,
     page: int = 1,
     page_size: int = 20,
+    search: str | None = Query(
+        None, description="Case-insensitive match on the user's name or email"
+    ),
     db: AsyncSession = Depends(get_db),
     admin=Depends(require_admin),
 ):
     offset = (page - 1) * page_size
-    total = await db.scalar(select(func.count()).select_from(User))
+    query = select(User)
+    if search and search.strip():
+        like = f"%{search.strip()}%"
+        query = query.where(or_(User.full_name.ilike(like), User.email.ilike(like)))
+    total = await db.scalar(select(func.count()).select_from(query.subquery()))
     users = await db.scalars(
-        select(User)
+        query
         .order_by(User.created_at.desc(), User.id.desc())
         .offset(offset)
         .limit(page_size)
