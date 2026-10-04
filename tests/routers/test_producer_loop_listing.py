@@ -42,14 +42,3 @@ async def test_most_liked_sort_orders_by_like_count(client, db_session):
     assert resp.status_code == 200
     titles = [i["title"] for i in resp.json()["data"]["items"]]
     assert titles == ["Three", "One", "Zero"]
-
-
-@pytest.mark.asyncio
-async def test_the_public_listing_does_not_carry_it(client, db_session):
-    producer = await _producer(db_session)
-    await _loop(db_session, producer.id, "Public", "ready")
-
-    resp = await client.get("/api/v1/loops", headers=_headers(producer))
-
-    assert resp.status_code == 200
-    assert "like_count" not in resp.json()["data"]["items"][0]

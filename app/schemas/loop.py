@@ -142,6 +142,9 @@ class LoopResponse(BaseModel):
     waveform_data: list | None
     download_count: int
     play_count: int
+    # Not a column — filled per page by loop_service.serialize_loops, which
+    # counts likes for every loop in one query.
+    like_count: int = 0
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -157,17 +160,7 @@ class LoopResponse(BaseModel):
         return self
 
 
-class LoopWithLikesResponse(LoopResponse):
-    """A loop in a management listing, where the owner wants to see its likes.
-
-    Kept off the public `LoopResponse`: the catalogue listing never loads the
-    counts, and a default 0 there would read as "nobody likes this".
-    """
-
-    like_count: int = 0
-
-
-class LoopAdminResponse(LoopWithLikesResponse):
+class LoopAdminResponse(LoopResponse):
     """A loop as an administrator needs to see it.
 
     `status` is the whole point: a loop being re-encoded is not in the public

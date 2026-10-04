@@ -8,7 +8,7 @@ from app.models.loop import Genre, Loop
 from app.models.purchase import Purchase
 from app.models.user import User
 from app.schemas.loop import (
-    TIME_SIGNATURE_RE, LoopCreate, LoopUpdate, LoopFilter,
+    TIME_SIGNATURE_RE, LoopCreate, LoopUpdate, LoopFilter, LoopResponse,
     equivalent_time_signatures,
 )
 from app.exceptions import AppError, NotFoundError, EntitlementError
@@ -162,7 +162,7 @@ async def list_loops(db: AsyncSession, filters: LoopFilter) -> tuple[list[Loop],
         "newest": Loop.created_at.desc(),
         "most_downloaded": Loop.download_count.desc(),
         "most_played": Loop.play_count.desc(),
-        "most_liked": _like_count_expr().desc(),
+        "most_liked": like_count_expr().desc(),
     }
     order_by = []
     if filters.search:
@@ -185,7 +185,7 @@ async def list_loops(db: AsyncSession, filters: LoopFilter) -> tuple[list[Loop],
     return list(result.all()), total or 0
 
 
-def _like_count_expr():
+def like_count_expr():
     """A loop's like count, correlated to the outer Loop row — for sorting."""
     return (
         select(func.count(Like.id))
@@ -211,6 +211,24 @@ async def like_counts(
         .group_by(Like.loop_id)
     )
     return dict(rows.all())
+
+
+async def serialize_loops(
+    db: AsyncSession, loops: list[Loop], schema: type[LoopResponse] = LoopResponse
+) -> list[dict]:
+    """Dump loops for a response, each with its `like_count` filled in.
+
+    Every endpoint returning loops goes through here so the count is never
+    silently left at its default 0, and a page costs one count query however
+    many loops it holds.
+    """
+    likes = await like_counts(db, [loop.id for loop in loops])
+    return [
+        schema.model_validate(loop)
+        .model_copy(update={"like_count": likes.get(loop.id, 0)})
+        .model_dump()
+        for loop in loops
+    ]
 
 
 async def increment_play_count(db: AsyncSession, loop_id: uuid.UUID) -> None:

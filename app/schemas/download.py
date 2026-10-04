@@ -11,7 +11,7 @@ class DownloadedLoopItem(BaseModel):
     slug: str
     genre: Genre
     bpm: int
-    key: str
+    key: str | None = None
     duration: int
     tempo_feel: TempoFeel
     price: Decimal
@@ -20,6 +20,7 @@ class DownloadedLoopItem(BaseModel):
     thumbnail_s3_key: str | None = None
     last_downloaded_at: datetime
     times_downloaded: int
+    like_count: int = 0
 
     model_config = {"from_attributes": True}
 

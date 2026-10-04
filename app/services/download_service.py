@@ -3,6 +3,7 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.download import Download
 from app.models.loop import Loop
+from app.services.loop_service import like_count_expr
 
 
 async def get_user_download_history(
@@ -40,6 +41,7 @@ async def get_user_download_history(
             Loop.thumbnail_s3_key,
             subq.c.last_downloaded_at,
             subq.c.times_downloaded,
+            like_count_expr().label("like_count"),
         )
         .join(subq, Loop.id == subq.c.loop_id)
         .order_by(subq.c.last_downloaded_at.desc())

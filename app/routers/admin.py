@@ -904,14 +904,8 @@ async def list_all_loops(
         page=page, page_size=page_size,
     )
     loops, total = await loop_service.list_loops(db, filters)
-    likes = await loop_service.like_counts(db, [l.id for l in loops])
     return success({
-        "items": [
-            LoopAdminResponse.model_validate(l)
-            .model_copy(update={"like_count": likes.get(l.id, 0)})
-            .model_dump()
-            for l in loops
-        ],
+        "items": await loop_service.serialize_loops(db, loops, LoopAdminResponse),
         "total": total,
         "page": filters.page,
         "page_size": filters.page_size,
@@ -1000,7 +994,8 @@ async def update_loop(
     )
     if should_reprocess:
         process_loop_upload.delay(str(loop_id))
-    return success(LoopResponse.model_validate(loop).model_dump(), "Loop updated")
+    [data] = await loop_service.serialize_loops(db, [loop])
+    return success(data, "Loop updated")
 
 
 # --- Drone pad endpoints (admin mirror) ---

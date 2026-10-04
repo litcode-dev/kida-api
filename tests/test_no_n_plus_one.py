@@ -256,7 +256,7 @@ async def _query_counts(client, db, user, url, seed):
 
 # url, role, seeder
 CASES = [
-    ("/api/v1/loops", UserRole.user, _seed_loops),
+    ("/api/v1/loops", UserRole.user, _seed_liked_loops),
     ("/api/v1/drum-kits", UserRole.user, _seed_drum_kits),
     ("/api/v1/drones", UserRole.user, _seed_drones),
     ("/api/v1/stem-packs", UserRole.user, _seed_stem_packs),
