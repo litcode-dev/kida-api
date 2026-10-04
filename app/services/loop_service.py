@@ -3,6 +3,7 @@ import re
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import case, func, or_, select
+from app.models.like import Like
 from app.models.loop import Genre, Loop
 from app.models.purchase import Purchase
 from app.models.user import User
@@ -161,6 +162,7 @@ async def list_loops(db: AsyncSession, filters: LoopFilter) -> tuple[list[Loop],
         "newest": Loop.created_at.desc(),
         "most_downloaded": Loop.download_count.desc(),
         "most_played": Loop.play_count.desc(),
+        "most_liked": _like_count_expr().desc(),
     }
     order_by = []
     if filters.search:
@@ -173,10 +175,42 @@ async def list_loops(db: AsyncSession, filters: LoopFilter) -> tuple[list[Loop],
             # honoured, just downloads-within-relevance.
             order_by.append(case((Loop.time_signature == searched, 0), else_=1))
     order_by.append(sort_map.get(filters.sort, Loop.created_at.desc()))
+    # Counts tie constantly (every unliked loop has 0), and Postgres may order
+    # tied rows differently per query — so without a final key a loop could
+    # show on two pages, or none.
+    order_by.append(Loop.id.desc())
     q = q.order_by(*order_by)
     q = q.offset((filters.page - 1) * filters.page_size).limit(filters.page_size)
     result = await db.scalars(q)
     return list(result.all()), total or 0
+
+
+def _like_count_expr():
+    """A loop's like count, correlated to the outer Loop row — for sorting."""
+    return (
+        select(func.count(Like.id))
+        .where(Like.loop_id == Loop.id)
+        .correlate(Loop)
+        .scalar_subquery()
+    )
+
+
+async def like_counts(
+    db: AsyncSession, loop_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, int]:
+    """Like counts for a page of loops, in one grouped query.
+
+    Loops nobody has liked have no rows and are absent from the result, so
+    callers should read it with `.get(loop_id, 0)`.
+    """
+    if not loop_ids:
+        return {}
+    rows = await db.execute(
+        select(Like.loop_id, func.count(Like.id))
+        .where(Like.loop_id.in_(loop_ids))
+        .group_by(Like.loop_id)
+    )
+    return dict(rows.all())
 
 
 async def increment_play_count(db: AsyncSession, loop_id: uuid.UUID) -> None:
