@@ -241,5 +241,29 @@ async def verify_apple_identity_token(identity_token: str) -> dict:
 
     try:
         return await asyncio.to_thread(_verify)
-    except jwt.PyJWTError:
+    except jwt.PyJWTError as exc:
+        _log_rejected_apple_token(identity_token, exc, settings.apple_client_id)
         raise UnauthorizedError("Invalid Apple identity token")
+
+
+def _log_rejected_apple_token(identity_token: str, exc: Exception, expected_aud: str) -> None:
+    """Record why Apple's token was refused; the client only ever sees a 401.
+
+    The usual culprits read very differently here: an audience that is not our
+    bundle ID (Expo Go, a Services ID, a dev bundle), an expired token, or a
+    client posting the authorization code, which is not a JWT at all. Only the
+    routing claims are logged — never the email or sub.
+    """
+    try:
+        claims = jwt.decode(identity_token, options={"verify_signature": False})
+    except jwt.PyJWTError:
+        claims = {}
+    log.warning(
+        "apple_token_rejected",
+        reason=type(exc).__name__,
+        detail=str(exc)[:200],
+        token_aud=claims.get("aud"),
+        expected_aud=expected_aud,
+        token_iss=claims.get("iss"),
+        token_exp=claims.get("exp"),
+    )

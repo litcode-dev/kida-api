@@ -332,6 +332,43 @@ async def test_apple_token_with_required_claims_is_accepted(apple_keypair):
 
 
 @pytest.mark.asyncio
+async def test_rejected_apple_token_logs_why(apple_keypair):
+    """Every refusal used to surface as the same 401 with nothing in the logs,
+    so an audience mismatch could not be told apart from an expired token."""
+    from structlog.testing import capture_logs
+
+    token = _apple_token(
+        apple_keypair, sub="apple-uid-1", exp=int(time.time()) + 600, aud="host.exp.Exponent"
+    )
+    with capture_logs() as logs, pytest.raises(UnauthorizedError):
+        await oauth_service.verify_apple_identity_token(token)
+
+    [event] = [e for e in logs if e["event"] == "apple_token_rejected"]
+    assert event["reason"] == "InvalidAudienceError"
+    assert event["token_aud"] == "host.exp.Exponent"
+    assert event["expected_aud"] == "app.kida.test"
+
+
+@pytest.mark.asyncio
+async def test_unreadable_apple_token_logs_why(apple_keypair, monkeypatch):
+    """Sending the authorization code instead of the identity token is the
+    classic client mistake; it is not a JWT at all."""
+    import jwt as pyjwt
+    from structlog.testing import capture_logs
+
+    def _unreadable(token):
+        raise pyjwt.DecodeError("Not enough segments")
+
+    monkeypatch.setattr(oauth_service._apple_jwks_client, "get_signing_key_from_jwt", _unreadable)
+    with capture_logs() as logs, pytest.raises(UnauthorizedError):
+        await oauth_service.verify_apple_identity_token("c1f2a3b4.0.abcd.not-a-jwt")
+
+    [event] = [e for e in logs if e["event"] == "apple_token_rejected"]
+    assert event["reason"] == "DecodeError"
+    assert event["token_aud"] is None
+
+
+@pytest.mark.asyncio
 async def test_apple_login_unconfigured_is_503(monkeypatch):
     """An unset APPLE_CLIENT_ID made every token fail as invalid."""
     from app.config import get_settings
