@@ -568,3 +568,35 @@ def test_no_email_uses_an_em_dash():
     offenders = [name for name, out in _every_rendered_email().items() if "—" in out]
 
     assert not offenders, f"em dash in: {', '.join(sorted(offenders))}"
+
+
+@pytest.mark.asyncio
+async def test_reply_to_reaches_resend_payload(monkeypatch):
+    from unittest.mock import MagicMock
+    from app.services import email_service
+
+    captured = {}
+
+    class FakeClient:
+        def __init__(self, *a, **kw):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def post(self, url, json, headers):
+            captured.update(json)
+            resp = MagicMock()
+            resp.raise_for_status = MagicMock()
+            return resp
+
+    settings = MagicMock(resend_from="Kida <noreply@test.com>", resend_api_key="k")
+    monkeypatch.setattr(email_service.httpx, "AsyncClient", FakeClient)
+
+    await email_service._send_via_resend(
+        settings, "team@test.com", "s", "<p>h</p>", "t", reply_to="ada@test.com",
+    )
+    assert captured["reply_to"] == "ada@test.com"

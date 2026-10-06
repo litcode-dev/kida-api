@@ -235,6 +235,49 @@ def send_loop_request_admin_notification(loop_request_id: str):
 
 
 @celery_app.task
+def send_contact_admin_notification(
+    name: str, email: str, subject: str | None, message: str
+):
+    """Forward a contact form message to the team inbox.
+
+    Nothing is stored, so every detail is passed through. Reply-To is the
+    sender, so answering the notification answers them. Silently skipped when
+    ADMIN_NOTIFICATION_EMAIL is blank.
+    """
+    log.info("contact_admin_email.task_started", email=email)
+
+    async def _run():
+        from datetime import datetime, timezone
+        from app.config import get_settings
+        from app.services.email_service import (
+            send_email, contact_admin_html, contact_admin_text,
+        )
+
+        recipient = get_settings().admin_notification_email
+        if not recipient:
+            log.info("contact_admin_email.skipped", reason="no recipient configured")
+            return
+
+        fields = dict(
+            name=name,
+            email=email,
+            subject=subject,
+            message=message,
+            received_at=datetime.now(timezone.utc),
+        )
+        log.info("contact_admin_email.sending", email=email, to=recipient)
+        await send_email(
+            to=recipient,
+            subject=f"Contact: {subject}" if subject else f"Contact from {name}",
+            html=contact_admin_html(**fields),
+            text=contact_admin_text(**fields),
+            reply_to=email,
+        )
+        log.info("contact_admin_email.done", email=email, to=recipient)
+
+    asyncio.run(_run())
+
+@celery_app.task
 def send_loop_request_status_email(loop_request_id: str):
     """Tell the requester their loop or stems request moved.
 

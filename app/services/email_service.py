@@ -17,7 +17,8 @@ _RESEND_BATCH_URL = "https://api.resend.com/emails/batch"
 
 
 async def _send_via_resend(
-    settings, to: str, subject: str, html: str, text: str, headers: dict | None = None
+    settings, to: str, subject: str, html: str, text: str, headers: dict | None = None,
+    reply_to: str | None = None,
 ) -> None:
     payload = {
         "from": settings.resend_from,
@@ -28,6 +29,8 @@ async def _send_via_resend(
     }
     if headers:
         payload["headers"] = headers
+    if reply_to:
+        payload["reply_to"] = reply_to
     headers = {"Authorization": f"Bearer {settings.resend_api_key}", "Content-Type": "application/json"}
     async with httpx.AsyncClient(timeout=10) as client:
         resp = await client.post(_RESEND_URL, json=payload, headers=headers)
@@ -160,13 +163,16 @@ async def send_bulk_email(
 
 
 async def _send_via_smtp(
-    settings, to: str, subject: str, html: str, text: str, headers: dict | None = None
+    settings, to: str, subject: str, html: str, text: str, headers: dict | None = None,
+    reply_to: str | None = None,
 ) -> None:
     def _send():
         msg = MIMEMultipart("alternative")
         msg["Subject"] = subject
         msg["From"] = settings.smtp_from
         msg["To"] = to
+        if reply_to:
+            msg["Reply-To"] = reply_to
         for key, value in (headers or {}).items():
             msg[key] = value
         msg.attach(MIMEText(text, "plain"))
@@ -181,7 +187,8 @@ async def _send_via_smtp(
 
 
 async def send_email(
-    to: str, subject: str, html: str, text: str, headers: dict | None = None
+    to: str, subject: str, html: str, text: str, headers: dict | None = None,
+    reply_to: str | None = None,
 ) -> bool:
     """Send one message. Returns whether a provider actually accepted it.
 
@@ -194,18 +201,18 @@ async def send_email(
     backend = settings.email_backend
 
     if backend == "fallback":
-        return await _send_with_fallback(settings, to, subject, html, text, headers)
+        return await _send_with_fallback(settings, to, subject, html, text, headers, reply_to)
 
     if backend == "resend":
         if not settings.resend_api_key:
             log.warning("email.skipped", reason="RESEND_API_KEY not configured", to=to)
             return False
-        send_fn = _send_via_resend(settings, to, subject, html, text, headers)
+        send_fn = _send_via_resend(settings, to, subject, html, text, headers, reply_to)
     else:
         if not settings.smtp_user or not settings.smtp_password:
             log.warning("email.skipped", reason="SMTP credentials not configured", to=to)
             return False
-        send_fn = _send_via_smtp(settings, to, subject, html, text, headers)
+        send_fn = _send_via_smtp(settings, to, subject, html, text, headers, reply_to)
 
     try:
         await send_fn
@@ -220,13 +227,14 @@ async def send_email(
 
 
 async def _send_with_fallback(
-    settings, to: str, subject: str, html: str, text: str, headers: dict | None = None
+    settings, to: str, subject: str, html: str, text: str, headers: dict | None = None,
+    reply_to: str | None = None,
 ) -> bool:
     if not settings.resend_api_key:
         log.warning("email.fallback.resend_skipped", reason="RESEND_API_KEY not configured", to=to)
     else:
         try:
-            await _send_via_resend(settings, to, subject, html, text, headers)
+            await _send_via_resend(settings, to, subject, html, text, headers, reply_to)
             log.info("email.sent", to=to, subject=subject, backend="resend")
             return True
         except httpx.HTTPStatusError as exc:
@@ -241,7 +249,7 @@ async def _send_with_fallback(
         return False
 
     try:
-        await _send_via_smtp(settings, to, subject, html, text, headers)
+        await _send_via_smtp(settings, to, subject, html, text, headers, reply_to)
         log.info("email.sent", to=to, subject=subject, backend="smtp")
         return True
     except Exception as exc:
@@ -932,6 +940,98 @@ def loop_request_admin_text(
         body
         + "\n---\n"
         + "Automated notification from the Kida API. Not a customer email."
+    )
+
+
+def contact_admin_html(
+    name: str,
+    email: str,
+    subject: str | None,
+    message: str,
+    received_at: datetime,
+) -> str:
+    """Contact form message for the team inbox, in the same shell as the other
+    team-inbox templates. Every value is typed by a stranger, so all of it is
+    escaped before it lands in the markup."""
+    from html import escape
+
+    when = received_at.strftime("%b %d, %Y at %H:%M UTC")
+    sender = escape(name)
+    address = escape(email)
+    topic = escape(subject) if subject else '<span style="color:#888;">none given</span>'
+    body = escape(message).replace(chr(10), "<br>")
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#e8e3d9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#e8e3d9;">
+  <tr><td align="center" style="padding:32px 16px;">
+    <table width="520" cellpadding="0" cellspacing="0" style="max-width:520px;width:100%;">
+
+      <!-- HEADER -->
+      <tr><td style="background:#0a0a0a;padding:24px 32px;border-radius:8px 8px 0 0;">
+        <table width="100%" cellpadding="0" cellspacing="0">
+          <tr>
+            <td style="color:#fff;font-size:11px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;">KIDA</td>
+            <td align="right" style="color:#fff;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;">CONTACT FORM</td>
+          </tr>
+        </table>
+      </td></tr>
+
+      <!-- BODY -->
+      <tr><td style="background:#f2ede4;padding:32px;">
+        <p style="margin:0 0 24px 0;font-size:17px;font-weight:700;color:#0a0a0a;">
+          {sender} sent a message.
+        </p>
+        <table width="100%" cellpadding="0" cellspacing="0" style="font-size:14px;color:#333;">
+          <tr>
+            <td style="padding:8px 0;width:110px;color:#888;font-size:11px;letter-spacing:0.1em;text-transform:uppercase;">From</td>
+            <td style="padding:8px 0;"><a href="mailto:{escape(email, quote=True)}" style="color:#1FBF62;text-decoration:none;">{address}</a></td>
+          </tr>
+          <tr>
+            <td style="padding:8px 0;color:#888;font-size:11px;letter-spacing:0.1em;text-transform:uppercase;">Subject</td>
+            <td style="padding:8px 0;">{topic}</td>
+          </tr>
+          <tr>
+            <td style="padding:8px 0;color:#888;font-size:11px;letter-spacing:0.1em;text-transform:uppercase;">When</td>
+            <td style="padding:8px 0;">{when}</td>
+          </tr>
+        </table>
+        <p style="margin:24px 0 0 0;font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:#888;">Message</p>
+        <p style="margin:8px 0 0 0;font-size:14px;line-height:1.6;color:#333;white-space:pre-wrap;">{body}</p>
+      </td></tr>
+
+      <!-- FOOTER -->
+      <tr><td style="background:#0a0a0a;padding:20px 32px;border-radius:0 0 8px 8px;">
+        <p style="margin:0;font-size:11px;color:#aaa;">
+          Sent from the Kida contact form. Reply to this email to answer the sender.
+        </p>
+      </td></tr>
+
+    </table>
+  </td></tr>
+</table>
+</body>
+</html>"""
+
+
+def contact_admin_text(
+    name: str,
+    email: str,
+    subject: str | None,
+    message: str,
+    received_at: datetime,
+) -> str:
+    when = received_at.strftime("%b %d, %Y at %H:%M UTC")
+    return (
+        f"{name} sent a message.\n\n"
+        f"From:     {name} <{email}>\n"
+        f"Subject:  {subject or 'none given'}\n"
+        f"When:     {when}\n\n"
+        f"Message:\n{message}\n"
+        "\n---\n"
+        "Sent from the Kida contact form. Reply to this email to answer the sender."
     )
 
 
