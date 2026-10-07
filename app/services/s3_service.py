@@ -104,12 +104,18 @@ def _get_r2_client():
     return _r2_client
 
 
-async def generate_r2_presigned_url(key: str, expiry_seconds: int = 900) -> str:
-    """Generate a pre-signed GET URL for an object in the Cloudflare R2 bucket."""
+async def generate_r2_presigned_url(
+    key: str, expiry_seconds: int = 900, bucket: str | None = None
+) -> str:
+    """Generate a pre-signed GET URL for an object in the Cloudflare R2 bucket.
+
+    ``bucket`` defaults to R2_BUCKET_NAME; the R2 credentials must be able to
+    read whichever bucket is named.
+    """
     def _presign():
         return _get_r2_client().generate_presigned_url(
             "get_object",
-            Params={"Bucket": settings.r2_bucket_name, "Key": key},
+            Params={"Bucket": bucket or settings.r2_bucket_name, "Key": key},
             ExpiresIn=expiry_seconds,
         )
 
@@ -130,12 +136,17 @@ async def upload_bytes(key: str, data: bytes, content_type: str = "application/o
     return await asyncio.to_thread(_upload)
 
 
-async def generate_presigned_url(key: str, expiry_seconds: int = 900) -> str:
-    """Generate a pre-signed GET URL valid for expiry_seconds (default 15 min)."""
+async def generate_presigned_url(
+    key: str, expiry_seconds: int = 900, bucket: str | None = None
+) -> str:
+    """Generate a pre-signed GET URL valid for expiry_seconds (default 15 min).
+
+    ``bucket`` defaults to S3_BUCKET_NAME.
+    """
     def _presign():
         return _get_client().generate_presigned_url(
             "get_object",
-            Params={"Bucket": settings.s3_bucket_name, "Key": key},
+            Params={"Bucket": bucket or settings.s3_bucket_name, "Key": key},
             ExpiresIn=expiry_seconds,
         )
 

@@ -24,7 +24,7 @@ import sqlalchemy.exc
 from app.middleware.error_middleware import UnhandledErrorMiddleware
 from app.middleware.logging_middleware import LoggingMiddleware
 from app.middleware.rate_limit import limiter
-from app.routers import auth, loops, stem_packs, payments, admin, downloads, likes, subscriptions, ai, drones, drum_kits, purchases, producer, newsletter, push_notifications, app_download, loop_requests, contact
+from app.routers import auth, loops, stem_packs, payments, admin, downloads, likes, subscriptions, ai, drones, drum_kits, purchases, producer, newsletter, push_notifications, app_download, admin_apps, loop_requests, contact
 
 structlog.configure(
     processors=[
@@ -207,6 +207,7 @@ app.include_router(producer.router, prefix=PREFIX)
 app.include_router(newsletter.router, prefix=PREFIX)
 app.include_router(push_notifications.router, prefix=PREFIX)
 app.include_router(app_download.router, prefix=PREFIX)
+app.include_router(admin_apps.router, prefix=PREFIX)
 app.include_router(loop_requests.router, prefix=PREFIX)
 app.include_router(contact.router, prefix=PREFIX)
 

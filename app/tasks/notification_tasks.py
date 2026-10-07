@@ -504,14 +504,20 @@ def send_app_download_email(request_id: str):
                 log.warning("app_download_email.request_not_found", request_id=request_id)
                 return
 
+            if req.expires_at is None:
+                # A paid request whose payment has not been confirmed.
+                log.warning("app_download_email.not_fulfilled", request_id=request_id)
+                return
+
             link = app_download_service.build_download_link(req.token)
             os_label = app_download_service.OS_LABELS.get(req.os, req.os)
+            app_name = app_download_service.display_name(req)
             log.info("app_download_email.sending", request_id=request_id, email=req.email)
             await send_email(
                 to=req.email,
-                subject=f"Your Kida download link for {os_label}",
-                html=app_download_html(os_label, link, req.expires_at),
-                text=app_download_text(os_label, link, req.expires_at),
+                subject=f"Your {app_name} download link for {os_label}",
+                html=app_download_html(os_label, link, req.expires_at, app_name),
+                text=app_download_text(os_label, link, req.expires_at, app_name),
             )
             log.info("app_download_email.done", request_id=request_id, email=req.email)
 

@@ -9,7 +9,7 @@ from app.models.stem_pack import StemPack
 from app.models.user import User
 from app.exceptions import NotFoundError, AppError
 from app.schemas.purchase import CheckoutRequest
-from app.services import payments
+from app.services import app_download_service, payments
 
 log = structlog.get_logger()
 
@@ -75,6 +75,10 @@ async def handle_webhook(
         )
         return
 
+    if verified.metadata.get(app_download_service.CHECKOUT_METADATA_KEY):
+        await _fulfill_app_download(db, verified, gateway.provider)
+        return
+
     user_id = verified.metadata.get("user_id")
     loop_id = verified.metadata.get("loop_id")
     stem_pack_id = verified.metadata.get("stem_pack_id")
@@ -121,4 +125,21 @@ async def handle_webhook(
         log.error(
             "purchase_confirmation.enqueue_failed",
             purchase_id=str(purchase.id), error=str(exc),
+        )
+
+
+async def _fulfill_app_download(db: AsyncSession, verified, provider: PaymentProvider) -> None:
+    """A paid desktop-app download: issue its 3-day link and email it."""
+    req = await app_download_service.fulfill_paid_request(db, verified, provider)
+    if req is None:
+        return
+
+    # The payment is recorded; a broker outage must not undo it.
+    try:
+        from app.tasks.notification_tasks import send_app_download_email
+        send_app_download_email.delay(str(req.id))
+    except Exception as exc:  # noqa: BLE001 - the request is already fulfilled
+        log.error(
+            "app_download_email.enqueue_failed",
+            request_id=str(req.id), error=str(exc),
         )
