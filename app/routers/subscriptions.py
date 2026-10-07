@@ -260,6 +260,7 @@ async def subscription_revenuecat_webhook(
         app_user_id=parsed.app_user_id,
         store_transaction_id=parsed.store_transaction_id,
         raw_payload=payload,
+        event_at=parsed.event_at,
     )
     return {"received": True, "applied": True}
 

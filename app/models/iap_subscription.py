@@ -74,6 +74,10 @@ class IapSubscription(Base):
     admin_locked: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     admin_note: Mapped[str | None] = mapped_column(String(500), nullable=True)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # ``event_timestamp_ms`` of the last RevenueCat webhook applied to this row.
+    # RevenueCat does not guarantee delivery order, so an event older than this
+    # is stale and is not applied. Null until a timestamped webhook arrives.
+    last_event_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     latest_receipt: Mapped[str | None] = mapped_column(Text, nullable=True)
     raw_payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

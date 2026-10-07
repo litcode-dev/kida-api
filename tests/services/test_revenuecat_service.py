@@ -93,6 +93,36 @@ def test_parse_billing_issue_sets_grace():
     assert parsed.expires_at > datetime.now(timezone.utc)
 
 
+def test_parse_billing_error_cancellation_is_grace():
+    # Play sends CANCELLATION(BILLING_ERROR) alongside BILLING_ISSUE when a
+    # renewal charge fails: the card failed, the user did not opt out.
+    parsed = revenuecat_service.parse_webhook_event({
+        "event": {
+            "type": "CANCELLATION",
+            "cancel_reason": "BILLING_ERROR",
+            "app_user_id": "user-1",
+            "product_id": "kida.premium.monthly",
+            "expiration_at_ms": _future_ms(4),
+            "store": "PLAY_STORE",
+        }
+    })
+    assert parsed.status == IapSubscriptionStatus.grace
+
+
+def test_parse_carries_event_timestamp():
+    ts = _past_ms(1)
+    parsed = revenuecat_service.parse_webhook_event({
+        "event": {
+            "type": "RENEWAL",
+            "app_user_id": "user-1",
+            "product_id": "kida.premium.monthly",
+            "expiration_at_ms": _future_ms(30),
+            "event_timestamp_ms": ts,
+        }
+    })
+    assert parsed.event_at == datetime.fromtimestamp(ts / 1000, tz=timezone.utc)
+
+
 def test_parse_cancellation_keeps_access_until_expiry():
     # Auto-renew off but the paid period has not ended: still entitled.
     parsed = revenuecat_service.parse_webhook_event({

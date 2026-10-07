@@ -50,6 +50,9 @@ _STORE_TO_PLATFORM = {
 _EXPIRING_EVENTS = {"EXPIRATION"}
 # Webhook event types that signal the subscription is in a billing grace period.
 _BILLING_GRACE_EVENTS = {"BILLING_ISSUE"}
+# A CANCELLATION with this reason means a renewal charge failed, not that the
+# user turned off auto-renew. Play sends it alongside BILLING_ISSUE.
+_BILLING_ERROR_CANCEL_REASON = "BILLING_ERROR"
 # Webhook event types we intentionally ignore (no entitlement change to apply).
 _IGNORED_EVENTS = {"TEST"}
 
@@ -71,6 +74,8 @@ class RevenueCatEntitlement:
     store_transaction_id: str | None
     # Every app_user_id RevenueCat knows this customer by, app_user_id first.
     aliases: tuple[str, ...] = ()
+    # When RevenueCat generated the webhook event; None for REST pulls.
+    event_at: datetime | None = None
 
 
 def _to_dt(value) -> datetime | None:
@@ -188,7 +193,10 @@ def parse_webhook_event(payload: dict) -> RevenueCatEntitlement | None:
 
     if event_type in _EXPIRING_EVENTS:
         status = IapSubscriptionStatus.expired
-    elif event_type in _BILLING_GRACE_EVENTS:
+    elif event_type in _BILLING_GRACE_EVENTS or (
+        event_type == "CANCELLATION"
+        and (event.get("cancel_reason") or "").upper() == _BILLING_ERROR_CANCEL_REASON
+    ):
         status = IapSubscriptionStatus.grace
         # A billing issue keeps access through the grace window (or the paid
         # period if no explicit grace window was supplied).
@@ -208,6 +216,7 @@ def parse_webhook_event(payload: dict) -> RevenueCatEntitlement | None:
             event.get("original_transaction_id") or event.get("transaction_id")
         ),
         aliases=_identities(event),
+        event_at=_to_dt(event.get("event_timestamp_ms")),
     )
 
 

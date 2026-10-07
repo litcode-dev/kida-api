@@ -246,6 +246,86 @@ async def test_webhook_unknown_identities_no_op(client, db_session, monkeypatch)
     assert resp.json()["applied"] is False
 
 
+def _ms(dt):
+    return int(dt.timestamp() * 1000)
+
+
+async def _post_event(client, **event):
+    resp = await client.post(
+        "/api/v1/subscriptions/webhook/revenuecat",
+        headers={"Authorization": "hook-secret"},
+        json={"api_version": "1.0", "event": event},
+    )
+    assert resp.status_code == 200
+    return resp
+
+
+@pytest.mark.asyncio
+async def test_webhook_billing_cancellation_keeps_grace_window(client, db_session, monkeypatch):
+    # Play delivers BILLING_ISSUE and CANCELLATION(BILLING_ERROR) milliseconds
+    # apart. Only BILLING_ISSUE carries the grace expiry; the cancellation that
+    # follows must not cut the grace window back to the paid-period expiry.
+    monkeypatch.setattr(get_settings(), "revenuecat_webhook_auth_header", "hook-secret")
+    monkeypatch.setattr(get_settings(), "revenuecat_entitlement_id", "Kida Pro")
+    user = await _create_user(db_session)
+    now = datetime.now(timezone.utc)
+    paid_until = now + timedelta(days=4)
+    grace_until = paid_until + timedelta(hours=2)
+    common = {
+        "app_user_id": user.email,
+        "product_id": "kida.premium.monthly:monthly",
+        "entitlement_ids": ["Kida Pro"],
+        "store": "PLAY_STORE",
+        "original_transaction_id": "GPA.billing-1",
+        "expiration_at_ms": _ms(paid_until),
+    }
+
+    await _post_event(
+        client, **common, type="BILLING_ISSUE",
+        grace_period_expiration_at_ms=_ms(grace_until),
+        event_timestamp_ms=_ms(now),
+    )
+    await _post_event(
+        client, **common, type="CANCELLATION", cancel_reason="BILLING_ERROR",
+        event_timestamp_ms=_ms(now) + 6,
+    )
+
+    sub = await _get_sub(db_session, user.id)
+    await db_session.refresh(sub)
+    assert sub.status == IapSubscriptionStatus.grace
+    assert _ms(sub.expires_at) == _ms(grace_until)
+
+
+@pytest.mark.asyncio
+async def test_webhook_ignores_event_older_than_last_applied(client, db_session, monkeypatch):
+    # RevenueCat does not guarantee delivery order; a late, older RENEWAL must
+    # not resurrect an entitlement a newer EXPIRATION already ended.
+    monkeypatch.setattr(get_settings(), "revenuecat_webhook_auth_header", "hook-secret")
+    user = await _create_user(db_session)
+    now = datetime.now(timezone.utc)
+    common = {
+        "app_user_id": str(user.id),
+        "product_id": "kida.premium.monthly",
+        "store": "APP_STORE",
+        "original_transaction_id": "orig-stale",
+    }
+
+    await _post_event(
+        client, **common, type="EXPIRATION",
+        expiration_at_ms=_ms(now - timedelta(hours=1)),
+        event_timestamp_ms=_ms(now),
+    )
+    await _post_event(
+        client, **common, type="RENEWAL",
+        expiration_at_ms=_ms(now + timedelta(days=30)),
+        event_timestamp_ms=_ms(now - timedelta(days=1)),
+    )
+
+    sub = await _get_sub(db_session, user.id)
+    await db_session.refresh(sub)
+    assert sub.status == IapSubscriptionStatus.expired
+
+
 # --- REST reconcile ----------------------------------------------------------
 
 

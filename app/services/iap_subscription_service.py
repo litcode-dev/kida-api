@@ -192,6 +192,7 @@ async def apply_revenuecat_state(
     app_user_id: str | None = None,
     store_transaction_id: str | None = None,
     raw_payload: dict | None = None,
+    event_at: datetime | None = None,
 ) -> IapSubscription | None:
     """Record a subscription entitlement sourced from RevenueCat.
 
@@ -208,10 +209,26 @@ async def apply_revenuecat_state(
     the RevenueCat update is ignored and the locked row is returned unchanged, so
     a store event cannot silently restore an entitlement an admin revoked — the
     same guarantee ``verify_and_upsert`` gives for client receipts.
+
+    Webhooks pass ``event_at``; one older than the last event applied to the row
+    arrived out of order and is ignored, so it cannot overwrite newer state.
     """
     sub = await get_subscription(db, user_id)
     if sub is not None and sub.admin_locked:
         logger.info("revenuecat_update_skipped_admin_locked", user_id=str(user_id))
+        return sub
+    if (
+        sub is not None
+        and event_at is not None
+        and sub.last_event_at is not None
+        and event_at < sub.last_event_at
+    ):
+        logger.info(
+            "revenuecat_update_skipped_stale_event",
+            user_id=str(user_id),
+            event_at=event_at.isoformat(),
+            last_event_at=sub.last_event_at.isoformat(),
+        )
         return sub
 
     if sub is None:
@@ -235,9 +252,21 @@ async def apply_revenuecat_state(
         # one (rare, e.g. some cancellation events).
         sub.product_id = PLAN_PRODUCT_IDS[PremiumPlan.monthly]
 
+    # One billing failure arrives as several events, and only BILLING_ISSUE
+    # carries the grace expiry; a sibling event must not shorten the window.
+    if (
+        status == IapSubscriptionStatus.grace
+        and sub.status == IapSubscriptionStatus.grace
+        and sub.expires_at is not None
+        and (expires_at is None or sub.expires_at > expires_at)
+    ):
+        expires_at = sub.expires_at
+
     sub.status = status
     sub.source = IapSubscriptionSource.revenuecat
     sub.expires_at = expires_at
+    if event_at is not None:
+        sub.last_event_at = event_at
     sub.app_user_id = app_user_id or sub.app_user_id
     if raw_payload is not None:
         sub.raw_payload = raw_payload
