@@ -1,5 +1,6 @@
 import asyncio
 import re
+from html import escape as _escape_html
 import smtplib
 from datetime import datetime, timezone
 from email.mime.multipart import MIMEMultipart
@@ -1363,7 +1364,10 @@ def newsletter_subscribe_text(email: str) -> str:
     )
 
 
-def app_download_html(os_label: str, link: str, expires_at: datetime) -> str:
+def app_download_html(
+    os_label: str, link: str, expires_at: datetime, app_name: str = "Kida"
+) -> str:
+    app_name = _escape_html(app_name)
     expires = expires_at.strftime("%b %d, %Y")
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -1385,14 +1389,14 @@ def app_download_html(os_label: str, link: str, expires_at: datetime) -> str:
       <!-- BODY -->
       <tr><td style="background:#f2ede4;padding:36px 32px 28px 32px;">
         <p style="margin:0 0 24px 0;font-size:15px;line-height:1.6;color:#333;">
-          Here's your download link for the Kida desktop app on <strong>{os_label}</strong>.
+          Here's your download link for <strong>{app_name}</strong> on <strong>{os_label}</strong>.
           This link expires on <strong>{expires}</strong>.
         </p>
         <a href="{link}"
            style="display:inline-block;padding:14px 28px;background:#0a0a0a;color:#fff;
                   font-size:14px;font-weight:700;text-decoration:none;border-radius:4px;
                   letter-spacing:0.02em;">
-          Download Kida &rarr;
+          Download {app_name} &rarr;
         </a>
         <p style="margin:24px 0 0 0;font-size:12px;line-height:1.6;color:#777;">
           If the button doesn't work, paste this link into your browser:<br>{link}
@@ -1408,11 +1412,13 @@ def app_download_html(os_label: str, link: str, expires_at: datetime) -> str:
 </html>"""
 
 
-def app_download_text(os_label: str, link: str, expires_at: datetime) -> str:
+def app_download_text(
+    os_label: str, link: str, expires_at: datetime, app_name: str = "Kida"
+) -> str:
     expires = expires_at.strftime("%b %d, %Y")
     return (
-        f"Download Kida for {os_label}\n\n"
-        f"Here's your download link for the Kida desktop app:\n{link}\n\n"
+        f"Download {app_name} for {os_label}\n\n"
+        f"Here's your download link for {app_name}:\n{link}\n\n"
         f"This link expires on {expires}."
         + _text_footer()
     )
