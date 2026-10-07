@@ -27,9 +27,22 @@ async def test_request_download_enqueues_email(client, monkeypatch):
 async def test_request_download_rejects_unsupported_os(client):
     resp = await client.post(
         "/api/v1/app/download-request",
-        json={"email": "a@test.com", "os": "linux"},
+        json={"email": "a@test.com", "os": "freebsd"},
     )
     assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_default_app_without_linux_build_is_404(client, monkeypatch):
+    import app.routers.app_download as mod
+    mock_task = MagicMock()
+    monkeypatch.setattr(mod, "send_app_download_email", mock_task)
+    resp = await client.post(
+        "/api/v1/app/download-request",
+        json={"email": "a@test.com", "os": "linux"},
+    )
+    assert resp.status_code == 404
+    mock_task.delay.assert_not_called()
 
 
 @pytest.mark.asyncio

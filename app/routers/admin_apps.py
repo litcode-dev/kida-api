@@ -27,19 +27,20 @@ def _dump(app) -> dict:
     "",
     summary="Publish a downloadable app",
     description=(
-        "Registers an installer users can request by `app_name` at "
+        "Registers an app users can request by `app_name` at "
         "`POST /app/download-request`.\n\n"
-        "`file_url` is where the installer lives: `r2://<bucket>/<key>` or "
-        "`s3://<bucket>/<key>` for a private object (served through a 5-minute "
-        "presigned URL), or a plain `https://` URL.\n\n"
+        "`platforms` maps each OS (`macos`, `windows`, `linux`) to where its "
+        "installer lives: `r2://<bucket>/<key>` or `s3://<bucket>/<key>` for a "
+        "private object (served through a 5-minute presigned URL), or a plain "
+        "`https://` URL. One price covers every platform.\n\n"
         "A paid app needs `price` and `currency` (`NGN` or `USD`); requesting it "
         "returns a checkout URL and the 3-day link is emailed once payment succeeds."
     ),
     status_code=201,
     responses={
         **_ADMIN_ERRORS,
-        409: {"description": "An app with this name already exists for this OS"},
-        422: {"description": "Invalid file_url, or a paid app without price/currency"},
+        409: {"description": "An app with this name already exists"},
+        422: {"description": "Invalid or missing platform URLs, or a paid app without price/currency"},
     },
 )
 @limiter.limit("60/minute")
@@ -84,13 +85,14 @@ async def get_app(
     "/{app_id}",
     summary="Update a published app",
     description=(
-        "Partial update. Set `is_active` to false to stop new requests while "
-        "keeping links already sent working."
+        "Partial update. `platforms` is merged: a URL adds or replaces that OS's "
+        "installer and `null` removes it. Set `is_active` to false to stop new "
+        "requests while keeping links already sent working."
     ),
     responses={
         **_ADMIN_ERRORS,
         404: {"description": "App not found"},
-        409: {"description": "An app with this name already exists for this OS"},
+        409: {"description": "An app with this name already exists"},
         422: {"description": "The update would leave the app invalid"},
     },
 )

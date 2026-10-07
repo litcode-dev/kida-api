@@ -25,7 +25,7 @@ LINK_TTL_DAYS = 3
 PRESIGN_TTL_SECONDS = 300
 RESEND_COOLDOWN_MINUTES = 15
 
-OS_LABELS = {"macos": "macOS", "windows": "Windows"}
+OS_LABELS = {"macos": "macOS", "windows": "Windows", "linux": "Linux"}
 DEFAULT_APP_NAME = "Kida"
 
 # Metadata key on a checkout that marks it as an app download, so the shared
@@ -57,19 +57,17 @@ class DownloadRequestResult:
 # -- admin: managing published apps ------------------------------------------
 
 async def _ensure_unique(
-    db: AsyncSession, name: str, os: str, exclude_id: uuid.UUID | None = None
+    db: AsyncSession, name: str, exclude_id: uuid.UUID | None = None
 ) -> None:
-    query = select(DesktopApp.id).where(
-        func.lower(DesktopApp.name) == name.lower(), DesktopApp.os == os
-    )
+    query = select(DesktopApp.id).where(func.lower(DesktopApp.name) == name.lower())
     if exclude_id is not None:
         query = query.where(DesktopApp.id != exclude_id)
     if await db.scalar(query.limit(1)) is not None:
-        raise ConflictError(f"An app named '{name}' already exists for {OS_LABELS.get(os, os)}")
+        raise ConflictError(f"An app named '{name}' already exists")
 
 
 async def create_app(db: AsyncSession, data: DesktopAppCreate) -> DesktopApp:
-    await _ensure_unique(db, data.name, data.os)
+    await _ensure_unique(db, data.name)
     app = DesktopApp(**data.model_dump())
     db.add(app)
     await db.commit()
@@ -78,7 +76,7 @@ async def create_app(db: AsyncSession, data: DesktopAppCreate) -> DesktopApp:
 
 
 async def list_apps(db: AsyncSession, active_only: bool = False) -> list[DesktopApp]:
-    query = select(DesktopApp).order_by(func.lower(DesktopApp.name), DesktopApp.os)
+    query = select(DesktopApp).order_by(func.lower(DesktopApp.name))
     if active_only:
         query = query.where(DesktopApp.is_active.is_(True))
     return list((await db.scalars(query)).all())
@@ -95,10 +93,17 @@ async def update_app(db: AsyncSession, app_id: uuid.UUID, data: DesktopAppUpdate
     app = await get_app(db, app_id)
     changes = data.model_dump(exclude_unset=True)
 
+    platforms = dict(app.platforms or {})
+    for os, url in (changes.pop("platforms", None) or {}).items():
+        if url is None:
+            platforms.pop(os, None)
+        else:
+            platforms[os] = url
+
     # Validate the merged result, so e.g. flipping is_paid on an app that
     # never had a price is refused rather than saved half-configured.
     merged = {
-        "name": app.name, "os": app.os, "file_url": app.file_url, "is_paid": app.is_paid,
+        "name": app.name, "platforms": platforms, "is_paid": app.is_paid,
         "price": app.price, "currency": app.currency, "is_active": app.is_active,
         **changes,
     }
@@ -107,8 +112,8 @@ async def update_app(db: AsyncSession, app_id: uuid.UUID, data: DesktopAppUpdate
     except ValueError as exc:
         raise AppError(_first_error(exc), status_code=422)
 
-    if validated.name.lower() != app.name.lower() or validated.os != app.os:
-        await _ensure_unique(db, validated.name, validated.os, exclude_id=app.id)
+    if validated.name.lower() != app.name.lower():
+        await _ensure_unique(db, validated.name, exclude_id=app.id)
 
     for field, value in validated.model_dump().items():
         setattr(app, field, value)
@@ -139,12 +144,13 @@ async def _find_app(db: AsyncSession, name: str, os: str) -> DesktopApp:
     app = await db.scalar(
         select(DesktopApp).where(
             func.lower(DesktopApp.name) == name.lower(),
-            DesktopApp.os == os,
             DesktopApp.is_active.is_(True),
         )
     )
     if app is None:
-        raise NotFoundError(f"'{name}' is not available for {OS_LABELS.get(os, os)}")
+        raise NotFoundError(f"'{name}' is not available")
+    if os not in (app.platforms or {}):
+        raise NotFoundError(f"'{app.name}' is not available for {OS_LABELS.get(os, os)}")
     return app
 
 
@@ -186,7 +192,11 @@ async def request_download(
     subject to the per-email cooldown. A paid app gets a pending request and a
     checkout URL; the link is only issued once the payment webhook confirms it.
     """
-    app = await _find_app(db, app_name, os) if app_name else None
+    if app_name:
+        app = await _find_app(db, app_name, os)
+    else:
+        app = None
+        _installer_key(os)  # refuse now rather than email a link that cannot work
 
     if app is None or not app.is_paid:
         if await _recently_emailed(db, email):
@@ -314,7 +324,9 @@ def _installer_key(os: str) -> str:
     }
     key = keys.get(os)
     if not key:
-        raise AppError("Installer is not available for the requested OS", status_code=503)
+        raise NotFoundError(
+            f"{DEFAULT_APP_NAME} is not available for {OS_LABELS.get(os, os)}"
+        )
     return key
 
 
@@ -345,9 +357,10 @@ async def redeem(db: AsyncSession, token: str) -> str:
 
     if req.app_name is not None:
         # An app-specific link; never fall back to the default installer.
-        if req.app is None:
-            raise AppError("This app is no longer available", status_code=410)
-        url = await resolve_file_url(req.app.file_url)
+        file_url = (req.app.platforms or {}).get(req.os) if req.app is not None else None
+        if file_url is None:
+            raise AppError("This app is no longer available for this platform", status_code=410)
+        url = await resolve_file_url(file_url)
     else:
         key = _installer_key(req.os)
         url = await s3_service.generate_r2_presigned_url(key, expiry_seconds=PRESIGN_TTL_SECONDS)

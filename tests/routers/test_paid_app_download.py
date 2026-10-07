@@ -39,7 +39,12 @@ def email_task(monkeypatch):
 
 async def _make_app(db, **overrides):
     fields = dict(
-        name="Kida Studio", os="macos", file_url="r2://installers/studio.dmg",
+        name="Toniq",
+        platforms={
+            "macos": "r2://installers/toniq.dmg",
+            "windows": "s3://win-bucket/toniq.exe",
+            "linux": "https://cdn.example.com/toniq.AppImage",
+        },
         is_paid=True, price=Decimal("15000.00"), currency="NGN",
     )
     fields.update(overrides)
@@ -64,7 +69,7 @@ async def _start_paid_checkout(client):
     ) as create_checkout:
         resp = await client.post(
             "/api/v1/app/download-request",
-            json={"email": "buyer@test.com", "os": "macos", "app_name": "kida studio"},
+            json={"email": "buyer@test.com", "os": "macos", "app_name": "toniq"},
         )
     return resp, create_checkout
 
@@ -82,7 +87,7 @@ async def test_paid_app_returns_checkout_url_and_sends_nothing(
     assert data["checkout_url"] == "https://checkout.paystack.com/abc"
     assert data["amount"] == "15000.00"
     assert data["currency"] == "NGN"
-    assert data["app_name"] == "Kida Studio"
+    assert data["app_name"] == "Toniq"
     email_task.delay.assert_not_called()
 
     kwargs = create_checkout.call_args.kwargs
@@ -135,7 +140,7 @@ async def test_verified_payment_emails_a_3_day_link(
     redeem = await client.get(f"/api/v1/app/download/{req.token}", follow_redirects=False)
     assert redeem.status_code == 302
     assert redeem.headers["location"] == "https://r2/signed-studio"
-    assert presign.call_args.args[0] == "studio.dmg"
+    assert presign.call_args.args[0] == "toniq.dmg"
     assert presign.call_args.kwargs["bucket"] == "installers"
 
 
@@ -168,13 +173,10 @@ async def test_underpayment_does_not_fulfil(
 async def test_free_app_emails_link_and_redirects_to_https_url(
     client, db_session, email_task
 ):
-    await _make_app(
-        db_session, is_paid=False, price=None, currency=None,
-        file_url="https://cdn.example.com/kida-studio.exe", os="windows",
-    )
+    await _make_app(db_session, is_paid=False, price=None, currency=None)
     resp = await client.post(
         "/api/v1/app/download-request",
-        json={"email": "free@test.com", "os": "windows", "app_name": "Kida Studio"},
+        json={"email": "free@test.com", "os": "linux", "app_name": "Toniq"},
     )
     assert resp.status_code == 200
     assert resp.json()["data"]["payment_required"] is False
@@ -183,13 +185,13 @@ async def test_free_app_emails_link_and_redirects_to_https_url(
     req = await db_session.scalar(select(AppDownloadRequest))
     redeem = await client.get(f"/api/v1/app/download/{req.token}", follow_redirects=False)
     assert redeem.status_code == 302
-    assert redeem.headers["location"] == "https://cdn.example.com/kida-studio.exe"
+    assert redeem.headers["location"] == "https://cdn.example.com/toniq.AppImage"
 
 
 @pytest.mark.asyncio
 async def test_unknown_or_inactive_app_is_404(client, db_session, email_task):
     await _make_app(db_session, is_active=False)
-    for name in ("Kida Studio", "Nope"):
+    for name in ("Toniq", "Nope"):
         resp = await client.post(
             "/api/v1/app/download-request",
             json={"email": "x@test.com", "os": "macos", "app_name": name},
@@ -203,7 +205,7 @@ async def test_link_for_deleted_app_is_gone(client, db_session, email_task):
     app = await _make_app(db_session, is_paid=False, price=None, currency=None)
     await client.post(
         "/api/v1/app/download-request",
-        json={"email": "gone@test.com", "os": "macos", "app_name": "Kida Studio"},
+        json={"email": "gone@test.com", "os": "macos", "app_name": "Toniq"},
     )
     token = (await db_session.scalar(select(AppDownloadRequest))).token
     await db_session.delete(app)
@@ -221,5 +223,33 @@ async def test_public_app_list_hides_file_url(client, db_session):
     resp = await client.get("/api/v1/app/apps")
     assert resp.status_code == 200
     items = resp.json()["data"]
-    assert [a["name"] for a in items] == ["Kida Studio"]
-    assert "file_url" not in items[0]
+    assert [a["name"] for a in items] == ["Toniq"]
+    assert items[0]["available_os"] == ["linux", "macos", "windows"]
+    assert "platforms" not in items[0]
+
+
+@pytest.mark.asyncio
+async def test_windows_build_is_presigned_from_s3(client, db_session, email_task, monkeypatch):
+    await _make_app(db_session, is_paid=False, price=None, currency=None)
+    await client.post(
+        "/api/v1/app/download-request",
+        json={"email": "win@test.com", "os": "windows", "app_name": "Toniq"},
+    )
+    req = await db_session.scalar(select(AppDownloadRequest))
+    presign = AsyncMock(return_value="https://s3/signed-win")
+    monkeypatch.setattr(s3_service, "generate_presigned_url", presign)
+    redeem = await client.get(f"/api/v1/app/download/{req.token}", follow_redirects=False)
+    assert redeem.headers["location"] == "https://s3/signed-win"
+    assert presign.call_args.args[0] == "toniq.exe"
+    assert presign.call_args.kwargs["bucket"] == "win-bucket"
+
+
+@pytest.mark.asyncio
+async def test_app_without_build_for_os_is_404(client, db_session, email_task):
+    await _make_app(db_session, platforms={"macos": "r2://installers/toniq.dmg"})
+    resp = await client.post(
+        "/api/v1/app/download-request",
+        json={"email": "l@test.com", "os": "linux", "app_name": "Toniq"},
+    )
+    assert resp.status_code == 404
+    assert "Linux" in resp.json()["message"]

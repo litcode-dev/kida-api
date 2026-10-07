@@ -24,9 +24,12 @@ def _auth(user):
 
 
 PAID_APP = {
-    "name": "Kida Studio",
-    "os": "macos",
-    "file_url": "r2://installers/kida-studio.dmg",
+    "name": "Toniq",
+    "platforms": {
+        "macos": "r2://installers/toniq.dmg",
+        "windows": "s3://installers/toniq.exe",
+        "linux": "https://cdn.example.com/toniq.AppImage",
+    },
     "is_paid": True,
     "price": "15000.00",
     "currency": "NGN",
@@ -39,11 +42,11 @@ async def test_admin_creates_and_lists_paid_app(client, db_session):
     resp = await client.post("/api/v1/admin/apps", json=PAID_APP, headers=_auth(admin))
     assert resp.status_code == 201, resp.text
     data = resp.json()["data"]
-    assert data["name"] == "Kida Studio"
+    assert data["name"] == "Toniq"
     assert data["is_paid"] is True
     assert data["price"] == "15000.00"
     assert data["currency"] == "NGN"
-    assert data["file_url"] == "r2://installers/kida-studio.dmg"
+    assert data["platforms"] == PAID_APP["platforms"]
 
     listed = await client.get("/api/v1/admin/apps", headers=_auth(admin))
     assert [a["id"] for a in listed.json()["data"]] == [data["id"]]
@@ -75,10 +78,16 @@ async def test_free_app_drops_price(client, db_session):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("file_url", ["ftp://x/y", "r2://bucket-only", "kida.dmg"])
-async def test_bad_file_url_is_rejected(client, db_session, file_url):
+@pytest.mark.parametrize("platforms", [
+    {"macos": "ftp://x/y"},
+    {"macos": "r2://bucket-only"},
+    {"windows": "kida.exe"},
+    {"freebsd": "https://x/y"},
+    {},
+])
+async def test_bad_platforms_are_rejected(client, db_session, platforms):
     admin = await _create_user(db_session)
-    body = {**PAID_APP, "file_url": file_url}
+    body = {**PAID_APP, "platforms": platforms}
     resp = await client.post("/api/v1/admin/apps", json=body, headers=_auth(admin))
     assert resp.status_code == 422
 
@@ -92,18 +101,40 @@ async def test_unsupported_currency_is_rejected(client, db_session):
 
 
 @pytest.mark.asyncio
-async def test_duplicate_name_and_os_conflicts_case_insensitively(client, db_session):
+async def test_duplicate_name_conflicts_case_insensitively(client, db_session):
     admin = await _create_user(db_session)
     first = await client.post("/api/v1/admin/apps", json=PAID_APP, headers=_auth(admin))
     assert first.status_code == 201
     dup = await client.post(
-        "/api/v1/admin/apps", json={**PAID_APP, "name": "kida studio"}, headers=_auth(admin)
+        "/api/v1/admin/apps", json={**PAID_APP, "name": "TONIQ"}, headers=_auth(admin)
     )
     assert dup.status_code == 409
-    other_os = await client.post(
-        "/api/v1/admin/apps", json={**PAID_APP, "os": "windows"}, headers=_auth(admin)
+
+
+@pytest.mark.asyncio
+async def test_update_merges_platforms(client, db_session):
+    admin = await _create_user(db_session)
+    created = await client.post("/api/v1/admin/apps", json=PAID_APP, headers=_auth(admin))
+    app_id = created.json()["data"]["id"]
+
+    resp = await client.patch(
+        f"/api/v1/admin/apps/{app_id}",
+        json={"platforms": {"linux": None, "windows": "r2://installers/toniq-2.exe"}},
+        headers=_auth(admin),
     )
-    assert other_os.status_code == 201
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["data"]["platforms"] == {
+        "macos": "r2://installers/toniq.dmg",
+        "windows": "r2://installers/toniq-2.exe",
+    }
+
+    # Removing every platform would leave nothing to download.
+    empty = await client.patch(
+        f"/api/v1/admin/apps/{app_id}",
+        json={"platforms": {"macos": None, "windows": None}},
+        headers=_auth(admin),
+    )
+    assert empty.status_code == 422
 
 
 @pytest.mark.asyncio

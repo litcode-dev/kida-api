@@ -19,7 +19,7 @@ router = APIRouter(prefix="/app", tags=["app"])
 )
 async def list_apps(db: AsyncSession = Depends(get_db)):
     apps = await app_download_service.list_apps(db, active_only=True)
-    return success([DesktopAppPublic.model_validate(a).model_dump(mode="json") for a in apps])
+    return success([DesktopAppPublic.from_app(a).model_dump(mode="json") for a in apps])
 
 
 @router.post(
@@ -27,7 +27,7 @@ async def list_apps(db: AsyncSession = Depends(get_db)):
     summary="Request a desktop app download link",
     description=(
         "Public endpoint. Submit an email address, operating system and optionally "
-        "an `app_name` published by an admin.\n\n"
+        "an `app_name` published by an admin (e.g. `Toniq` with `os` = `linux`).\n\n"
         "- **Free app** (or no `app_name`): a download link is emailed straight "
         "away. It expires after 3 days.\n"
         "- **Paid app**: the response carries `checkout_url`. Once the payment "
@@ -35,7 +35,7 @@ async def list_apps(db: AsyncSession = Depends(get_db)):
     ),
     responses={
         200: {"description": "Download link sent, or checkout started for a paid app"},
-        404: {"description": "No active app with this name for this OS"},
+        404: {"description": "No active app with this name, or it has no installer for this OS"},
         422: {"description": "Invalid email or unsupported OS"},
         503: {"description": "No payment gateway configured for the app's currency"},
     },

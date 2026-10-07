@@ -1,7 +1,7 @@
 """add desktop_apps and paid app downloads
 
-Admins publish installers (name, OS, R2/S3/https location, free or paid with a
-price in NGN or USD). A download request can now name one of them; a paid one
+Admins publish apps (a name, one R2/S3/https installer location per OS, free
+or paid with a price in NGN or USD). A download request can now name one of them; a paid one
 waits on a payment before its 3-day link is emailed, so expires_at becomes
 nullable until then. Existing rows were all emailed straight away and keep the
 'fulfilled' default.
@@ -12,7 +12,7 @@ Create Date: 2026-10-07 00:00:00.000000
 """
 from alembic import op
 import sqlalchemy as sa
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 
 revision = "c8d3e4f5a6b7"
 down_revision = "b7c2d3e4f5a6"
@@ -25,8 +25,7 @@ def upgrade() -> None:
         "desktop_apps",
         sa.Column("id", UUID(as_uuid=True), primary_key=True),
         sa.Column("name", sa.String(120), nullable=False),
-        sa.Column("os", sa.String(16), nullable=False),
-        sa.Column("file_url", sa.String(1024), nullable=False),
+        sa.Column("platforms", JSONB(), nullable=False, server_default=sa.text("'{}'::jsonb")),
         sa.Column("is_paid", sa.Boolean(), nullable=False, server_default=sa.false()),
         sa.Column("price", sa.Numeric(12, 2), nullable=True),
         sa.Column("currency", sa.String(3), nullable=True),
@@ -34,9 +33,7 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
     )
-    op.create_index(
-        "uq_desktop_apps_name_os", "desktop_apps", [sa.text("lower(name)"), "os"], unique=True
-    )
+    op.create_index("uq_desktop_apps_name", "desktop_apps", [sa.text("lower(name)")], unique=True)
 
     op.add_column("app_download_requests", sa.Column("app_id", UUID(as_uuid=True), nullable=True))
     op.create_foreign_key(
@@ -77,5 +74,5 @@ def downgrade() -> None:
     op.drop_index("ix_app_download_requests_app_id", table_name="app_download_requests")
     op.drop_constraint("fk_app_download_requests_app_id", "app_download_requests", type_="foreignkey")
     op.drop_column("app_download_requests", "app_id")
-    op.drop_index("uq_desktop_apps_name_os", table_name="desktop_apps")
+    op.drop_index("uq_desktop_apps_name", table_name="desktop_apps")
     op.drop_table("desktop_apps")
