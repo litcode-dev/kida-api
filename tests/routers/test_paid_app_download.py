@@ -253,3 +253,52 @@ async def test_app_without_build_for_os_is_404(client, db_session, email_task):
     )
     assert resp.status_code == 404
     assert "Linux" in resp.json()["message"]
+
+
+@pytest.mark.asyncio
+async def test_squad_payment_without_metadata_is_matched_by_reference(
+    client, db_session, email_task, monkeypatch
+):
+    """Squad's verify endpoint does not echo checkout metadata back, so the
+    payment has to be matched on the reference saved at checkout."""
+    get_settings.cache_clear()
+    monkeypatch.setenv("SQUAD_SECRET_KEY", "squad-secret")
+    try:
+        await _make_app(db_session)
+        with patch(
+            "app.services.payments.squad.SquadGateway.create_checkout",
+            new=AsyncMock(return_value=CheckoutSession(
+                checkout_url="https://checkout.squadco.com/x", reference="squad-ref-1",
+            )),
+        ):
+            resp = await client.post(
+                "/api/v1/app/download-request",
+                json={"email": "sq@test.com", "os": "macos", "app_name": "Toniq",
+                      "provider": "squad"},
+            )
+        assert resp.json()["data"]["payment_provider"] == "squad"
+        req = await db_session.scalar(select(AppDownloadRequest))
+
+        body = json.dumps({
+            "Event": "charge_successful",
+            "Body": {"transaction_ref": "squad-ref-1", "transaction_status": "Success"},
+        }).encode()
+        signature = hmac.new(b"squad-secret", body, hashlib.sha512).hexdigest().upper()
+        verified = VerifiedTransaction(
+            reference="squad-ref-1", succeeded=True, amount=Decimal("15000.00"),
+            currency="NGN", metadata={},
+        )
+        with patch(
+            "app.services.payments.squad.SquadGateway.verify_transaction",
+            new=AsyncMock(return_value=verified),
+        ):
+            hook = await client.post(
+                "/api/v1/payments/webhook/squad", content=body,
+                headers={"x-squad-encrypted-body": signature},
+            )
+        assert hook.status_code == 200
+        email_task.delay.assert_called_once_with(str(req.id))
+        await db_session.refresh(req)
+        assert req.status == "fulfilled"
+    finally:
+        get_settings.cache_clear()

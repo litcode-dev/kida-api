@@ -256,8 +256,39 @@ def _default_provider(currency: str) -> PaymentProvider:
 
 # -- payment confirmation ------------------------------------------------------
 
+async def find_paid_request_id(
+    db: AsyncSession, verified: VerifiedTransaction, references: list[str | None]
+) -> uuid.UUID | None:
+    """Which download request a verified payment is for, if any.
+
+    The checkout metadata names it, but not every gateway echoes metadata back
+    from its verify endpoint (Squad's does not), so the payment reference saved
+    when checkout was created is matched too. ``references`` are the ones the
+    webhook carried; each was confirmed by the verify call that produced
+    ``verified``.
+    """
+    raw_id = verified.metadata.get(CHECKOUT_METADATA_KEY)
+    if raw_id:
+        try:
+            return uuid.UUID(str(raw_id))
+        except (ValueError, TypeError):
+            log.warning("app_download_payment.bad_metadata", reference=verified.reference)
+
+    refs = {ref for ref in (verified.reference, *references) if ref}
+    if not refs:
+        return None
+    return await db.scalar(
+        select(AppDownloadRequest.id)
+        .where(AppDownloadRequest.payment_reference.in_(refs))
+        .limit(1)
+    )
+
+
 async def fulfill_paid_request(
-    db: AsyncSession, verified: VerifiedTransaction, provider: PaymentProvider
+    db: AsyncSession,
+    request_id: uuid.UUID,
+    verified: VerifiedTransaction,
+    provider: PaymentProvider,
 ) -> AppDownloadRequest | None:
     """Issue the 3-day link for a paid request once its payment is verified.
 
@@ -266,13 +297,6 @@ async def fulfill_paid_request(
     None when there is nothing to do: unknown request, already fulfilled
     (a redelivered webhook), or a payment that does not cover the price.
     """
-    raw_id = verified.metadata.get(CHECKOUT_METADATA_KEY)
-    try:
-        request_id = uuid.UUID(str(raw_id))
-    except (ValueError, TypeError):
-        log.warning("app_download_payment.bad_metadata", reference=verified.reference)
-        return None
-
     req = await db.get(AppDownloadRequest, request_id, with_for_update=True)
     if req is None:
         log.warning("app_download_payment.request_not_found", request_id=str(request_id))
@@ -299,7 +323,6 @@ async def fulfill_paid_request(
     req.paid_at = now
     req.expires_at = now + timedelta(days=LINK_TTL_DAYS)
     req.payment_provider = provider.value
-    req.payment_reference = verified.reference or req.payment_reference
     await db.commit()
     await db.refresh(req)
     return req

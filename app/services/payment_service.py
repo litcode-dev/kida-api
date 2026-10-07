@@ -75,8 +75,11 @@ async def handle_webhook(
         )
         return
 
-    if verified.metadata.get(app_download_service.CHECKOUT_METADATA_KEY):
-        await _fulfill_app_download(db, verified, gateway.provider)
+    app_request_id = await app_download_service.find_paid_request_id(
+        db, verified, [event.reference]
+    )
+    if app_request_id is not None:
+        await _fulfill_app_download(db, app_request_id, verified, gateway.provider)
         return
 
     user_id = verified.metadata.get("user_id")
@@ -128,9 +131,11 @@ async def handle_webhook(
         )
 
 
-async def _fulfill_app_download(db: AsyncSession, verified, provider: PaymentProvider) -> None:
+async def _fulfill_app_download(
+    db: AsyncSession, request_id: uuid.UUID, verified, provider: PaymentProvider
+) -> None:
     """A paid desktop-app download: issue its 3-day link and email it."""
-    req = await app_download_service.fulfill_paid_request(db, verified, provider)
+    req = await app_download_service.fulfill_paid_request(db, request_id, verified, provider)
     if req is None:
         return
 
