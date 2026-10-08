@@ -203,7 +203,11 @@ async def me(user=Depends(get_current_user)):
         "`reason` is optional — nobody has to explain themselves to leave. When "
         "given it is the one thing that outlives the account, kept in a table "
         "that points at neither the person nor the deletion record, so it can "
-        "be read for why people are leaving but not traced back to who left."
+        "be read for why people are leaving but not traced back to who left.\n\n"
+        "For an account that signs in with Apple, send `apple_authorization_code` "
+        "from a fresh Sign in with Apple and the app's authorization is revoked "
+        "on Apple's side too. That is best effort: the account is deleted "
+        "whether or not Apple can be reached."
     ),
     responses={401: {"description": "Missing or invalid token"}},
 )
@@ -213,7 +217,14 @@ async def delete_account(
     redis: Redis = Depends(get_redis),
     user=Depends(get_current_user),
 ):
+    # Read before the row is gone.
+    is_apple = user.oauth_provider == "apple"
+    apple_sub = user.oauth_provider_id
     await auth_service.delete_user(db, user, redis, body.refresh_token, reason=body.reason)
+    # After the delete has committed: Apple being slow or down must not hold up
+    # or undo the deletion itself.
+    if is_apple and body.apple_authorization_code:
+        await oauth_service.revoke_apple_sign_in(body.apple_authorization_code, apple_sub)
     return success(message="Account deleted")
 
 

@@ -159,6 +159,13 @@ class Settings(BaseSettings):
 
     # Apple OAuth (Sign In with Apple)
     apple_client_id: str = ""  # Bundle ID (iOS) or Service ID (web) — used as JWT audience
+    # Revoking an Apple sign-in when its account is deleted (App Review 5.1.1(v)).
+    # Needs a key with "Sign in with Apple" enabled — Developer portal → Keys —
+    # which is not the App Store Connect API key below. Left blank, deletion
+    # still works and the Apple link is simply not revoked.
+    apple_team_id: str = ""
+    apple_siwa_key_id: str = ""
+    apple_siwa_private_key: str = ""  # PEM contents of the .p8 key (escaped "\n" allowed)
 
     # AI Music Generation
     suno_api_key: str = ""

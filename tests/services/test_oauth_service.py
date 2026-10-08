@@ -381,3 +381,153 @@ async def test_apple_login_unconfigured_is_503(monkeypatch):
         assert exc.value.status_code == 503
     finally:
         get_settings.cache_clear()
+
+
+# ── Revoking Sign in with Apple on account deletion ─────────────────────────
+
+APPLE_SUB = "001234.apple-user.0001"
+
+
+@pytest.fixture
+def apple_revocation(monkeypatch):
+    """Configure revocation with a locally generated Sign in with Apple key.
+
+    Returns the key's public half, so a test can check the client secret was
+    signed with it.
+    """
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    private_key = ec.generate_private_key(ec.SECP256R1())
+    pem = private_key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    ).decode()
+    get_settings.cache_clear()
+    monkeypatch.setenv("APPLE_CLIENT_ID", "com.litcode.kida")
+    monkeypatch.setenv("APPLE_TEAM_ID", "TEAM123456")
+    monkeypatch.setenv("APPLE_SIWA_KEY_ID", "KEY1234567")
+    # Escaped newlines, the way a single-line environment variable carries it.
+    monkeypatch.setenv("APPLE_SIWA_PRIVATE_KEY", pem.replace("\n", "\\n"))
+    yield private_key.public_key()
+    get_settings.cache_clear()
+
+
+def _apple_id_token(sub=APPLE_SUB) -> str:
+    import jwt as pyjwt
+
+    return pyjwt.encode({"sub": sub}, "unused", algorithm="HS256")
+
+
+def _apple_tokens(**overrides) -> dict:
+    return {
+        "access_token": "apple-access",
+        "refresh_token": "apple-refresh",
+        "id_token": _apple_id_token(),
+        **overrides,
+    }
+
+
+@pytest.mark.asyncio
+async def test_revoke_apple_exchanges_the_code_and_revokes_the_refresh_token(
+    apple_revocation,
+):
+    import jwt as pyjwt
+
+    post = AsyncMock(side_effect=[_mock_response(200, _apple_tokens()), _mock_response(200, {})])
+    with patch("app.services.oauth_service.httpx.AsyncClient", return_value=_mock_client(post=post)):
+        assert await oauth_service.revoke_apple_sign_in("auth-code", APPLE_SUB) is True
+
+    exchange, revoke = post.await_args_list
+    assert exchange.args[0] == oauth_service.APPLE_TOKEN_URL
+    assert exchange.kwargs["data"]["code"] == "auth-code"
+    assert exchange.kwargs["data"]["grant_type"] == "authorization_code"
+    assert revoke.args[0] == oauth_service.APPLE_REVOKE_URL
+    assert revoke.kwargs["data"]["token"] == "apple-refresh"
+    assert revoke.kwargs["data"]["token_type_hint"] == "refresh_token"
+    assert revoke.kwargs["data"]["client_id"] == "com.litcode.kida"
+
+    # The client secret is the ES256 JWT Apple specifies, signed with our key.
+    secret = revoke.kwargs["data"]["client_secret"]
+    assert pyjwt.get_unverified_header(secret)["kid"] == "KEY1234567"
+    claims = pyjwt.decode(
+        secret, apple_revocation, algorithms=["ES256"], audience="https://appleid.apple.com"
+    )
+    assert claims["iss"] == "TEAM123456"
+    assert claims["sub"] == "com.litcode.kida"
+
+
+@pytest.mark.asyncio
+async def test_revoke_apple_falls_back_to_the_access_token(apple_revocation):
+    tokens = _apple_tokens(refresh_token=None)
+    post = AsyncMock(side_effect=[_mock_response(200, tokens), _mock_response(200, {})])
+    with patch("app.services.oauth_service.httpx.AsyncClient", return_value=_mock_client(post=post)):
+        assert await oauth_service.revoke_apple_sign_in("auth-code", APPLE_SUB) is True
+
+    revoke = post.await_args_list[1]
+    assert revoke.kwargs["data"]["token"] == "apple-access"
+    assert revoke.kwargs["data"]["token_type_hint"] == "access_token"
+
+
+@pytest.mark.asyncio
+async def test_revoke_apple_leaves_a_different_apple_id_alone(apple_revocation):
+    tokens = _apple_tokens(id_token=_apple_id_token("someone-else"))
+    post = AsyncMock(return_value=_mock_response(200, tokens))
+    with patch("app.services.oauth_service.httpx.AsyncClient", return_value=_mock_client(post=post)):
+        assert await oauth_service.revoke_apple_sign_in("auth-code", APPLE_SUB) is False
+
+    assert post.await_count == 1, "the exchange only — nothing revoked"
+
+
+@pytest.mark.asyncio
+async def test_revoke_apple_without_a_stored_sub_still_revokes(apple_revocation):
+    """Accounts created before the Apple id was recorded have nothing to
+    compare against; the code was minted for this deletion, so trust it."""
+    post = AsyncMock(side_effect=[_mock_response(200, _apple_tokens()), _mock_response(200, {})])
+    with patch("app.services.oauth_service.httpx.AsyncClient", return_value=_mock_client(post=post)):
+        assert await oauth_service.revoke_apple_sign_in("auth-code", None) is True
+
+
+@pytest.mark.asyncio
+async def test_revoke_apple_rejected_code_returns_false(apple_revocation):
+    post = AsyncMock(return_value=_mock_response(400, {"error": "invalid_grant"}))
+    with patch("app.services.oauth_service.httpx.AsyncClient", return_value=_mock_client(post=post)):
+        assert await oauth_service.revoke_apple_sign_in("stale-code", APPLE_SUB) is False
+
+    assert post.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_revoke_apple_failed_revoke_returns_false(apple_revocation):
+    post = AsyncMock(side_effect=[_mock_response(200, _apple_tokens()), _mock_response(503)])
+    with patch("app.services.oauth_service.httpx.AsyncClient", return_value=_mock_client(post=post)):
+        assert await oauth_service.revoke_apple_sign_in("auth-code", APPLE_SUB) is False
+
+
+@pytest.mark.asyncio
+async def test_revoke_apple_network_failure_returns_false(apple_revocation):
+    post = AsyncMock(side_effect=httpx.ConnectTimeout("timed out"))
+    with patch("app.services.oauth_service.httpx.AsyncClient", return_value=_mock_client(post=post)):
+        assert await oauth_service.revoke_apple_sign_in("auth-code", APPLE_SUB) is False
+
+
+@pytest.mark.asyncio
+async def test_revoke_apple_unconfigured_makes_no_calls(monkeypatch):
+    get_settings.cache_clear()
+    monkeypatch.setenv("APPLE_SIWA_PRIVATE_KEY", "")
+    try:
+        with patch("app.services.oauth_service.httpx.AsyncClient") as client_cls:
+            assert await oauth_service.revoke_apple_sign_in("auth-code", APPLE_SUB) is False
+        client_cls.assert_not_called()
+    finally:
+        get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_revoke_apple_malformed_key_returns_false(apple_revocation, monkeypatch):
+    get_settings.cache_clear()
+    monkeypatch.setenv("APPLE_SIWA_PRIVATE_KEY", "not a key")
+    with patch("app.services.oauth_service.httpx.AsyncClient") as client_cls:
+        assert await oauth_service.revoke_apple_sign_in("auth-code", APPLE_SUB) is False
+    client_cls.assert_not_called()

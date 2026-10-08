@@ -441,3 +441,85 @@ class FakeRedisStub:
 
     async def get(self, key):
         return None
+
+
+# ── Sign in with Apple is revoked on the way out ─────────────────────────────
+
+async def _make_apple_user(db, sub="001234.apple-user.0001"):
+    user = User(
+        id=uuid.uuid4(),
+        email="apple-leaver@privaterelay.appleid.com",
+        password_hash=None,
+        full_name="Apple Leaver",
+        role=UserRole.user,
+        is_verified=True,
+        oauth_provider="apple",
+        oauth_provider_id=sub,
+    )
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+    return user
+
+
+@pytest.mark.asyncio
+async def test_deleting_an_apple_account_revokes_the_apple_sign_in(client, db_session):
+    user = await _make_apple_user(db_session)
+    uid = user.id
+
+    with patch(
+        "app.services.oauth_service.revoke_apple_sign_in", new=AsyncMock(return_value=True)
+    ) as revoke:
+        resp = await _delete_account(
+            client, user, body={"apple_authorization_code": "fresh-code"}
+        )
+
+    assert resp.status_code == 200
+    revoke.assert_awaited_once_with("fresh-code", "001234.apple-user.0001")
+    db_session.expire_all()
+    assert await db_session.get(User, uid) is None
+
+
+@pytest.mark.asyncio
+async def test_apple_account_is_deleted_even_when_revocation_fails(client, db_session):
+    user = await _make_apple_user(db_session)
+    uid = user.id
+
+    with patch(
+        "app.services.oauth_service.revoke_apple_sign_in", new=AsyncMock(return_value=False)
+    ):
+        resp = await _delete_account(
+            client, user, body={"apple_authorization_code": "fresh-code"}
+        )
+
+    assert resp.status_code == 200
+    db_session.expire_all()
+    assert await db_session.get(User, uid) is None
+
+
+@pytest.mark.asyncio
+async def test_apple_account_without_a_code_is_still_deleted(client, db_session):
+    """Older app versions send no code; they keep working, unrevoked."""
+    user = await _make_apple_user(db_session)
+    uid = user.id
+
+    with patch("app.services.oauth_service.revoke_apple_sign_in", new=AsyncMock()) as revoke:
+        resp = await _delete_account(client, user)
+
+    assert resp.status_code == 200
+    revoke.assert_not_awaited()
+    db_session.expire_all()
+    assert await db_session.get(User, uid) is None
+
+
+@pytest.mark.asyncio
+async def test_apple_code_is_ignored_for_a_non_apple_account(client, db_session):
+    user = await _make_user(db_session)
+
+    with patch("app.services.oauth_service.revoke_apple_sign_in", new=AsyncMock()) as revoke:
+        resp = await _delete_account(
+            client, user, body={"apple_authorization_code": "stray-code"}
+        )
+
+    assert resp.status_code == 200
+    revoke.assert_not_awaited()

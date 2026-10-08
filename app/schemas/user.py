@@ -91,6 +91,10 @@ class DeleteAccountRequest(BaseModel):
     # Optional, and kept apart from everything else that is being erased — see
     # AccountDeletionReason. Nobody is made to explain themselves to leave.
     reason: str | None = Field(default=None, max_length=1_000)
+    # From a fresh Sign in with Apple the app performs on the way to deleting an
+    # Apple account. Exchanged for a token so the Apple link can be revoked —
+    # see oauth_service.revoke_apple_sign_in. Ignored for other accounts.
+    apple_authorization_code: str | None = Field(default=None, max_length=1_000)
 
     @field_validator("reason", mode="before")
     @classmethod

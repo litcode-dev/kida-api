@@ -1,4 +1,6 @@
 import asyncio
+import time
+
 import httpx
 import jwt
 import structlog
@@ -267,3 +269,138 @@ def _log_rejected_apple_token(identity_token: str, exc: Exception, expected_aud:
         token_iss=claims.get("iss"),
         token_exp=claims.get("exp"),
     )
+
+
+APPLE_TOKEN_URL = "https://appleid.apple.com/auth/token"
+APPLE_REVOKE_URL = "https://appleid.apple.com/auth/revoke"
+APPLE_TIMEOUT = 15.0
+
+# Apple accepts a client secret valid for up to six months. This one only has
+# to outlive the two calls a revocation makes, so it is minted per use.
+_APPLE_CLIENT_SECRET_TTL = 300
+
+
+def apple_revocation_configured() -> bool:
+    settings = get_settings()
+    return bool(
+        settings.apple_client_id
+        and settings.apple_team_id
+        and settings.apple_siwa_key_id
+        and settings.apple_siwa_private_key
+    )
+
+
+def _apple_client_secret() -> str:
+    """The ES256 JWT Apple takes in place of a static client secret."""
+    settings = get_settings()
+    now = int(time.time())
+    return jwt.encode(
+        {
+            "iss": settings.apple_team_id,
+            "iat": now,
+            "exp": now + _APPLE_CLIENT_SECRET_TTL,
+            "aud": "https://appleid.apple.com",
+            "sub": settings.apple_client_id,
+        },
+        settings.apple_siwa_private_key.replace("\\n", "\n"),
+        algorithm="ES256",
+        headers={"kid": settings.apple_siwa_key_id},
+    )
+
+
+def _json_object(resp: httpx.Response) -> dict | None:
+    try:
+        payload = resp.json()
+    except ValueError:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+async def revoke_apple_sign_in(authorization_code: str, expected_sub: str | None) -> bool:
+    """Revoke Kiɗa's Sign in with Apple authorization for an account being deleted.
+
+    App Review 5.1.1(v) requires it: deleting an account that signed in with
+    Apple must also end the link on Apple's side. Apple only revokes a token,
+    and a token only comes from exchanging an authorization code — which is
+    single-use and lives five minutes, so it cannot be kept from sign-in. The
+    app gets a fresh one by asking the user to sign in with Apple again on the
+    way to deletion, and sends it with the delete request.
+
+    Best effort, like the RevenueCat and OneSignal clean-up: this never raises,
+    and returns whether Apple confirmed the revocation. Deleting the account
+    must not depend on Apple being up.
+
+    ``expected_sub`` is the Apple user id on the account. A code for a different
+    Apple ID is not revoked: that would sever someone else's link, not this
+    account's.
+    """
+    if not apple_revocation_configured():
+        log.warning("apple_revocation_skipped", reason="not_configured")
+        return False
+    try:
+        client_secret = _apple_client_secret()
+    except (ValueError, TypeError, jwt.PyJWTError) as exc:
+        # A malformed key is a deployment fault; it must not cost the user the
+        # deletion, but it needs to be seen.
+        log.error("apple_revocation_skipped", reason="bad_signing_key", error=str(exc)[:200])
+        return False
+
+    client_id = get_settings().apple_client_id
+    try:
+        async with httpx.AsyncClient(timeout=APPLE_TIMEOUT) as client:
+            resp = await client.post(
+                APPLE_TOKEN_URL,
+                data={
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                    "code": authorization_code,
+                    "grant_type": "authorization_code",
+                },
+            )
+            tokens = _json_object(resp) if resp.status_code == 200 else None
+            if tokens is None:
+                log.warning(
+                    "apple_code_exchange_failed",
+                    status=resp.status_code,
+                    body=resp.text[:300],
+                )
+                return False
+
+            # Straight from Apple over TLS, in answer to a request signed with
+            # our key — the signature would tell us nothing more.
+            try:
+                sub = jwt.decode(
+                    tokens.get("id_token") or "", options={"verify_signature": False}
+                ).get("sub")
+            except jwt.PyJWTError:
+                sub = None
+            if expected_sub and sub != expected_sub:
+                log.warning("apple_revocation_skipped", reason="different_apple_id")
+                return False
+
+            if tokens.get("refresh_token"):
+                token, hint = tokens["refresh_token"], "refresh_token"
+            elif tokens.get("access_token"):
+                token, hint = tokens["access_token"], "access_token"
+            else:
+                log.warning("apple_code_exchange_failed", reason="no_token", keys=sorted(tokens))
+                return False
+
+            resp = await client.post(
+                APPLE_REVOKE_URL,
+                data={
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                    "token": token,
+                    "token_type_hint": hint,
+                },
+            )
+    except httpx.HTTPError as exc:
+        log.warning("apple_revocation_transport_error", error=str(exc)[:200])
+        return False
+
+    if resp.status_code != 200:
+        log.warning("apple_revocation_failed", status=resp.status_code, body=resp.text[:300])
+        return False
+    log.info("apple_sign_in_revoked")
+    return True
