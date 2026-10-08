@@ -15,11 +15,20 @@ router = APIRouter(prefix="/app", tags=["app"])
 @router.get(
     "/apps",
     summary="List apps available for download",
-    description="Public endpoint. Active apps with their OS and price; never the file location.",
+    description=(
+        "Public endpoint. Active apps with their platforms and price. Android and "
+        "iOS are free, so their download links are included under `links` when "
+        "available (private R2/S3 files as a link valid for 1 hour). Desktop "
+        "installers are only reachable through `POST /app/download-request`."
+    ),
 )
 async def list_apps(db: AsyncSession = Depends(get_db)):
     apps = await app_download_service.list_apps(db, active_only=True)
-    return success([DesktopAppPublic.from_app(a).model_dump(mode="json") for a in apps])
+    items = []
+    for app in apps:
+        links = await app_download_service.public_mobile_links(app)
+        items.append(DesktopAppPublic.from_app(app, links).model_dump(mode="json"))
+    return success(items)
 
 
 @router.post(

@@ -348,8 +348,13 @@ async def test_mobile_builds_of_a_paid_app_are_free(
 
 
 @pytest.mark.asyncio
-async def test_public_list_marks_only_desktop_platforms_as_paid(client, db_session):
+async def test_public_list_marks_only_desktop_platforms_as_paid(
+    client, db_session, monkeypatch
+):
     await _make_app(db_session, platforms=MOBILE_PLATFORMS)
+    monkeypatch.setattr(
+        s3_service, "generate_r2_presigned_url", AsyncMock(return_value="https://r2/x")
+    )
     resp = await client.get("/api/v1/app/apps")
     item = resp.json()["data"][0]
     assert item["available_os"] == ["android", "ios", "macos"]
@@ -363,3 +368,25 @@ async def test_default_installer_has_no_mobile_build(client, email_task):
     )
     assert resp.status_code == 404
     email_task.delay.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_public_list_shows_mobile_links_only(client, db_session, monkeypatch):
+    await _make_app(db_session, platforms=MOBILE_PLATFORMS)
+    await _make_app(
+        db_session, name="Desktop Only", platforms={"windows": "r2://installers/d.exe"},
+    )
+    presign = AsyncMock(return_value="https://r2/signed-apk")
+    monkeypatch.setattr(s3_service, "generate_r2_presigned_url", presign)
+
+    resp = await client.get("/api/v1/app/apps")
+    items = {a["name"]: a for a in resp.json()["data"]}
+
+    assert items["Toniq"]["links"] == {
+        "android": "https://r2/signed-apk",
+        "ios": "https://apps.apple.com/app/id123456789",
+    }
+    assert presign.call_args.args[0] == "toniq.apk"
+    assert presign.call_args.kwargs["expiry_seconds"] == 3600
+    # Desktop installers stay behind the email (and, if paid, checkout) flow.
+    assert items["Desktop Only"]["links"] == {}

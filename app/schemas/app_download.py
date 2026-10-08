@@ -133,20 +133,27 @@ class DesktopAppUpdate(BaseModel):
 
 
 class DesktopAppPublic(BaseModel):
-    """What anyone may see about a published app — never where the files are."""
+    """What anyone may see about a published app.
+
+    Desktop installer locations are never exposed. Android and iOS are free,
+    so their links are listed directly under ``links`` when the app has them.
+    """
 
     id: uuid.UUID
     name: str
     available_os: list[str]
     #: The platforms that need payment: the desktop ones, when the app is paid.
     paid_os: list[str]
+    #: Direct download links for the free mobile builds, keyed by OS.
+    links: dict[str, str] = Field(default_factory=dict)
     is_paid: bool
     price: Decimal | None = None
     currency: str | None = None
 
     @classmethod
-    def from_app(cls, app) -> "DesktopAppPublic":
+    def from_app(cls, app, links: dict[str, str] | None = None) -> "DesktopAppPublic":
         return cls(
+            links=links or {},
             id=app.id, name=app.name, available_os=sorted(app.platforms or {}),
             paid_os=sorted(
                 os for os in (app.platforms or {}) if app.is_paid and os not in FREE_PLATFORMS

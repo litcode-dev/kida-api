@@ -23,6 +23,9 @@ log = structlog.get_logger()
 
 LINK_TTL_DAYS = 3
 PRESIGN_TTL_SECONDS = 300
+# Mobile links are shown in the public app list, which a client may hold on
+# to for a while, so they outlive the redirect's 5 minutes.
+PUBLIC_LINK_TTL_SECONDS = 3600
 RESEND_COOLDOWN_MINUTES = 15
 
 OS_LABELS = {
@@ -357,7 +360,7 @@ def _installer_key(os: str) -> str:
     return key
 
 
-async def resolve_file_url(file_url: str) -> str:
+async def resolve_file_url(file_url: str, expiry_seconds: int = PRESIGN_TTL_SECONDS) -> str:
     """Turn an app's stored location into something a browser can download."""
     if file_url.startswith(("r2://", "s3://")):
         bucket, _, key = file_url[5:].partition("/")
@@ -366,8 +369,18 @@ async def resolve_file_url(file_url: str) -> str:
             if file_url.startswith("r2://")
             else s3_service.generate_presigned_url
         )
-        return await presign(key, expiry_seconds=PRESIGN_TTL_SECONDS, bucket=bucket)
+        return await presign(key, expiry_seconds=expiry_seconds, bucket=bucket)
     return file_url
+
+
+async def public_mobile_links(app: DesktopApp) -> dict[str, str]:
+    """Direct links for an app's Android and iOS builds, which are always free."""
+    links = {}
+    for os in sorted(FREE_PLATFORMS):
+        file_url = (app.platforms or {}).get(os)
+        if file_url:
+            links[os] = await resolve_file_url(file_url, expiry_seconds=PUBLIC_LINK_TTL_SECONDS)
+    return links
 
 
 async def redeem(db: AsyncSession, token: str) -> str:
