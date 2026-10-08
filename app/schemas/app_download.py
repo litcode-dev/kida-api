@@ -7,7 +7,11 @@ from pydantic import BaseModel, EmailStr, Field, field_validator, model_validato
 
 from app.models.purchase import PaymentProvider
 
-AppOS = Literal["macos", "windows", "linux"]
+AppOS = Literal["macos", "windows", "linux", "android", "ios"]
+
+# Mobile builds are always handed out free, even for a paid app: payment only
+# applies to the desktop platforms.
+FREE_PLATFORMS = frozenset({"android", "ios"})
 AppCurrency = Literal["NGN", "USD"]
 
 # Where an installer may live. Anything else is refused at the admin endpoint
@@ -68,7 +72,9 @@ def _check_pricing(is_paid: bool, price: Decimal | None, currency: str | None) -
 _PLATFORMS_DESCRIPTION = (
     "Installer location per OS, e.g. "
     '`{"macos": "r2://installers/toniq.dmg", "windows": "r2://installers/toniq.exe", '
-    '"linux": "https://cdn.example.com/toniq.AppImage"}`. '
+    '"linux": "https://cdn.example.com/toniq.AppImage", "android": "r2://installers/toniq.apk", '
+    '"ios": "https://apps.apple.com/app/id000000000"}`. Android and iOS are always free, '
+    "even when the app is paid. "
     "r2://<bucket>/<key> and s3://<bucket>/<key> are private objects served through a "
     "short-lived presigned URL; https:// URLs are redirected to as-is."
 )
@@ -132,6 +138,8 @@ class DesktopAppPublic(BaseModel):
     id: uuid.UUID
     name: str
     available_os: list[str]
+    #: The platforms that need payment: the desktop ones, when the app is paid.
+    paid_os: list[str]
     is_paid: bool
     price: Decimal | None = None
     currency: str | None = None
@@ -140,6 +148,9 @@ class DesktopAppPublic(BaseModel):
     def from_app(cls, app) -> "DesktopAppPublic":
         return cls(
             id=app.id, name=app.name, available_os=sorted(app.platforms or {}),
+            paid_os=sorted(
+                os for os in (app.platforms or {}) if app.is_paid and os not in FREE_PLATFORMS
+            ),
             is_paid=app.is_paid, price=app.price, currency=app.currency,
         )
 

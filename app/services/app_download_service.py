@@ -15,7 +15,7 @@ from app.models.app_download_request import (
 )
 from app.models.desktop_app import DesktopApp
 from app.models.purchase import PaymentProvider
-from app.schemas.app_download import DesktopAppCreate, DesktopAppUpdate
+from app.schemas.app_download import FREE_PLATFORMS, DesktopAppCreate, DesktopAppUpdate
 from app.services import payments, s3_service
 from app.services.payments import VerifiedTransaction
 
@@ -25,7 +25,10 @@ LINK_TTL_DAYS = 3
 PRESIGN_TTL_SECONDS = 300
 RESEND_COOLDOWN_MINUTES = 15
 
-OS_LABELS = {"macos": "macOS", "windows": "Windows", "linux": "Linux"}
+OS_LABELS = {
+    "macos": "macOS", "windows": "Windows", "linux": "Linux",
+    "android": "Android", "ios": "iOS",
+}
 DEFAULT_APP_NAME = "Kida"
 
 # Metadata key on a checkout that marks it as an app download, so the shared
@@ -188,9 +191,10 @@ async def request_download(
 ) -> DownloadRequestResult:
     """Start a download request.
 
-    A free app (or the default installer) gets a 3-day link straight away,
-    subject to the per-email cooldown. A paid app gets a pending request and a
-    checkout URL; the link is only issued once the payment webhook confirms it.
+    A free app, an Android or iOS build (always free), or the default installer
+    gets a 3-day link straight away, subject to the per-email cooldown. A paid
+    app's desktop build gets a pending request and a checkout URL; the link is
+    only issued once the payment webhook confirms it.
     """
     if app_name:
         app = await _find_app(db, app_name, os)
@@ -198,7 +202,7 @@ async def request_download(
         app = None
         _installer_key(os)  # refuse now rather than email a link that cannot work
 
-    if app is None or not app.is_paid:
+    if app is None or not app.is_paid or os in FREE_PLATFORMS:
         if await _recently_emailed(db, email):
             return DownloadRequestResult(request=None, app=app)
         req = AppDownloadRequest(

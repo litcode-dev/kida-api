@@ -28,9 +28,9 @@ async def list_apps(db: AsyncSession = Depends(get_db)):
     description=(
         "Public endpoint. Submit an email address, operating system and optionally "
         "an `app_name` published by an admin (e.g. `Toniq` with `os` = `linux`).\n\n"
-        "- **Free app** (or no `app_name`): a download link is emailed straight "
+        "- **Free app, Android or iOS** (or no `app_name`): a download link is emailed straight "
         "away. It expires after 3 days.\n"
-        "- **Paid app**: the response carries `checkout_url`. Once the payment "
+        "- **Paid app on macOS, Windows or Linux**: the response carries `checkout_url`. Once the payment "
         "succeeds a download link, valid for 3 days, is emailed."
     ),
     responses={

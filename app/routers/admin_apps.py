@@ -29,10 +29,11 @@ def _dump(app) -> dict:
     description=(
         "Registers an app users can request by `app_name` at "
         "`POST /app/download-request`.\n\n"
-        "`platforms` maps each OS (`macos`, `windows`, `linux`) to where its "
+        "`platforms` maps each OS (`macos`, `windows`, `linux`, `android`, `ios`) to where its "
         "installer lives: `r2://<bucket>/<key>` or `s3://<bucket>/<key>` for a "
         "private object (served through a 5-minute presigned URL), or a plain "
-        "`https://` URL. One price covers every platform.\n\n"
+        "`https://` URL. One price covers every desktop platform; Android and iOS "
+        "are always free, even for a paid app.\n\n"
         "A paid app needs `price` and `currency` (`NGN` or `USD`); requesting it "
         "returns a checkout URL and the 3-day link is emailed once payment succeeds."
     ),

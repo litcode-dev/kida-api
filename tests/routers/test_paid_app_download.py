@@ -302,3 +302,64 @@ async def test_squad_payment_without_metadata_is_matched_by_reference(
         assert req.status == "fulfilled"
     finally:
         get_settings.cache_clear()
+
+
+MOBILE_PLATFORMS = {
+    "macos": "r2://installers/toniq.dmg",
+    "android": "r2://installers/toniq.apk",
+    "ios": "https://apps.apple.com/app/id123456789",
+}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("os, expected_location", [
+    ("android", None),
+    ("ios", "https://apps.apple.com/app/id123456789"),
+])
+async def test_mobile_builds_of_a_paid_app_are_free(
+    client, db_session, email_task, monkeypatch, os, expected_location
+):
+    await _make_app(db_session, platforms=MOBILE_PLATFORMS)
+    with patch(
+        "app.services.payments.paystack.PaystackGateway.create_checkout",
+        new=AsyncMock(),
+    ) as create_checkout:
+        resp = await client.post(
+            "/api/v1/app/download-request",
+            json={"email": f"{os}@test.com", "os": os, "app_name": "Toniq"},
+        )
+
+    assert resp.status_code == 200, resp.text
+    data = resp.json()["data"]
+    assert data["payment_required"] is False
+    assert "checkout_url" not in data
+    create_checkout.assert_not_called()
+    email_task.delay.assert_called_once()
+
+    req = await db_session.scalar(select(AppDownloadRequest))
+    assert req.status == "fulfilled"
+    assert req.amount is None
+
+    presign = AsyncMock(return_value="https://r2/signed-apk")
+    monkeypatch.setattr(s3_service, "generate_r2_presigned_url", presign)
+    redeem = await client.get(f"/api/v1/app/download/{req.token}", follow_redirects=False)
+    assert redeem.status_code == 302
+    assert redeem.headers["location"] == (expected_location or "https://r2/signed-apk")
+
+
+@pytest.mark.asyncio
+async def test_public_list_marks_only_desktop_platforms_as_paid(client, db_session):
+    await _make_app(db_session, platforms=MOBILE_PLATFORMS)
+    resp = await client.get("/api/v1/app/apps")
+    item = resp.json()["data"][0]
+    assert item["available_os"] == ["android", "ios", "macos"]
+    assert item["paid_os"] == ["macos"]
+
+
+@pytest.mark.asyncio
+async def test_default_installer_has_no_mobile_build(client, email_task):
+    resp = await client.post(
+        "/api/v1/app/download-request", json={"email": "m@test.com", "os": "android"},
+    )
+    assert resp.status_code == 404
+    email_task.delay.assert_not_called()

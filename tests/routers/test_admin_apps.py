@@ -29,6 +29,8 @@ PAID_APP = {
         "macos": "r2://installers/toniq.dmg",
         "windows": "s3://installers/toniq.exe",
         "linux": "https://cdn.example.com/toniq.AppImage",
+        "android": "r2://installers/toniq.apk",
+        "ios": "https://apps.apple.com/app/id123456789",
     },
     "is_paid": True,
     "price": "15000.00",
@@ -126,12 +128,14 @@ async def test_update_merges_platforms(client, db_session):
     assert resp.json()["data"]["platforms"] == {
         "macos": "r2://installers/toniq.dmg",
         "windows": "r2://installers/toniq-2.exe",
+        "android": "r2://installers/toniq.apk",
+        "ios": "https://apps.apple.com/app/id123456789",
     }
 
     # Removing every platform would leave nothing to download.
     empty = await client.patch(
         f"/api/v1/admin/apps/{app_id}",
-        json={"platforms": {"macos": None, "windows": None}},
+        json={"platforms": {"macos": None, "windows": None, "android": None, "ios": None}},
         headers=_auth(admin),
     )
     assert empty.status_code == 422
