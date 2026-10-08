@@ -109,7 +109,8 @@ async def update_app(db: AsyncSession, app_id: uuid.UUID, data: DesktopAppUpdate
     # Validate the merged result, so e.g. flipping is_paid on an app that
     # never had a price is refused rather than saved half-configured.
     merged = {
-        "name": app.name, "platforms": platforms, "is_paid": app.is_paid,
+        "name": app.name, "description": app.description,
+        "platforms": platforms, "is_paid": app.is_paid,
         "price": app.price, "currency": app.currency, "is_active": app.is_active,
         **changes,
     }

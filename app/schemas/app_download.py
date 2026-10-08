@@ -64,6 +64,12 @@ def _validate_platforms(value: dict[str, str]) -> dict[str, str]:
     return {os: _validate_file_url(url) for os, url in value.items()}
 
 
+def _clean_description(value: str | None) -> str | None:
+    if value is None:
+        return None
+    return value.strip() or None
+
+
 def _check_pricing(is_paid: bool, price: Decimal | None, currency: str | None) -> None:
     if is_paid and (price is None or currency is None):
         raise ValueError("price and currency are required for a paid app")
@@ -82,6 +88,7 @@ _PLATFORMS_DESCRIPTION = (
 
 class DesktopAppCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
+    description: str | None = Field(default=None, max_length=5000)
     platforms: dict[AppOS, str] = Field(description=_PLATFORMS_DESCRIPTION)
     is_paid: bool = False
     price: Decimal | None = Field(default=None, gt=0, max_digits=12, decimal_places=2)
@@ -89,6 +96,7 @@ class DesktopAppCreate(BaseModel):
     is_active: bool = True
 
     _platforms = field_validator("platforms")(_validate_platforms)
+    _description = field_validator("description")(_clean_description)
 
     @field_validator("name")
     @classmethod
@@ -115,6 +123,7 @@ class DesktopAppUpdate(BaseModel):
     """
 
     name: str | None = Field(default=None, min_length=1, max_length=120)
+    description: str | None = Field(default=None, max_length=5000)
     platforms: dict[AppOS, str | None] | None = None
     is_paid: bool | None = None
     price: Decimal | None = Field(default=None, gt=0, max_digits=12, decimal_places=2)
@@ -141,6 +150,7 @@ class DesktopAppPublic(BaseModel):
 
     id: uuid.UUID
     name: str
+    description: str | None = None
     available_os: list[str]
     #: The platforms that need payment: the desktop ones, when the app is paid.
     paid_os: list[str]
@@ -154,7 +164,8 @@ class DesktopAppPublic(BaseModel):
     def from_app(cls, app, links: dict[str, str] | None = None) -> "DesktopAppPublic":
         return cls(
             links=links or {},
-            id=app.id, name=app.name, available_os=sorted(app.platforms or {}),
+            id=app.id, name=app.name, description=app.description,
+            available_os=sorted(app.platforms or {}),
             paid_os=sorted(
                 os for os in (app.platforms or {}) if app.is_paid and os not in FREE_PLATFORMS
             ),
@@ -165,6 +176,7 @@ class DesktopAppPublic(BaseModel):
 class DesktopAppAdmin(BaseModel):
     id: uuid.UUID
     name: str
+    description: str | None = None
     platforms: dict[str, str]
     is_paid: bool
     price: Decimal | None = None

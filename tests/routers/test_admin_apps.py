@@ -174,3 +174,34 @@ async def test_delete_app(client, db_session):
     assert resp.status_code == 200
     missing = await client.get(f"/api/v1/admin/apps/{app_id}", headers=_auth(admin))
     assert missing.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_description_is_saved_returned_and_clearable(client, db_session, monkeypatch):
+    from unittest.mock import AsyncMock
+    from app.services import s3_service
+    monkeypatch.setattr(
+        s3_service, "generate_r2_presigned_url", AsyncMock(return_value="https://r2/x")
+    )
+    admin = await _create_user(db_session)
+    body = {**PAID_APP, "description": "  A beat-making studio for producers.  "}
+    created = await client.post("/api/v1/admin/apps", json=body, headers=_auth(admin))
+    assert created.status_code == 201, created.text
+    app_id = created.json()["data"]["id"]
+    assert created.json()["data"]["description"] == "A beat-making studio for producers."
+
+    fetched = await client.get(f"/api/v1/admin/apps/{app_id}", headers=_auth(admin))
+    assert fetched.json()["data"]["description"] == "A beat-making studio for producers."
+
+    public = await client.get("/api/v1/app/apps")
+    assert public.json()["data"][0]["description"] == "A beat-making studio for producers."
+
+    # Other updates leave it alone; null clears it.
+    renamed = await client.patch(
+        f"/api/v1/admin/apps/{app_id}", json={"name": "Toniq 2"}, headers=_auth(admin)
+    )
+    assert renamed.json()["data"]["description"] == "A beat-making studio for producers."
+    cleared = await client.patch(
+        f"/api/v1/admin/apps/{app_id}", json={"description": None}, headers=_auth(admin)
+    )
+    assert cleared.json()["data"]["description"] is None
