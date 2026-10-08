@@ -74,7 +74,9 @@ async def _ensure_unique(
 
 async def create_app(db: AsyncSession, data: DesktopAppCreate) -> DesktopApp:
     await _ensure_unique(db, data.name)
-    app = DesktopApp(**data.model_dump())
+    # New apps go to the end of the list.
+    last = await db.scalar(select(func.max(DesktopApp.position)))
+    app = DesktopApp(**data.model_dump(), position=0 if last is None else last + 1)
     db.add(app)
     await db.commit()
     await db.refresh(app)
@@ -82,7 +84,7 @@ async def create_app(db: AsyncSession, data: DesktopAppCreate) -> DesktopApp:
 
 
 async def list_apps(db: AsyncSession, active_only: bool = False) -> list[DesktopApp]:
-    query = select(DesktopApp).order_by(func.lower(DesktopApp.name))
+    query = select(DesktopApp).order_by(DesktopApp.position, func.lower(DesktopApp.name))
     if active_only:
         query = query.where(DesktopApp.is_active.is_(True))
     return list((await db.scalars(query)).all())
@@ -127,6 +129,22 @@ async def update_app(db: AsyncSession, app_id: uuid.UUID, data: DesktopAppUpdate
     await db.commit()
     await db.refresh(app)
     return app
+
+
+async def reorder_apps(db: AsyncSession, app_ids: list[uuid.UUID]) -> list[DesktopApp]:
+    """Show the given apps first, in this order; the rest follow as they were."""
+    apps = await list_apps(db)
+    by_id = {app.id: app for app in apps}
+    unknown = [str(app_id) for app_id in app_ids if app_id not in by_id]
+    if unknown:
+        raise NotFoundError(f"Unknown app id(s): {', '.join(unknown)}")
+
+    listed = set(app_ids)
+    ordered = [by_id[app_id] for app_id in app_ids] + [a for a in apps if a.id not in listed]
+    for position, app in enumerate(ordered):
+        app.position = position
+    await db.commit()
+    return await list_apps(db)
 
 
 async def delete_app(db: AsyncSession, app_id: uuid.UUID) -> None:

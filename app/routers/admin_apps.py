@@ -7,7 +7,9 @@ from app.database import get_db
 from app.middleware.auth_middleware import require_admin
 from app.middleware.rate_limit import limiter
 from app.models.user import User
-from app.schemas.app_download import DesktopAppAdmin, DesktopAppCreate, DesktopAppUpdate
+from app.schemas.app_download import (
+    DesktopAppAdmin, DesktopAppCreate, DesktopAppOrder, DesktopAppUpdate,
+)
 from app.schemas.common import success
 from app.services import app_download_service
 
@@ -65,6 +67,28 @@ async def list_apps(
 ):
     apps = await app_download_service.list_apps(db, active_only=active_only)
     return success([_dump(a) for a in apps])
+
+
+@router.put(
+    "/order",
+    summary="Reorder published apps",
+    description=(
+        "Send app ids in the order they should be listed, e.g. after a "
+        "drag-and-drop. Apps left out keep their relative order after the ones "
+        "listed. Both the admin list and the public `GET /app/apps` follow this "
+        "order. Returns every app in its new order."
+    ),
+    responses={**_ADMIN_ERRORS, 404: {"description": "An id is not a known app"}},
+)
+@limiter.limit("60/minute")
+async def reorder_apps(
+    request: Request,
+    body: DesktopAppOrder,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_admin),
+):
+    apps = await app_download_service.reorder_apps(db, body.app_ids)
+    return success([_dump(a) for a in apps], "Apps reordered")
 
 
 @router.get(

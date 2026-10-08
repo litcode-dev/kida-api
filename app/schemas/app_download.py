@@ -173,6 +173,23 @@ class DesktopAppPublic(BaseModel):
         )
 
 
+class DesktopAppOrder(BaseModel):
+    app_ids: list[uuid.UUID] = Field(
+        min_length=1,
+        description=(
+            "App ids in the order they should be shown. Apps left out keep their "
+            "relative order after the ones listed."
+        ),
+    )
+
+    @field_validator("app_ids")
+    @classmethod
+    def _no_duplicates(cls, value: list[uuid.UUID]) -> list[uuid.UUID]:
+        if len(set(value)) != len(value):
+            raise ValueError("app_ids must not repeat an id")
+        return value
+
+
 class DesktopAppAdmin(BaseModel):
     id: uuid.UUID
     name: str
@@ -182,6 +199,7 @@ class DesktopAppAdmin(BaseModel):
     price: Decimal | None = None
     currency: str | None = None
     is_active: bool
+    position: int
     created_at: datetime
     updated_at: datetime
 

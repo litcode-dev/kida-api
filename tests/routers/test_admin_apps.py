@@ -205,3 +205,68 @@ async def test_description_is_saved_returned_and_clearable(client, db_session, m
         f"/api/v1/admin/apps/{app_id}", json={"description": None}, headers=_auth(admin)
     )
     assert cleared.json()["data"]["description"] is None
+
+
+async def _create_named(client, admin, name):
+    resp = await client.post(
+        "/api/v1/admin/apps",
+        json={"name": name, "platforms": {"windows": f"r2://installers/{name}.exe"}},
+        headers=_auth(admin),
+    )
+    assert resp.status_code == 201, resp.text
+    return resp.json()["data"]["id"]
+
+
+@pytest.mark.asyncio
+async def test_new_apps_are_appended_and_can_be_reordered(client, db_session):
+    admin = await _create_user(db_session)
+    a = await _create_named(client, admin, "Zeta")
+    b = await _create_named(client, admin, "Alpha")
+    c = await _create_named(client, admin, "Mid")
+
+    # Creation order, not alphabetical.
+    listed = await client.get("/api/v1/admin/apps", headers=_auth(admin))
+    assert [x["id"] for x in listed.json()["data"]] == [a, b, c]
+
+    resp = await client.put(
+        "/api/v1/admin/apps/order", json={"app_ids": [c, a, b]}, headers=_auth(admin)
+    )
+    assert resp.status_code == 200, resp.text
+    assert [x["id"] for x in resp.json()["data"]] == [c, a, b]
+    assert [x["position"] for x in resp.json()["data"]] == [0, 1, 2]
+
+    public = await client.get("/api/v1/app/apps")
+    assert [x["id"] for x in public.json()["data"]] == [c, a, b]
+
+    # A partial list moves those apps to the front; the rest keep their order.
+    partial = await client.put(
+        "/api/v1/admin/apps/order", json={"app_ids": [b]}, headers=_auth(admin)
+    )
+    assert [x["id"] for x in partial.json()["data"]] == [b, c, a]
+
+
+@pytest.mark.asyncio
+async def test_reorder_rejects_unknown_and_duplicate_ids(client, db_session):
+    admin = await _create_user(db_session)
+    a = await _create_named(client, admin, "One")
+
+    unknown = await client.put(
+        "/api/v1/admin/apps/order",
+        json={"app_ids": [a, str(uuid.uuid4())]},
+        headers=_auth(admin),
+    )
+    assert unknown.status_code == 404
+
+    dup = await client.put(
+        "/api/v1/admin/apps/order", json={"app_ids": [a, a]}, headers=_auth(admin)
+    )
+    assert dup.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_non_admin_cannot_reorder(client, db_session):
+    user = await _create_user(db_session, role=UserRole.user)
+    resp = await client.put(
+        "/api/v1/admin/apps/order", json={"app_ids": [str(uuid.uuid4())]}, headers=_auth(user)
+    )
+    assert resp.status_code == 403
