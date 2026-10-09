@@ -53,6 +53,27 @@ def _verify_oauth_state(request: Request, submitted: str | None) -> None:
         )
 
 
+async def _issue_tokens(db: AsyncSession, redis: Redis, user) -> dict:
+    """A fresh access/refresh pair for ``user``, with what the app shows of them.
+
+    ``user_id`` is the id the app passes to ``OneSignal.login`` so pushes can
+    be addressed to the user rather than to one device.
+    """
+    access_token = auth_service.create_access_token(str(user.id), user.role.value)
+    refresh_token = auth_service.create_refresh_token()
+    subscribed = await auth_service.is_newsletter_subscriber(db, user.email)
+    await auth_service.store_refresh_token(redis, refresh_token, str(user.id))
+    return TokenResponse(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        user_id=user.id,
+        full_name=user.full_name,
+        role=user.role,
+        avatar_url=user.avatar_url,
+        subscribed_to_newsletter=subscribed,
+    ).model_dump(mode="json")
+
+
 @router.post("/register")
 @limiter.limit("10/minute")
 async def register(
@@ -85,21 +106,7 @@ async def verify_email(
     redis: Redis = Depends(get_redis),
 ):
     user = await auth_service.verify_email(db, redis, body.email, body.code)
-    access_token = auth_service.create_access_token(str(user.id), user.role.value)
-    refresh_token = auth_service.create_refresh_token()
-    subscribed = await auth_service.is_newsletter_subscriber(db, user.email)
-    await auth_service.store_refresh_token(redis, refresh_token, str(user.id))
-    return success(
-        TokenResponse(
-            access_token=access_token,
-            refresh_token=refresh_token,
-            full_name=user.full_name,
-            role=user.role,
-            avatar_url=user.avatar_url,
-            subscribed_to_newsletter=subscribed,
-        ).model_dump(),
-        "Email verified",
-    )
+    return success(await _issue_tokens(db, redis, user), "Email verified")
 
 
 @router.post("/resend-verification")
@@ -133,21 +140,7 @@ async def login(
         # code (subject to the resend cooldown) before surfacing the 403.
         await auth_service.resend_verification_on_login(db, redis, body.email)
         raise
-    access_token = auth_service.create_access_token(str(user.id), user.role.value)
-    refresh_token = auth_service.create_refresh_token()
-    subscribed = await auth_service.is_newsletter_subscriber(db, user.email)
-    await auth_service.store_refresh_token(redis, refresh_token, str(user.id))
-    return success(
-        TokenResponse(
-            access_token=access_token,
-            refresh_token=refresh_token,
-            full_name=user.full_name,
-            role=user.role,
-            avatar_url=user.avatar_url,
-            subscribed_to_newsletter=subscribed,
-        ).model_dump(),
-        "Login successful",
-    )
+    return success(await _issue_tokens(db, redis, user), "Login successful")
 
 
 @router.post("/refresh")
@@ -162,13 +155,7 @@ async def refresh(
         from app.exceptions import UnauthorizedError
         raise UnauthorizedError("Account suspended")
     await auth_service.revoke_refresh_token(redis, body.refresh_token)
-    new_refresh = auth_service.create_refresh_token()
-    await auth_service.store_refresh_token(redis, new_refresh, user_id)
-    access_token = auth_service.create_access_token(user_id, user.role.value)
-    return success(
-        TokenResponse(access_token=access_token, refresh_token=new_refresh).model_dump(),
-        "Token refreshed",
-    )
+    return success(await _issue_tokens(db, redis, user), "Token refreshed")
 
 
 @router.post("/logout")
@@ -328,21 +315,7 @@ async def google_oauth_mobile(
         provider_id=user_info["sub"],
         avatar_url=user_info.get("picture"),
     )
-    access_token = auth_service.create_access_token(str(user.id), user.role.value)
-    refresh_token = auth_service.create_refresh_token()
-    subscribed = await auth_service.is_newsletter_subscriber(db, user.email)
-    await auth_service.store_refresh_token(redis, refresh_token, str(user.id))
-    return success(
-        TokenResponse(
-            access_token=access_token,
-            refresh_token=refresh_token,
-            full_name=user.full_name,
-            role=user.role,
-            avatar_url=user.avatar_url,
-            subscribed_to_newsletter=subscribed,
-        ).model_dump(),
-        "OAuth login successful",
-    )
+    return success(await _issue_tokens(db, redis, user), "OAuth login successful")
 
 
 @router.post("/oauth/apple/token")
@@ -369,21 +342,7 @@ async def apple_oauth_mobile(
         provider="apple",
         provider_id=provider_id,
     )
-    access_token = auth_service.create_access_token(str(user.id), user.role.value)
-    refresh_token = auth_service.create_refresh_token()
-    subscribed = await auth_service.is_newsletter_subscriber(db, user.email)
-    await auth_service.store_refresh_token(redis, refresh_token, str(user.id))
-    return success(
-        TokenResponse(
-            access_token=access_token,
-            refresh_token=refresh_token,
-            full_name=user.full_name,
-            role=user.role,
-            avatar_url=user.avatar_url,
-            subscribed_to_newsletter=subscribed,
-        ).model_dump(),
-        "OAuth login successful",
-    )
+    return success(await _issue_tokens(db, redis, user), "OAuth login successful")
 
 
 @router.post("/oauth/google/callback")
@@ -410,18 +369,4 @@ async def google_oauth_callback(
         provider_id=user_info["sub"],
         avatar_url=user_info.get("picture"),
     )
-    access_token = auth_service.create_access_token(str(user.id), user.role.value)
-    refresh_token = auth_service.create_refresh_token()
-    subscribed = await auth_service.is_newsletter_subscriber(db, user.email)
-    await auth_service.store_refresh_token(redis, refresh_token, str(user.id))
-    return success(
-        TokenResponse(
-            access_token=access_token,
-            refresh_token=refresh_token,
-            full_name=user.full_name,
-            role=user.role,
-            avatar_url=user.avatar_url,
-            subscribed_to_newsletter=subscribed,
-        ).model_dump(),
-        "OAuth login successful",
-    )
+    return success(await _issue_tokens(db, redis, user), "OAuth login successful")

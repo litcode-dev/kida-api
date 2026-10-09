@@ -61,6 +61,8 @@ class TokenResponse(BaseModel):
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
+    #: The user's id; the app passes it to OneSignal.login as the external id.
+    user_id: uuid.UUID
     full_name: str
     role: UserRole
     avatar_url: str | None = None
