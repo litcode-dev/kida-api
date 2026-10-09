@@ -44,8 +44,7 @@ CHECKOUT_METADATA_KEY = "app_download_request_id"
 _PROVIDER_PREFERENCE = {
     "NGN": (PaymentProvider.paystack, PaymentProvider.flutterwave,
             PaymentProvider.squad, PaymentProvider.stripe),
-    "USD": (PaymentProvider.stripe, PaymentProvider.flutterwave, PaymentProvider.paystack,
-            PaymentProvider.squad),
+    "USD": (PaymentProvider.flutterwave, PaymentProvider.stripe, PaymentProvider.paystack),
 }
 
 

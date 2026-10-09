@@ -305,19 +305,21 @@ async def test_squad_payment_without_metadata_is_matched_by_reference(
 
 
 @pytest.mark.asyncio
-async def test_usd_app_is_charged_in_usd_through_squad(
+async def test_usd_app_is_charged_in_usd_through_flutterwave(
     client, db_session, email_task, monkeypatch
 ):
-    """An app the admin priced in USD is charged in USD, and Squad is picked
-    for it when it is the only gateway configured."""
+    """An app the admin priced in USD is charged in USD through Flutterwave,
+    even when other gateways are configured too."""
     get_settings.cache_clear()
+    monkeypatch.setenv("FLUTTERWAVE_SECRET_KEY", "flw-secret")
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk-secret")
     monkeypatch.setenv("SQUAD_SECRET_KEY", "squad-secret")
     try:
-        await _make_app(db_session, price=Decimal("10.00"), currency="USD")
+        await _make_app(db_session, price=Decimal("20.00"), currency="USD")
         with patch(
-            "app.services.payments.squad.SquadGateway.create_checkout",
+            "app.services.payments.flutterwave.FlutterwaveGateway.create_checkout",
             new=AsyncMock(return_value=CheckoutSession(
-                checkout_url="https://checkout.squadco.com/usd", reference="squad-usd-1",
+                checkout_url="https://checkout.flutterwave.com/usd", reference="flw-usd-1",
             )),
         ) as create_checkout:
             resp = await client.post(
@@ -326,12 +328,12 @@ async def test_usd_app_is_charged_in_usd_through_squad(
             )
         assert resp.status_code == 200, resp.text
         data = resp.json()["data"]
-        assert data["payment_provider"] == "squad"
+        assert data["payment_provider"] == "flutterwave"
         assert data["currency"] == "USD"
-        assert data["amount"] == "10.00"
+        assert data["amount"] == "20.00"
         kwargs = create_checkout.call_args.kwargs
         assert kwargs["currency"] == "USD"
-        assert kwargs["amount"] == Decimal("10.00")
+        assert kwargs["amount"] == Decimal("20.00")
     finally:
         get_settings.cache_clear()
 
