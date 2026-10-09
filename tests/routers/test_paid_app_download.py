@@ -304,6 +304,38 @@ async def test_squad_payment_without_metadata_is_matched_by_reference(
         get_settings.cache_clear()
 
 
+@pytest.mark.asyncio
+async def test_usd_app_is_charged_in_usd_through_squad(
+    client, db_session, email_task, monkeypatch
+):
+    """An app the admin priced in USD is charged in USD, and Squad is picked
+    for it when it is the only gateway configured."""
+    get_settings.cache_clear()
+    monkeypatch.setenv("SQUAD_SECRET_KEY", "squad-secret")
+    try:
+        await _make_app(db_session, price=Decimal("10.00"), currency="USD")
+        with patch(
+            "app.services.payments.squad.SquadGateway.create_checkout",
+            new=AsyncMock(return_value=CheckoutSession(
+                checkout_url="https://checkout.squadco.com/usd", reference="squad-usd-1",
+            )),
+        ) as create_checkout:
+            resp = await client.post(
+                "/api/v1/app/download-request",
+                json={"email": "usd@test.com", "os": "macos", "app_name": "Toniq"},
+            )
+        assert resp.status_code == 200, resp.text
+        data = resp.json()["data"]
+        assert data["payment_provider"] == "squad"
+        assert data["currency"] == "USD"
+        assert data["amount"] == "10.00"
+        kwargs = create_checkout.call_args.kwargs
+        assert kwargs["currency"] == "USD"
+        assert kwargs["amount"] == Decimal("10.00")
+    finally:
+        get_settings.cache_clear()
+
+
 MOBILE_PLATFORMS = {
     "macos": "r2://installers/toniq.dmg",
     "android": "r2://installers/toniq.apk",
