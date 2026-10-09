@@ -15,7 +15,13 @@ router = APIRouter(prefix="/push", tags=["push-notifications"])
 # ── Schemas ───────────────────────────────────────────────────────────────────
 
 class RegisterDeviceRequest(BaseModel):
-    player_id: str = Field(..., description="OneSignal player/device ID from the mobile app")
+    player_id: str = Field(
+        ...,
+        description=(
+            "OneSignal push subscription ID (the v5 SDK's "
+            "`OneSignal.User.pushSubscription.id`; older SDKs call it the player ID)"
+        ),
+    )
 
 
 class SendToUserRequest(BaseModel):
@@ -46,7 +52,11 @@ class SendToSegmentRequest(BaseModel):
 @router.post(
     "/register-device",
     summary="Register device for push notifications",
-    description="Saves the OneSignal player ID for the authenticated user so they can receive push notifications.",
+    description=(
+        "Pushes are addressed to the user's external ID, which the app sets with "
+        "`OneSignal.login(<user id>)` after sign-in. The ID saved here is only a "
+        "fallback for a user OneSignal does not know by external ID yet."
+    ),
 )
 async def register_device(
     body: RegisterDeviceRequest,
@@ -79,7 +89,7 @@ async def unregister_device(
     summary="Send push notification to a specific user",
     description="Admin only. Sends a push notification to a single user by their user ID.",
     responses={
-        404: {"description": "User not found or has no registered device"},
+        404: {"description": "User not found, or OneSignal has no device for them"},
         403: {"description": "Admin role required"},
     },
 )
@@ -92,18 +102,19 @@ async def send_to_user(
     user = await db.get(User, _uuid.UUID(body.user_id))
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    if not user.onesignal_player_id:
-        raise HTTPException(status_code=404, detail="User has no registered device")
 
-    result = await onesignal_service.send_notification(
-        player_id=user.onesignal_player_id,
+    result = await onesignal_service.send_to_user(
+        str(user.id),
         title=body.title,
         message=body.message,
         data=body.data,
         image_url=body.image_url,
+        subscription_id=user.onesignal_player_id,
     )
+    if result["unreachable"]:
+        raise HTTPException(status_code=404, detail="User has no device subscribed to push")
     return success(
-        data={"onesignal_response": result["body"]},
+        data={"onesignal_response": [r["body"] for r in result["responses"]]},
         message="Notification sent",
     )
 
@@ -156,7 +167,7 @@ async def send_to_segment(
 @router.post(
     "/send/users",
     summary="Send push notification to multiple users",
-    description="Admin only. Sends to a list of user IDs. Skips users without a registered device.",
+    description="Admin only. Sends to a list of user IDs. Skips users OneSignal has no device for.",
     responses={403: {"description": "Admin role required"}},
 )
 async def send_to_users(
@@ -173,25 +184,30 @@ async def send_to_users(
         except ValueError:
             pass
 
-    users = await db.scalars(
-        select(User).where(
-            User.id.in_(valid_ids),
-            User.onesignal_player_id.is_not(None),
-        )
-    )
-    player_ids = [u.onesignal_player_id for u in users.all()]
+    users = (await db.execute(
+        select(User.id, User.onesignal_player_id).where(User.id.in_(valid_ids))
+    )).all()
+    if not users:
+        raise HTTPException(status_code=404, detail="None of the specified users exist")
 
-    if not player_ids:
-        raise HTTPException(status_code=404, detail="None of the specified users have registered devices")
-
-    result = await onesignal_service.send_to_users(
-        player_ids=player_ids,
+    result = await onesignal_service.send_to_external_ids(
+        [str(uid) for uid, _ in users],
         title=body.title,
         message=body.message,
         data=body.data,
         image_url=body.image_url,
+        fallback_subscription_ids={str(uid): sub for uid, sub in users if sub},
     )
+    recipients = len(users) - len(result["unreachable"])
+    if not recipients:
+        raise HTTPException(
+            status_code=404, detail="None of the specified users have a device subscribed to push"
+        )
     return success(
-        data={"recipients": len(player_ids), "onesignal_response": result["body"]},
-        message=f"Notification sent to {len(player_ids)} device(s)",
+        data={
+            "recipients": recipients,
+            "unreachable_user_ids": result["unreachable"],
+            "onesignal_response": [r["body"] for r in result["responses"]],
+        },
+        message=f"Notification sent to {recipients} user(s)",
     )

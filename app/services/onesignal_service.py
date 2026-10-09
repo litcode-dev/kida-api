@@ -68,46 +68,127 @@ async def _post(payload: dict) -> dict:
     return {"status_code": resp.status_code, "body": body}
 
 
-async def send_notification(
-    player_id: str,
-    title: str,
-    message: str,
-    data: dict | None = None,
-    image_url: str | None = None,
+def _content(
+    title: str, message: str, data: dict | None, image_url: str | None
 ) -> dict:
-    """Send a push notification to a single device."""
-    payload = {
-        "app_id": _app_id(),
-        "include_player_ids": [player_id],
+    content = {
         "headings": {"en": title},
         "contents": {"en": message},
         "data": data or {},
     }
     if image_url:
-        payload["big_picture"] = image_url
-        payload["ios_attachments"] = {"image": image_url}
-    return await _post(payload)
+        content["big_picture"] = image_url
+        content["ios_attachments"] = {"image": image_url}
+    return content
 
 
-async def send_to_users(
-    player_ids: list[str],
+# How many ids go in one request; OneSignal caps how many a single
+# notification may name, so a long list is sent in batches.
+SEND_BATCH = 2000
+
+
+async def _post_targeted(target: dict, content: dict) -> dict:
+    payload = {"app_id": _app_id(), "target_channel": "push", **target, **content}
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.post(
+            f"{ONESIGNAL_BASE_URL}/notifications", json=payload, headers=_key_headers()
+        )
+    try:
+        body = resp.json()
+    except Exception:
+        body = {}
+    if resp.status_code not in (200, 201):
+        log.error("onesignal.failed", status=resp.status_code, body=body)
+    return {"status_code": resp.status_code, "body": body}
+
+
+def _unreached(sent: list[str], result: dict) -> list[str]:
+    """Which of ``sent`` OneSignal could not deliver to.
+
+    It answers 200 either way: a partial miss names the unknown ids under
+    ``errors.invalid_aliases`` (or ``errors.invalid_player_ids`` for
+    subscription ids), and a total miss comes back with an empty ``id`` and
+    a list of errors such as "All included players are not subscribed".
+    """
+    body = result["body"] if isinstance(result["body"], dict) else {}
+    if result["status_code"] not in (200, 201) or not body.get("id"):
+        return list(sent)
+    errors = body.get("errors")
+    if not isinstance(errors, dict):
+        return []
+    invalid = set()
+    aliases = errors.get("invalid_aliases")
+    if isinstance(aliases, dict):
+        invalid.update(aliases.get("external_id") or [])
+    invalid.update(errors.get("invalid_player_ids") or [])
+    return [i for i in sent if i in invalid]
+
+
+async def send_to_external_ids(
+    external_ids: list[str],
     title: str,
     message: str,
     data: dict | None = None,
     image_url: str | None = None,
+    fallback_subscription_ids: dict[str, str] | None = None,
 ) -> dict:
-    """Send to a specific list of player IDs."""
-    payload = {
-        "app_id": _app_id(),
-        "include_player_ids": player_ids,
-        "headings": {"en": title},
-        "contents": {"en": message},
-        "data": data or {},
+    """Push to users by the ``external_id`` the app sets with ``OneSignal.login``.
+
+    One external id reaches every device the user is signed in on. For a user
+    OneSignal does not know by external id yet (an app build that predates the
+    login call), ``fallback_subscription_ids`` maps their external id to the
+    device id they registered at /push/register-device, and that one device
+    is tried instead.
+
+    Returns the OneSignal responses, how many users were reached each way, and
+    the external ids that could not be reached at all.
+    """
+    content = _content(title, message, data, image_url)
+    fallback = fallback_subscription_ids or {}
+    responses = []
+
+    unknown: list[str] = []
+    for i in range(0, len(external_ids), SEND_BATCH):
+        batch = external_ids[i:i + SEND_BATCH]
+        result = await _post_targeted({"include_aliases": {"external_id": batch}}, content)
+        responses.append(result)
+        unknown.extend(_unreached(batch, result))
+
+    retry = {uid: fallback[uid] for uid in unknown if fallback.get(uid)}
+    unreachable = [uid for uid in unknown if uid not in retry]
+    fallback_missed = 0
+    by_subscription = list(retry.items())
+    for i in range(0, len(by_subscription), SEND_BATCH):
+        batch = by_subscription[i:i + SEND_BATCH]
+        sub_ids = [sub for _, sub in batch]
+        result = await _post_targeted({"include_subscription_ids": sub_ids}, content)
+        responses.append(result)
+        missed = set(_unreached(sub_ids, result))
+        missed_users = [uid for uid, sub in batch if sub in missed]
+        unreachable.extend(missed_users)
+        fallback_missed += len(missed_users)
+
+    return {
+        "responses": responses,
+        "by_external_id": len(external_ids) - len(unknown),
+        "by_subscription_id": len(retry) - fallback_missed,
+        "unreachable": unreachable,
     }
-    if image_url:
-        payload["big_picture"] = image_url
-        payload["ios_attachments"] = {"image": image_url}
-    return await _post(payload)
+
+
+async def send_to_user(
+    user_id: str,
+    title: str,
+    message: str,
+    data: dict | None = None,
+    image_url: str | None = None,
+    subscription_id: str | None = None,
+) -> dict:
+    """Push to one user's devices; ``subscription_id`` is the fallback device."""
+    return await send_to_external_ids(
+        [user_id], title, message, data=data, image_url=image_url,
+        fallback_subscription_ids={user_id: subscription_id} if subscription_id else None,
+    )
 
 
 async def send_to_all(
@@ -218,19 +299,29 @@ async def delete_subscription(subscription_id: str) -> bool:
 
 # ── Transactional helpers ─────────────────────────────────────────────────────
 
-async def send_purchase_confirmation_notification(player_id: str, loop_title: str) -> dict:
-    return await send_notification(
-        player_id=player_id,
+async def send_purchase_confirmation_notification(
+    user_id: str, loop_title: str, subscription_id: str | None = None
+) -> dict:
+    return await send_to_user(
+        user_id,
         title="Purchase Successful!",
         message=f'You now own "{loop_title}". Download it anytime.',
         data={"type": "purchase_confirmation"},
+        subscription_id=subscription_id,
     )
 
 
-async def send_new_loop_notification(player_id: str, genre: str, loop_title: str, loop_id: str) -> dict:
-    return await send_notification(
-        player_id=player_id,
+async def send_new_loop_notification(
+    user_ids: list[str],
+    genre: str,
+    loop_title: str,
+    loop_id: str,
+    fallback_subscription_ids: dict[str, str] | None = None,
+) -> dict:
+    return await send_to_external_ids(
+        user_ids,
         title=f"New {genre} Loop!",
         message=f'"{loop_title}" just dropped. Check it out.',
         data={"type": "new_loop", "loop_id": loop_id},
+        fallback_subscription_ids=fallback_subscription_ids,
     )
