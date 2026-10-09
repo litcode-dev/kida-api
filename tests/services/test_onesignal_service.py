@@ -3,7 +3,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.services import onesignal_service
-from app.services.onesignal_service import send_notification
+from app.services.onesignal_service import send_to_external_ids, send_to_user
 
 
 def _mock_client(status_code: int, body: dict | None = None):
@@ -23,50 +23,126 @@ def _mock_client(status_code: int, body: dict | None = None):
     return client
 
 
+def _mock_client_seq(*responses):
+    """Like _mock_client, but post() answers each call with the next response."""
+    client = _mock_client(200)
+    replies = []
+    for status_code, body in responses:
+        reply = MagicMock()
+        reply.status_code = status_code
+        reply.json = MagicMock(return_value=body)
+        replies.append(reply)
+    client.post = AsyncMock(side_effect=replies)
+    return client
+
+
 @pytest.mark.asyncio
-async def test_send_notification_returns_status_and_body_on_success():
-    client = _mock_client(200, {"id": "notif-1", "recipients": 1})
+async def test_send_to_user_targets_the_external_id():
+    client = _mock_client(200, {"id": "notif-1"})
 
     with patch("app.services.onesignal_service.httpx.AsyncClient", return_value=client):
-        result = await send_notification("player-1", "Title", "Body")
+        result = await send_to_user("user-1", "Title", "Body", data={"k": "v"})
 
-    assert result == {"status_code": 200, "body": {"id": "notif-1", "recipients": 1}}
+    call = client.post.call_args
+    assert call.args[0] == "https://api.onesignal.com/notifications"
+    assert call.kwargs["headers"]["Authorization"].startswith("Key ")
+    payload = call.kwargs["json"]
+    assert payload["include_aliases"] == {"external_id": ["user-1"]}
+    assert payload["target_channel"] == "push"
+    assert "include_player_ids" not in payload
+    assert payload["headings"] == {"en": "Title"}
+    assert payload["contents"] == {"en": "Body"}
+    assert payload["data"] == {"k": "v"}
+    assert result["unreachable"] == []
+    assert result["by_external_id"] == 1
+    assert result["responses"] == [{"status_code": 200, "body": {"id": "notif-1"}}]
 
 
 @pytest.mark.asyncio
-async def test_send_notification_reports_the_error_status():
-    client = _mock_client(400, {"errors": ["Invalid player id"]})
+async def test_unknown_external_id_falls_back_to_the_registered_device():
+    client = _mock_client_seq(
+        (200, {"id": "", "errors": ["All included players are not subscribed"]}),
+        (200, {"id": "notif-2"}),
+    )
 
     with patch("app.services.onesignal_service.httpx.AsyncClient", return_value=client):
-        result = await send_notification("player-1", "Title", "Body")
+        result = await send_to_user("user-1", "Title", "Body", subscription_id="sub-1")
 
-    assert result["status_code"] == 400
-    assert result["body"] == {"errors": ["Invalid player id"]}
+    second = client.post.call_args_list[1].kwargs["json"]
+    assert second["include_subscription_ids"] == ["sub-1"]
+    assert result["unreachable"] == []
+    assert result["by_external_id"] == 0
+    assert result["by_subscription_id"] == 1
 
 
 @pytest.mark.asyncio
-async def test_send_notification_tolerates_a_non_json_body():
+async def test_unknown_external_id_without_a_device_is_unreachable():
+    client = _mock_client(200, {"id": "", "errors": ["All included players are not subscribed"]})
+
+    with patch("app.services.onesignal_service.httpx.AsyncClient", return_value=client):
+        result = await send_to_user("user-1", "Title", "Body")
+
+    assert client.post.call_count == 1
+    assert result["unreachable"] == ["user-1"]
+
+
+@pytest.mark.asyncio
+async def test_partial_miss_only_retries_the_unknown_users():
+    client = _mock_client_seq(
+        (200, {"id": "notif-1", "errors": {"invalid_aliases": {"external_id": ["u2", "u3"]}}}),
+        (200, {"id": "notif-2"}),
+    )
+
+    with patch("app.services.onesignal_service.httpx.AsyncClient", return_value=client):
+        result = await send_to_external_ids(
+            ["u1", "u2", "u3"], "Title", "Body",
+            fallback_subscription_ids={"u1": "s1", "u2": "s2"},
+        )
+
+    second = client.post.call_args_list[1].kwargs["json"]
+    assert second["include_subscription_ids"] == ["s2"]
+    assert result["by_external_id"] == 1
+    assert result["by_subscription_id"] == 1
+    assert result["unreachable"] == ["u3"]
+
+
+@pytest.mark.asyncio
+async def test_a_failed_fallback_leaves_the_user_unreachable():
+    client = _mock_client_seq(
+        (200, {"id": "", "errors": ["All included players are not subscribed"]}),
+        (400, {"errors": ["Invalid subscription id"]}),
+    )
+
+    with patch("app.services.onesignal_service.httpx.AsyncClient", return_value=client):
+        result = await send_to_user("user-1", "Title", "Body", subscription_id="sub-1")
+
+    assert result["by_subscription_id"] == 0
+    assert result["unreachable"] == ["user-1"]
+
+
+@pytest.mark.asyncio
+async def test_send_tolerates_a_non_json_body():
     client = _mock_client(502)
     client.post.return_value.json = MagicMock(side_effect=ValueError("no json"))
 
     with patch("app.services.onesignal_service.httpx.AsyncClient", return_value=client):
-        result = await send_notification("player-1", "Title", "Body")
+        result = await send_to_user("user-1", "Title", "Body")
 
-    assert result == {"status_code": 502, "body": {}}
+    assert result["responses"] == [{"status_code": 502, "body": {}}]
+    assert result["unreachable"] == ["user-1"]
 
 
 @pytest.mark.asyncio
-async def test_send_notification_posts_the_expected_payload():
-    client = _mock_client(200)
+async def test_large_audiences_are_sent_in_batches(monkeypatch):
+    monkeypatch.setattr(onesignal_service, "SEND_BATCH", 2)
+    client = _mock_client_seq((200, {"id": "a"}), (200, {"id": "b"}))
 
     with patch("app.services.onesignal_service.httpx.AsyncClient", return_value=client):
-        await send_notification("player-1", "Title", "Body", data={"k": "v"})
+        result = await send_to_external_ids(["u1", "u2", "u3"], "Title", "Body")
 
-    payload = client.post.call_args.kwargs["json"]
-    assert payload["include_player_ids"] == ["player-1"]
-    assert payload["headings"] == {"en": "Title"}
-    assert payload["contents"] == {"en": "Body"}
-    assert payload["data"] == {"k": "v"}
+    batches = [c.kwargs["json"]["include_aliases"]["external_id"] for c in client.post.call_args_list]
+    assert batches == [["u1", "u2"], ["u3"]]
+    assert result["by_external_id"] == 3
 
 
 def _settings(app_id: str, api_key: str):

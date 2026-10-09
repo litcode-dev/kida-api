@@ -384,11 +384,10 @@ def send_purchase_confirmation(user_id: str, purchase_id: str):
             if not product:
                 return
 
-            # Push notification (OneSignal)
-            if user.onesignal_player_id:
-                await send_purchase_confirmation_notification(
-                    user.onesignal_player_id, product.title
-                )
+            # Push notification (OneSignal), to every device the user is signed in on
+            await send_purchase_confirmation_notification(
+                str(user.id), product.title, subscription_id=user.onesignal_player_id
+            )
 
             # Email
             _amount = f"{purchase.amount_paid:.2f}"
@@ -472,16 +471,14 @@ def send_new_loop_notification(loop_id: str):
             loop = await db.get(Loop, uuid.UUID(loop_id))
             if not loop:
                 return
-            users = await db.scalars(
-                select(User).where(User.onesignal_player_id.is_not(None))
+            users = (await db.execute(select(User.id, User.onesignal_player_id))).all()
+            await _notify(
+                [str(uid) for uid, _ in users],
+                loop.genre.value,
+                loop.title,
+                loop_id,
+                fallback_subscription_ids={str(uid): sub for uid, sub in users if sub},
             )
-            for user in users.all():
-                await _notify(
-                    user.onesignal_player_id,
-                    loop.genre.value,
-                    loop.title,
-                    loop_id,
-                )
 
     asyncio.run(_run())
 
