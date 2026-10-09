@@ -1,5 +1,6 @@
-"""Squad (GTCO). Kobo on the wire like Paystack, and a webhook signed with
-HMAC-SHA512 of the raw body, sent uppercase in x-squad-encrypted-body.
+"""Squad (GTCO). NGN or USD, in subunits (kobo or cents) on the wire like
+Paystack, and a webhook signed with HMAC-SHA512 of the raw body, sent
+uppercase in x-squad-encrypted-body.
 """
 from __future__ import annotations
 

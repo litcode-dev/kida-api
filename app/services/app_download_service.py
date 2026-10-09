@@ -39,11 +39,13 @@ DEFAULT_APP_NAME = "Kida"
 CHECKOUT_METADATA_KEY = "app_download_request_id"
 
 # Which gateway to use for a currency when the caller does not name one: the
-# first of these this deployment has credentials for.
+# first of these this deployment has credentials for. The admin picks an app's
+# currency, and the buyer is always charged in it, whichever gateway is used.
 _PROVIDER_PREFERENCE = {
     "NGN": (PaymentProvider.paystack, PaymentProvider.flutterwave,
             PaymentProvider.squad, PaymentProvider.stripe),
-    "USD": (PaymentProvider.stripe, PaymentProvider.flutterwave, PaymentProvider.paystack),
+    "USD": (PaymentProvider.stripe, PaymentProvider.flutterwave, PaymentProvider.paystack,
+            PaymentProvider.squad),
 }
 
 
