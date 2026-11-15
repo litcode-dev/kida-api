@@ -182,3 +182,27 @@ async def test_only_admins_can_arrange(client, db_session):
 
     assert arrange.status_code == 403
     assert unarrange.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_users_see_the_arrangement_without_asking_for_it(client, db_session):
+    admin = await _user(db_session)
+    listener = await _user(db_session, UserRole.user)
+    a, b, c = await _loops(db_session, admin, "A", "B", "C")
+    await _arrange(client, admin, [a, c])
+
+    resp = await client.get("/api/v1/loops", headers=_auth(listener))
+
+    assert resp.status_code == 200
+    assert [i["title"] for i in resp.json()["data"]["items"]] == ["A", "C", "B"]
+
+
+@pytest.mark.asyncio
+async def test_the_default_listing_is_newest_first_until_anything_is_arranged(client, db_session):
+    admin = await _user(db_session)
+    listener = await _user(db_session, UserRole.user)
+    await _loops(db_session, admin, "A", "B", "C")
+
+    resp = await client.get("/api/v1/loops", headers=_auth(listener))
+
+    assert [i["title"] for i in resp.json()["data"]["items"]] == ["C", "B", "A"]
