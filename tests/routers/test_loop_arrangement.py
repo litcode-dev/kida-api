@@ -150,12 +150,36 @@ async def test_custom_order_pages_without_overlap(client, db_session):
 
 
 @pytest.mark.asyncio
-async def test_other_sorts_ignore_the_arrangement(client, db_session):
+async def test_users_newest_follows_the_arrangement(client, db_session):
+    """The app asks for sort=newest; users should still see the arrangement."""
+    admin = await _user(db_session)
+    a, b, c, d = await _loops(db_session, admin, "A", "B", "C", "D")
+    await _arrange(client, admin, [a, b])
+
+    assert await _titles(client, admin, sort="newest") == ["A", "B", "D", "C"]
+
+
+@pytest.mark.asyncio
+async def test_the_admin_listing_keeps_newest_chronological(client, db_session):
     admin = await _user(db_session)
     a, b, c = await _loops(db_session, admin, "A", "B", "C")
     await _arrange(client, admin, [a, b, c])
 
-    assert await _titles(client, admin, sort="newest") == ["C", "B", "A"]
+    assert await _titles(
+        client, admin, path="/api/v1/admin/loops", sort="newest"
+    ) == ["C", "B", "A"]
+
+
+@pytest.mark.asyncio
+async def test_count_sorts_ignore_the_arrangement(client, db_session):
+    admin = await _user(db_session)
+    a, b, c = await _loops(db_session, admin, "A", "B", "C")
+    played = await db_session.get(Loop, uuid.UUID(c))
+    played.play_count = 5
+    await db_session.commit()
+    await _arrange(client, admin, [a, b, c])
+
+    assert (await _titles(client, admin, sort="most_played"))[0] == "C"
 
 
 @pytest.mark.asyncio

@@ -71,7 +71,13 @@ async def list_loops(
     ),
     # The catalogue users browse follows the admins' arrangement unless the
     # client asks otherwise. With nothing arranged, `custom` is newest first.
-    sort: str = Query("custom", description=LOOP_SORT_DESCRIPTION),
+    sort: str = Query(
+        "custom",
+        description=(
+            LOOP_SORT_DESCRIPTION + " Here `newest` follows the arrangement too: "
+            "arranged loops first, then the rest newest first."
+        ),
+    ),
     page: int = 1,
     page_size: int = 20,
     db: AsyncSession = Depends(get_db),
@@ -84,7 +90,12 @@ async def list_loops(
         key=key, time_signature=time_signature, tempo_feel=tempo_feel,
         is_free=is_free,
         tags=[t.strip() for t in tags.split(",") if t.strip()] if tags else None,
-        sort=sort, page=page, page_size=page_size,
+        # The app asks for `newest`, and the arrangement is what admins want
+        # users to see, so for users `newest` means arranged-then-newest —
+        # identical to plain newest until anything is arranged. The admin
+        # listing keeps `newest` strictly chronological for finding uploads.
+        sort="custom" if sort == "newest" else sort,
+        page=page, page_size=page_size,
     )
     loops, total = await loop_service.list_loops(db, filters)
     return success({
