@@ -65,6 +65,7 @@ async def create_loop(
         thumbnail_s3_key=thumb_key,
         created_by=created_by,
         status="processing",
+        position=await _top_of_arrangement(db),
     )
     if not loop.is_free:
         price_sync_service.ensure_sku(loop, "loop")
@@ -72,6 +73,20 @@ async def create_loop(
     await db.commit()
     await db.refresh(loop)
     return loop
+
+
+async def _top_of_arrangement(db: AsyncSession) -> int | None:
+    """Where a new upload goes in the arranged order: above every arranged loop.
+
+    Unarranged loops are listed after all arranged ones, so once anything is
+    arranged a new upload left unarranged would land at the bottom of the
+    catalogue users browse — on a page nobody reaches. Putting it first is
+    where newest-first would have shown it, and an admin can move it from
+    there. With nothing arranged it stays unarranged, which already lists it
+    first. Positions below 0 are fine: the next arrange renumbers from 0.
+    """
+    top = await db.scalar(select(func.min(Loop.position)))
+    return None if top is None else top - 1
 
 
 async def get_loop(db: AsyncSession, loop_id: uuid.UUID) -> Loop:
