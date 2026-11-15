@@ -3,14 +3,19 @@
 Arranged loops lead in the order given; loops nobody has placed follow, newest
 first, so a fresh upload is listed without anyone having to position it.
 """
+import io
 import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
+from unittest.mock import AsyncMock, patch
+from fastapi import UploadFile
 
 from app.models.loop import Loop, Genre, TempoFeel
 from app.models.user import User, UserRole
+from app.schemas.loop import LoopCreate
+from app.services import loop_service
 from app.services.auth_service import create_access_token, hash_password
 
 _BASE_TIME = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -182,3 +187,88 @@ async def test_only_admins_can_arrange(client, db_session):
 
     assert arrange.status_code == 403
     assert unarrange.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_users_see_the_arrangement_without_asking_for_it(client, db_session):
+    admin = await _user(db_session)
+    listener = await _user(db_session, UserRole.user)
+    a, b, c = await _loops(db_session, admin, "A", "B", "C")
+    await _arrange(client, admin, [a, c])
+
+    resp = await client.get("/api/v1/loops", headers=_auth(listener))
+
+    assert resp.status_code == 200
+    assert [i["title"] for i in resp.json()["data"]["items"]] == ["A", "C", "B"]
+
+
+@pytest.mark.asyncio
+async def test_the_default_listing_is_newest_first_until_anything_is_arranged(client, db_session):
+    admin = await _user(db_session)
+    listener = await _user(db_session, UserRole.user)
+    await _loops(db_session, admin, "A", "B", "C")
+
+    resp = await client.get("/api/v1/loops", headers=_auth(listener))
+
+    assert [i["title"] for i in resp.json()["data"]["items"]] == ["C", "B", "A"]
+
+
+async def _upload(db, owner, title):
+    """A loop through the real upload path, finished as the encode job would."""
+    with patch("app.services.loop_service.validate_wav_upload", new=AsyncMock(return_value=b"wav")), \
+         patch("app.services.loop_service.s3_service.upload_bytes", new=AsyncMock()):
+        loop = await loop_service.create_loop(
+            db,
+            UploadFile(filename="x.wav", file=io.BytesIO(b"RIFF"), headers={"content-type": "audio/wav"}),
+            LoopCreate(
+                title=title, genre=Genre.afrobeat, bpm=90,
+                tempo_feel=TempoFeel.mid, price=Decimal("0"), is_free=True,
+            ),
+            owner.id,
+        )
+    loop.status = "ready"
+    loop.file_s3_key = f"loops/{loop.id}.enc"
+    await db.commit()
+    return str(loop.id)
+
+
+@pytest.mark.asyncio
+async def test_a_new_upload_shows_first_once_loops_are_arranged(client, db_session):
+    """Unarranged loops follow arranged ones, so a new upload left unarranged
+    would sink to the end of the catalogue users browse."""
+    admin = await _user(db_session)
+    listener = await _user(db_session, UserRole.user)
+    a, b, c = await _loops(db_session, admin, "A", "B", "C")
+    await _arrange(client, admin, [b, a])
+
+    await _upload(db_session, admin, "Fresh")
+    await _upload(db_session, admin, "Fresher")
+
+    resp = await client.get("/api/v1/loops", headers=_auth(listener))
+    assert [i["title"] for i in resp.json()["data"]["items"]] == [
+        "Fresher", "Fresh", "B", "A", "C",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_new_upload_can_be_moved_like_any_arranged_loop(client, db_session):
+    admin = await _user(db_session)
+    a, b = await _loops(db_session, admin, "A", "B")
+    await _arrange(client, admin, [a, b])
+    fresh = await _upload(db_session, admin, "Fresh")
+
+    resp = await _arrange(client, admin, [a, b, fresh])
+
+    assert resp.json()["data"]["loop_ids"] == [a, b, fresh]
+    assert await _titles(client, admin) == ["A", "B", "Fresh"]
+
+
+@pytest.mark.asyncio
+async def test_a_new_upload_stays_unarranged_when_nothing_is(client, db_session):
+    admin = await _user(db_session)
+    await _loops(db_session, admin, "A")
+
+    fresh = await _upload(db_session, admin, "Fresh")
+
+    assert (await db_session.get(Loop, uuid.UUID(fresh))).position is None
+    assert await _titles(client, admin) == ["Fresh", "A"]

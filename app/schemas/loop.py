@@ -199,7 +199,7 @@ class LoopOrder(BaseModel):
 
 
 LOOP_SORT_DESCRIPTION = (
-    "`newest` (default), `most_downloaded`, `most_played`, `most_liked`, or "
+    "`newest`, `most_downloaded`, `most_played`, `most_liked`, or "
     "`custom` — the order an admin arranged with `PUT /admin/loops/order`, "
     "unarranged loops after it, newest first."
 )
