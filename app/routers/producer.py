@@ -18,7 +18,7 @@ from app.schemas.drone_pad import (
     DroneResponse,
 )
 from app.schemas.loop import (
-    LOOP_SORT_DESCRIPTION, LoopCreate, LoopFilter, LoopUpdate, LoopResponse,
+    LoopCreate, LoopFilter, LoopUpdate, LoopResponse,
 )
 from app.schemas.producer_analytics import AnalyticsParams, AnalyticsPeriod
 from app.routers.stem_pack_management import build_stem_pack_router
@@ -92,7 +92,7 @@ async def list_producer_loops(
             "carries **any** of them."
         ),
     ),
-    sort: str = Query("newest", description=LOOP_SORT_DESCRIPTION),
+    sort: str = "newest",
     page: int = 1,
     page_size: int = 20,
     db: AsyncSession = Depends(get_db),

@@ -8,7 +8,7 @@ from app.services import (
     loop_service, s3_service, like_service, free_tier_service, monthly_quota_service,
 )
 from app.models.monthly_download_usage import MonthlyQuotaType
-from app.schemas.loop import LOOP_SORT_DESCRIPTION, LoopFilter
+from app.schemas.loop import LoopFilter
 from app.schemas.common import success
 from app.models.loop import Genre, TempoFeel
 import uuid
@@ -33,9 +33,7 @@ router = APIRouter(prefix="/loops", tags=["loops"])
         "Every other parameter is a filter and is ANDed with the search: "
         "`?search=piano&genre=Trap` means a piano match *within* Trap. `tags` and "
         "`time_signature` are the many-valued ones — a loop matches when it carries "
-        "any of the values listed — and both still AND against everything else.\n\n"
-        "Without `sort`, loops come in the order admins arranged them "
-        "(`sort=custom`), with loops nobody has placed after, newest first."
+        "any of the values listed — and both still AND against everything else."
     ),
 )
 async def list_loops(
@@ -69,9 +67,7 @@ async def list_loops(
             "carries **any** of them."
         ),
     ),
-    # The catalogue users browse follows the admins' arrangement unless the
-    # client asks otherwise. With nothing arranged, `custom` is newest first.
-    sort: str = Query("custom", description=LOOP_SORT_DESCRIPTION),
+    sort: str = "newest",
     page: int = 1,
     page_size: int = 20,
     db: AsyncSession = Depends(get_db),

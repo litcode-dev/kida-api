@@ -9,8 +9,7 @@ from app.middleware.rate_limit import limiter
 from app.schemas.user import UserResponse, SuspendRequest
 from app.schemas.common import success
 from app.schemas.loop import (
-    LOOP_SORT_DESCRIPTION, LOOP_STATUSES, LoopAdminResponse, LoopCreate, LoopFilter, LoopOrder,
-    LoopUpdate, LoopResponse,
+    LOOP_STATUSES, LoopAdminResponse, LoopCreate, LoopFilter, LoopUpdate, LoopResponse,
 )
 from app.routers.stem_pack_management import build_stem_pack_router
 from app.schemas.drone_pad import (
@@ -872,9 +871,7 @@ async def platform_analytics(
         "look as though it were deleted.\n\n"
         "Filters match the public listing; `status` narrows to one of "
         f"{', '.join(f'`{s}`' for s in LOOP_STATUSES)}.\n\n"
-        "Each item carries `like_count`, and `sort=most_liked` orders by it. "
-        "`sort=custom` follows the order set with `PUT /admin/loops/order`, and "
-        "each item's `position` is its place in it (null when unarranged)."
+        "Each item carries `like_count`, and `sort=most_liked` orders by it."
     ),
 )
 @limiter.limit("60/minute")
@@ -892,7 +889,7 @@ async def list_all_loops(
         None, description="`ready`, `processing` or `failed`"
     ),
     tags: str | None = Query(None),
-    sort: str = Query("newest", description=LOOP_SORT_DESCRIPTION),
+    sort: str = "newest",
     page: int = 1,
     page_size: int = 20,
     db: AsyncSession = Depends(get_db),
@@ -956,53 +953,6 @@ async def loop_upload_status(
 ):
     loop = await loop_service.get_loop(db, loop_id)
     return success({"id": str(loop.id), "status": loop.status})
-
-
-# Registered before PUT /loops/{loop_id}: that path would otherwise claim
-# "order" as a loop id and refuse it as one.
-@router.put(
-    "/loops/order",
-    summary="Arrange loops",
-    description=(
-        "Send loop ids in the order they should be shown, e.g. after a "
-        "drag-and-drop. Loops already arranged but left out keep their relative "
-        "order after the ones listed, so moving one loop to the top needs only "
-        "that id. Loops never arranged stay after every arranged loop, newest "
-        "first — a new upload shows up without being placed.\n\n"
-        "Listings follow this order with `sort=custom`: the public `/loops`, "
-        "this admin listing and the producer one. Returns every arranged loop "
-        "id, in its new order."
-    ),
-    responses={404: {"description": "An id is not a known loop"}},
-)
-@limiter.limit("60/minute")
-async def arrange_loops(
-    request: Request,
-    body: LoopOrder,
-    db: AsyncSession = Depends(get_db),
-    admin=Depends(require_admin),
-):
-    loop_ids = await loop_service.arrange_loops(db, body.loop_ids)
-    return success({"loop_ids": [str(i) for i in loop_ids]}, "Loops arranged")
-
-
-@router.delete(
-    "/loops/{loop_id}/position",
-    summary="Take a loop out of the arranged order",
-    description=(
-        "The loop goes back among the unarranged ones, after every arranged "
-        "loop, newest first. The other arranged loops keep their order."
-    ),
-)
-@limiter.limit("60/minute")
-async def unarrange_loop(
-    request: Request,
-    loop_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
-    admin=Depends(require_admin),
-):
-    await loop_service.unarrange_loop(db, loop_id)
-    return success(message="Loop removed from the arranged order")
 
 
 @router.put("/loops/{loop_id}")
