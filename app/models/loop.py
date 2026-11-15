@@ -112,6 +112,12 @@ class Loop(PriceSyncMixin, Base):
     download_count: Mapped[int] = mapped_column(Integer, default=0)
     play_count: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(String(20), default="ready", server_default="ready", nullable=False)
+    # Where an admin has placed this loop in the catalogue's arranged order
+    # (`sort=custom`), lowest first. NULL means it has not been arranged, and
+    # such loops follow every arranged one, newest first — so a new upload
+    # needs no position to show up, and arranging a handful of loops does not
+    # mean placing all the others.
+    position: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     # When this loop went into a new-content digest. NULL means it is still
     # waiting to be announced; stamped once so a retried digest cannot email
     # the whole list about the same loop twice.

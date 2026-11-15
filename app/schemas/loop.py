@@ -169,6 +169,40 @@ class LoopAdminResponse(LoopResponse):
     """
 
     status: str
+    # NULL until an admin arranges the loop; see LoopOrder.
+    position: int | None = None
+
+
+# How many loops one arrange request may name. Far more than a drag-and-drop
+# of a curated catalogue front sends, while keeping one request's body bounded.
+MAX_ARRANGED_LOOPS = 1000
+
+
+class LoopOrder(BaseModel):
+    loop_ids: list[uuid.UUID] = Field(
+        min_length=1,
+        max_length=MAX_ARRANGED_LOOPS,
+        description=(
+            "Loop ids in the order they should be shown, e.g. after a "
+            "drag-and-drop. Loops already arranged but left out keep their "
+            "relative order after the ones listed; loops never arranged stay "
+            "after all of them, newest first."
+        ),
+    )
+
+    @field_validator("loop_ids")
+    @classmethod
+    def _no_duplicates(cls, value: list[uuid.UUID]) -> list[uuid.UUID]:
+        if len(set(value)) != len(value):
+            raise ValueError("loop_ids must not repeat an id")
+        return value
+
+
+LOOP_SORT_DESCRIPTION = (
+    "`newest`, `most_downloaded`, `most_played`, `most_liked`, or "
+    "`custom` — the order an admin arranged with `PUT /admin/loops/order`, "
+    "unarranged loops after it, newest first."
+)
 
 
 class LoopFilter(BaseModel):
