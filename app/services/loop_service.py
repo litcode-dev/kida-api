@@ -2,7 +2,7 @@ import uuid
 import re
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import case, func, or_, select
+from sqlalchemy import case, func, or_, select, update
 from app.models.like import Like
 from app.models.loop import Genre, Loop
 from app.models.purchase import Purchase
@@ -159,10 +159,13 @@ async def list_loops(db: AsyncSession, filters: LoopFilter) -> tuple[list[Loop],
     total = await db.scalar(count_q)
 
     sort_map = {
-        "newest": Loop.created_at.desc(),
-        "most_downloaded": Loop.download_count.desc(),
-        "most_played": Loop.play_count.desc(),
-        "most_liked": like_count_expr().desc(),
+        "newest": [Loop.created_at.desc()],
+        "most_downloaded": [Loop.download_count.desc()],
+        "most_played": [Loop.play_count.desc()],
+        "most_liked": [like_count_expr().desc()],
+        # Arranged loops first, in the order an admin put them; the rest after,
+        # newest first, so an upload nobody has placed yet is still listed.
+        "custom": [Loop.position.asc().nulls_last(), Loop.created_at.desc()],
     }
     order_by = []
     if filters.search:
@@ -174,7 +177,7 @@ async def list_loops(db: AsyncSession, filters: LoopFilter) -> tuple[list[Loop],
             # orders within each group, so an explicit most_downloaded is
             # honoured, just downloads-within-relevance.
             order_by.append(case((Loop.time_signature == searched, 0), else_=1))
-    order_by.append(sort_map.get(filters.sort, Loop.created_at.desc()))
+    order_by.extend(sort_map.get(filters.sort, sort_map["newest"]))
     # Counts tie constantly (every unliked loop has 0), and Postgres may order
     # tied rows differently per query — so without a final key a loop could
     # show on two pages, or none.
@@ -183,6 +186,47 @@ async def list_loops(db: AsyncSession, filters: LoopFilter) -> tuple[list[Loop],
     q = q.offset((filters.page - 1) * filters.page_size).limit(filters.page_size)
     result = await db.scalars(q)
     return list(result.all()), total or 0
+
+
+async def arrange_loops(db: AsyncSession, loop_ids: list[uuid.UUID]) -> list[uuid.UUID]:
+    """Put the given loops first in the arranged order, in this order.
+
+    Loops already arranged but not listed keep their relative order after the
+    ones listed, so moving one loop only needs that loop (and whatever should
+    sit above it) sent, not the whole arrangement. Loops never arranged stay
+    unarranged. Returns every arranged loop's id, in its new order.
+    """
+    found = set(await db.scalars(select(Loop.id).where(Loop.id.in_(loop_ids))))
+    unknown = [str(loop_id) for loop_id in loop_ids if loop_id not in found]
+    if unknown:
+        raise NotFoundError(f"Unknown loop id(s): {', '.join(unknown)}")
+
+    listed = set(loop_ids)
+    already_arranged = await db.scalars(
+        select(Loop.id)
+        .where(Loop.position.is_not(None))
+        .order_by(Loop.position, Loop.id)
+    )
+    ordered = list(loop_ids) + [i for i in already_arranged if i not in listed]
+    # Renumbered from 0 every time, which also closes any gaps a loop taken
+    # out with unarrange_loop left behind.
+    await db.execute(
+        update(Loop)
+        .where(Loop.id.in_(ordered))
+        .values(position=case(
+            {loop_id: index for index, loop_id in enumerate(ordered)},
+            value=Loop.id,
+        ))
+    )
+    await db.commit()
+    return ordered
+
+
+async def unarrange_loop(db: AsyncSession, loop_id: uuid.UUID) -> None:
+    """Take a loop out of the arranged order; it goes back to newest-first."""
+    loop = await get_loop(db, loop_id)
+    loop.position = None
+    await db.commit()
 
 
 def like_count_expr():

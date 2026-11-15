@@ -8,7 +8,7 @@ from app.services import (
     loop_service, s3_service, like_service, free_tier_service, monthly_quota_service,
 )
 from app.models.monthly_download_usage import MonthlyQuotaType
-from app.schemas.loop import LoopFilter
+from app.schemas.loop import LOOP_SORT_DESCRIPTION, LoopFilter
 from app.schemas.common import success
 from app.models.loop import Genre, TempoFeel
 import uuid
@@ -67,7 +67,7 @@ async def list_loops(
             "carries **any** of them."
         ),
     ),
-    sort: str = "newest",
+    sort: str = Query("newest", description=LOOP_SORT_DESCRIPTION),
     page: int = 1,
     page_size: int = 20,
     db: AsyncSession = Depends(get_db),
