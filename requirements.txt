@@ -5,6 +5,11 @@ asyncpg==0.30.0
 alembic==1.13.3
 redis==5.2.0
 celery[redis]==5.4.0
+# celery 5.4 accepts any kombu below 6, and kombu 5.6+ refuses redis-py
+# below 6.1 at worker startup ("Redis transport requires redis-py versions
+# 6.1.0 or later"). Pinned so a fresh build cannot pull a kombu that the
+# redis pin above cannot satisfy — upgrade the two together.
+kombu==5.4.2
 boto3==1.35.40
 pycryptodome==3.21.0
 PyJWT[crypto]==2.9.0
