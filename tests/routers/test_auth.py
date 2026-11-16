@@ -545,6 +545,60 @@ async def test_redirect_issues_a_state_cookie(client, monkeypatch):
         get_settings.cache_clear()
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "headers,params,expect_redirect",
+    [
+        ({"sec-fetch-mode": "navigate"}, {}, True),   # address bar / link
+        ({"sec-fetch-mode": "cors"}, {}, False),      # Swagger, fetch, axios
+        ({"sec-fetch-mode": "same-origin"}, {}, False),
+        ({}, {}, True),                               # curl and other plain clients
+        ({}, {"redirect": "false"}, False),
+        ({"sec-fetch-mode": "cors"}, {"redirect": "true"}, True),
+    ],
+)
+async def test_redirect_or_json_by_caller(client, monkeypatch, headers, params, expect_redirect):
+    """A script caller can't follow a redirect to Google (CORS), so it gets the
+    URL as JSON — with the same state cookie, so the callback still matches."""
+    from app.config import get_settings
+
+    get_settings.cache_clear()
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", "test-client-id")
+    try:
+        resp = await client.get(
+            "/api/v1/auth/oauth/google", headers=headers, params=params,
+            follow_redirects=False,
+        )
+        cookie = resp.headers["set-cookie"]
+        state = cookie.split("oauth_state=")[1].split(";")[0]
+        if expect_redirect:
+            assert resp.status_code == 302
+            url = resp.headers["location"]
+        else:
+            assert resp.status_code == 200
+            url = resp.json()["data"]["url"]
+        assert url.startswith("https://accounts.google.com/")
+        assert f"state={state}" in url
+    finally:
+        get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_redirect_unconfigured_is_503(client, monkeypatch):
+    from app.config import get_settings
+
+    get_settings.cache_clear()
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", "")
+    try:
+        resp = await client.get(
+            "/api/v1/auth/oauth/google", headers={"sec-fetch-mode": "cors"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 503
+    finally:
+        get_settings.cache_clear()
+
+
 # --- input bounds ------------------------------------------------------------
 
 @pytest.mark.asyncio
