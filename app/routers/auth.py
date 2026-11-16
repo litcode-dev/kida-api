@@ -278,12 +278,31 @@ async def confirm_deletion_request(
 
 @router.get("/oauth/google")
 @limiter.limit("20/minute")
-async def google_oauth_redirect(request: Request):
-    """Redirect the browser directly to Google's OAuth2 authorization page."""
-    from fastapi.responses import RedirectResponse
+async def google_oauth_redirect(request: Request, redirect: bool | None = None):
+    """Start Google sign-in.
+
+    Opened as a page (address bar, link, ``window.location``) this redirects
+    straight to Google's consent screen. Called from script — Swagger's "Try it
+    out", ``fetch``/axios — a redirect is useless: the browser follows it to
+    accounts.google.com, Google refuses the cross-origin read, and the caller
+    only sees "Failed to fetch". Those callers get ``{"url": ...}`` instead and
+    navigate to it themselves. ``?redirect=true|false`` forces either form.
+    """
+    from fastapi.responses import JSONResponse, RedirectResponse
     state = secrets.token_urlsafe(16)
     url = oauth_service.get_google_auth_url(state)
-    response = RedirectResponse(url=url, status_code=302)
+    if redirect is None:
+        # Browsers send Sec-Fetch-Mode on every request: "navigate" for page
+        # loads, "cors"/"no-cors"/"same-origin" for script. Clients that send
+        # none (curl, older tools) keep the original redirect.
+        fetch_mode = request.headers.get("sec-fetch-mode")
+        redirect = fetch_mode is None or fetch_mode == "navigate"
+    if redirect:
+        response = RedirectResponse(url=url, status_code=302)
+    else:
+        response = JSONResponse(
+            success({"url": url}, "Open this URL in the browser to sign in with Google")
+        )
     response.set_cookie(
         key=OAUTH_STATE_COOKIE,
         value=state,
