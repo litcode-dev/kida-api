@@ -34,6 +34,12 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.deletion_tasks.retry_pending_deletion_propagation",
         "schedule": 300.0,
     },
+    # Email/password sign-ups that never entered their code. The cutoff is
+    # UNVERIFIED_ACCOUNT_TTL_HOURS; running hourly just keeps each batch small.
+    "purge-unverified-accounts": {
+        "task": "app.tasks.scheduled_tasks.purge_unverified_accounts",
+        "schedule": 3600.0,
+    },
     "reconcile-store-prices": {
         "task": "app.tasks.price_sync_tasks.reconcile_store_prices",
         "schedule": float(settings.price_sync_interval_seconds),
