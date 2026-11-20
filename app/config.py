@@ -101,6 +101,11 @@ class Settings(BaseSettings):
     # Hour (UTC) the digest is sent. 17:00 UTC is 18:00 in Lagos — evening,
     # after work, for the audience this catalogue is built for.
     content_digest_hour_utc: int = 17
+    # Email/password accounts that are still unverified this many hours after
+    # registering are deleted by an hourly sweep. The code expires after 15
+    # minutes and can be re-sent, so three days is far longer than any real
+    # sign-up needs, and it frees the address to register again.
+    unverified_account_ttl_hours: int = 72
     # How many addresses go in one provider request. Resend's batch endpoint
     # caps at 100.
     email_batch_size: int = 100

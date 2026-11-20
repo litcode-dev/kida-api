@@ -2,12 +2,23 @@ import uuid
 from datetime import datetime
 from pydantic import BaseModel, EmailStr, Field, field_validator
 from app.models.user import UserRole
+from app.utils.email_domains import is_undeliverable_domain
 
 
 class UserRegister(BaseModel):
     email: EmailStr
     password: str
     full_name: str = Field(max_length=255)
+
+    @field_validator("email")
+    @classmethod
+    def email_can_receive_mail(cls, v: str) -> str:
+        # The account is unusable until a code sent to this address is entered,
+        # so an address on a reserved domain could only ever leave behind an
+        # account that never verifies.
+        if is_undeliverable_domain(v):
+            raise ValueError("Use an email address that can receive mail")
+        return v
 
     @field_validator("password")
     @classmethod

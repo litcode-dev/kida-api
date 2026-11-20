@@ -651,3 +651,19 @@ async def test_registration_survives_a_dead_broker(client, monkeypatch):
     resp = await _register(client, email="broker@test.com")
     assert resp.status_code == 200
     assert resp.json()["data"]["email"] == "broker@test.com"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("email", [
+    "kida-desktop-probe-9f31@example.com",
+    "someone@mail.example.org",
+    "someone@box.test",
+])
+async def test_register_rejects_undeliverable_domains(client, db_session, email):
+    resp = await _register(client, email=email)
+    assert resp.status_code == 422
+    assert "email" in resp.json()["message"]
+    # Refused before anything was written.
+    from sqlalchemy import select
+    from app.models.user import User
+    assert (await db_session.scalars(select(User))).all() == []

@@ -179,6 +179,58 @@ async def register_user(
     return user, code
 
 
+async def purge_unverified_accounts(
+    db: AsyncSession,
+    older_than: timedelta,
+    *,
+    now: datetime | None = None,
+    limit: int = 500,
+) -> dict[str, int]:
+    """Delete email/password accounts that were never verified.
+
+    Narrow on purpose. Only plain ``user`` accounts with a password, no OAuth
+    link and ``is_verified`` still false qualify — anyone who signed in with
+    Google or Apple, or was promoted, is never touched. It removes the users
+    row alone: unlike :func:`delete_user` it does not clear newsletter or
+    download-request rows for the address, because nobody ever proved they own
+    it, and those may belong to the real owner.
+
+    An unverified account cannot log in, so nothing should reference it. If
+    something does anyway, the foreign key refuses the delete and that account
+    is skipped rather than having its related rows removed behind its back.
+    """
+    cutoff = (now or datetime.now(timezone.utc)) - older_than
+    candidates = (
+        await db.scalars(
+            select(User)
+            .where(
+                User.is_verified.is_(False),
+                User.oauth_provider.is_(None),
+                User.password_hash.is_not(None),
+                User.role == UserRole.user,
+                User.created_at < cutoff,
+            )
+            .order_by(User.created_at)
+            .limit(limit)
+        )
+    ).all()
+
+    deleted = skipped = 0
+    for user in candidates:
+        uid = user.id
+        try:
+            async with db.begin_nested():
+                await db.delete(user)
+            deleted += 1
+            # The id only: the address is the personal data being removed.
+            log.info("unverified_account.purged", user_id=str(uid))
+        except IntegrityError:
+            skipped += 1
+            log.warning("unverified_account.purge_skipped_referenced", user_id=str(uid))
+    await db.commit()
+    return {"deleted": deleted, "skipped": skipped}
+
+
 async def verify_email(db: AsyncSession, redis: Redis, email: str, code: str) -> User:
     """Confirm a registration code and mark the account verified."""
     user = await db.scalar(select(User).where(User.email == email))
