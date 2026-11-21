@@ -37,6 +37,21 @@ class AdminSubscriptionDeactivateRequest(BaseModel):
     note: str | None = Field(default=None, max_length=500)
 
 
+class PremiumCheckoutRequest(BaseModel):
+    """Start a card payment for a prepaid period of Kiɗa Premium."""
+
+    plan: PremiumPlan
+    provider: PaymentProvider
+
+
+class PremiumConfirmRequest(BaseModel):
+    """Ask the server to check a premium payment with the gateway now,
+    rather than waiting for its webhook."""
+
+    provider: PaymentProvider
+    payment_reference: str = Field(min_length=1, max_length=255)
+
+
 class ExtraCreditsInitiateRequest(BaseModel):
     provider: PaymentProvider
 

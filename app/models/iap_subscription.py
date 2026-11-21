@@ -21,11 +21,13 @@ class IapSubscriptionStatus(str, enum.Enum):
 
 
 class IapSubscriptionSource(str, enum.Enum):
-    """Where the entitlement came from: a store purchase, RevenueCat, or an admin grant."""
+    """Where the entitlement came from: a store purchase, RevenueCat, an admin
+    grant, or a card payment through one of the web gateways (desktop app)."""
 
     store = "store"
     revenuecat = "revenuecat"
     admin = "admin"
+    web = "web"
 
 
 class PremiumPlan(str, enum.Enum):
