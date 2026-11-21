@@ -27,9 +27,9 @@ from pydantic import ValidationError
 
 def test_user_register_password_too_short():
     with pytest.raises(ValidationError):
-        UserRegister(email="test@example.com", password="short", full_name="Test")
+        UserRegister(email="test@test.com", password="short", full_name="Test")
 
 
 def test_user_register_valid():
-    u = UserRegister(email="test@example.com", password="longpassword", full_name="Test User")
-    assert u.email == "test@example.com"
+    u = UserRegister(email="test@test.com", password="longpassword", full_name="Test User")
+    assert u.email == "test@test.com"

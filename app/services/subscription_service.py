@@ -160,7 +160,13 @@ async def handle_webhook(
         )
         return
 
-    if payment_type == "subscription":
+    if payment_type == "premium":
+        # Prepaid Kiɗa Premium bought by card (desktop app). Has its own
+        # ledger and dedup, so it is not stopped by the Subscription check
+        # above and does not create a Subscription row.
+        from app.services import premium_checkout_service
+        await premium_checkout_service.apply_verified(db, gateway.provider, verified)
+    elif payment_type == "subscription":
         await _process_subscription_webhook(
             db, user_id, verified.reference, verified.amount, gateway.provider
         )

@@ -621,6 +621,7 @@ async def delete_user(
     from app.models.purchase import Purchase
     from app.models.subscription import Subscription
     from app.models.iap_subscription import IapSubscription
+    from app.models.premium_payment import PremiumPayment
     from app.models.loop import Loop
     from app.models.stem_pack import (
         StemPack, Stem, StemPart, StemArrangement, StemArrangementItem, StemArrangementTrack,
@@ -666,6 +667,7 @@ async def delete_user(
     # Kiɗa Premium entitlement (store, RevenueCat or admin grant) would
     # otherwise fail the users delete below with a foreign-key violation.
     await db.execute(delete(IapSubscription).where(IapSubscription.user_id == uid))
+    await db.execute(delete(PremiumPayment).where(PremiumPayment.user_id == uid))
 
     # The address itself is personal data and lives outside the users table too.
     # Both are keyed on the email rather than a user id, and neither is matched

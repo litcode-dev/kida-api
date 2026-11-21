@@ -8,11 +8,12 @@ from app.middleware.auth_middleware import get_current_user
 from app.middleware.rate_limit import limiter
 from app.services import (
     subscription_service, payments,
-    iap_subscription_service, revenuecat_service,
+    iap_subscription_service, revenuecat_service, premium_checkout_service,
 )
 from app.schemas.subscription import (
     SubscriptionInitiateRequest, ExtraCreditsInitiateRequest, SubscriptionResponse,
     IapVerifyRequest, EntitlementResponse,
+    PremiumCheckoutRequest, PremiumConfirmRequest,
 )
 from app.schemas.common import success
 from app.models.purchase import PaymentProvider
@@ -131,6 +132,87 @@ async def get_my_web_subscription(
     if not sub:
         return success(None, "No active subscription")
     return success(SubscriptionResponse.model_validate(sub).model_dump())
+
+
+@router.get(
+    "/premium/plans",
+    summary="Premium plans sold by card",
+    description=(
+        "Prices for the prepaid Kiɗa Premium plans, and which payment providers "
+        "this server can take them through. For clients without an app store, "
+        "such as the desktop app."
+    ),
+)
+async def get_premium_plans():
+    return success({
+        "plans": premium_checkout_service.plans(),
+        "providers": [p.value for p in payments.configured_providers()],
+    })
+
+
+@router.post(
+    "/premium/checkout",
+    summary="Start a card payment for Premium",
+    description=(
+        "Opens a checkout for a prepaid period of Kiɗa Premium (30 days or a "
+        "year; nothing renews on its own). Open `checkout_url` in the browser. "
+        "Paying again while Premium is active adds the new period after the "
+        "current one.\n\n"
+        "Access is granted when the payment is confirmed — by the gateway's "
+        "webhook, or sooner by calling `POST /subscriptions/premium/confirm` "
+        "with the returned `payment_reference`.\n\n"
+        "409 if the account already has an active App Store / Google Play "
+        "subscription (it already works on desktop); 403 if an administrator "
+        "has deactivated the account's Premium."
+    ),
+    responses={
+        401: {"description": "Missing or invalid token"},
+        403: {"description": "Premium deactivated by an administrator"},
+        409: {"description": "Already subscribed through an app store"},
+    },
+)
+@limiter.limit("10/minute")
+async def start_premium_checkout(
+    request: Request,
+    body: PremiumCheckoutRequest,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    data = await premium_checkout_service.start_checkout(db, user, body.plan, body.provider)
+    return success(data)
+
+
+@router.post(
+    "/premium/confirm",
+    summary="Check a Premium payment now",
+    description=(
+        "Asks the gateway about a payment started with "
+        "`/subscriptions/premium/checkout` and, if it has gone through, grants "
+        "the period straight away instead of waiting for the webhook. Safe to "
+        "call repeatedly (e.g. every few seconds while the user is paying, or "
+        "when the app regains focus): a payment is only ever counted once.\n\n"
+        "`paid` is false while the payment is still pending or if it failed. "
+        "404 for a reference that is not one of this user's Premium payments."
+    ),
+    responses={
+        401: {"description": "Missing or invalid token"},
+        404: {"description": "Not one of this user's Premium payments"},
+    },
+)
+@limiter.limit("30/minute")
+async def confirm_premium_payment(
+    request: Request,
+    body: PremiumConfirmRequest,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    paid, sub = await premium_checkout_service.confirm(
+        db, user, body.provider, body.payment_reference
+    )
+    return success({
+        "paid": paid,
+        "entitlement": iap_subscription_service.entitlement(sub),
+    })
 
 
 @router.post("/extras/initiate")
