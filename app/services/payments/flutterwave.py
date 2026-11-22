@@ -61,6 +61,12 @@ TOKEN_REFRESH_MARGIN = 60
 _token_cache: dict[tuple[str, str], tuple[str, float]] = {}
 
 
+def _clean(value: str) -> str:
+    """A key as pasted into an env file or dashboard: drop surrounding
+    whitespace and quotes, which Flutterwave would reject as a wrong key."""
+    return value.strip().strip("\"'").strip()
+
+
 def clear_token_cache() -> None:
     """Forget cached v4 tokens (tests, credential rotation)."""
     _token_cache.clear()
@@ -74,14 +80,22 @@ class FlutterwaveGateway(PaymentGateway):
     def __init__(self) -> None:
         settings = get_settings()
         # v3 secret key: only Checkout (the hosted page) still needs it.
-        self._secret_key = settings.flutterwave_secret_key or settings.flw_secret_key
+        self._secret_key = _clean(settings.flutterwave_secret_key or settings.flw_secret_key)
+        if self._secret_key and not self._secret_key.startswith("FLWSECK"):
+            # v3 secret keys look like FLWSECK-... (live) or FLWSECK_TEST-...
+            # The usual mistake after switching the dashboard to v4 is pasting
+            # the v4 client secret here, which v3 answers with "Invalid
+            # Authorization key".
+            log.warning("flutterwave_secret_key_not_v3_format")
         # Two names for the same dashboard value, kept for older deployments.
-        self._webhook_hash = settings.flutterwave_secret_hash or settings.flw_hash
+        self._webhook_hash = _clean(settings.flutterwave_secret_hash or settings.flw_hash)
         self._base_url = settings.flutterwave_base_url.rstrip("/")
         self._redirect_url = f"{settings.frontend_url}/payments/callback"
         # v4
-        self._client_id = settings.flutterwave_client_id or settings.flw_client_id
-        self._client_secret = settings.flutterwave_client_secret or settings.flw_client_secret
+        self._client_id = _clean(settings.flutterwave_client_id or settings.flw_client_id)
+        self._client_secret = _clean(
+            settings.flutterwave_client_secret or settings.flw_client_secret
+        )
         self._v4_base_url = settings.flutterwave_v4_base_url.rstrip("/")
         self._token_url = settings.flutterwave_token_url
 

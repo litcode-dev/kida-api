@@ -488,3 +488,37 @@ async def test_flutterwave_checkout_still_uses_the_hosted_page(flutterwave_v4):
     assert session.checkout_url == "https://checkout.flutterwave.com/x"
     assert transport.request.call_args.args[1].endswith("/payments")
     transport.post.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_rejected_credentials_are_a_502_not_the_payers_problem(gateways_configured):
+    """Flutterwave answers a bad v3 key with 401 "Invalid Authorization key".
+    That is our misconfiguration, so the payer must not see it as a 400."""
+    transport = _transport(_response(401, {
+        "status": "error", "message": "Invalid Authorization key", "data": None}))
+    with patch("app.services.payments.base.httpx.AsyncClient", return_value=transport):
+        with pytest.raises(AppError) as exc:
+            await payments.get_gateway("flutterwave").create_checkout(
+                amount=Decimal("10"), currency="NGN", reference="ref-1",
+                email="a@b.com", description="Loop", metadata={},
+            )
+    assert exc.value.status_code == 502
+    assert "Authorization" not in str(exc.value.message)
+
+
+@pytest.mark.asyncio
+async def test_flutterwave_key_is_sent_without_stray_quotes_or_spaces(monkeypatch):
+    get_settings.cache_clear()
+    monkeypatch.setenv("FLUTTERWAVE_SECRET_KEY", ' "FLWSECK_TEST-abc-X" \n')
+    try:
+        transport = _transport(_response(200, {
+            "status": "success", "data": {"link": "https://flw/x"}}))
+        with patch("app.services.payments.base.httpx.AsyncClient", return_value=transport):
+            await payments.get_gateway("flutterwave").create_checkout(
+                amount=Decimal("10"), currency="NGN", reference="ref-1",
+                email="a@b.com", description="Loop", metadata={},
+            )
+        headers = transport.request.call_args.kwargs["headers"]
+        assert headers["Authorization"] == "Bearer FLWSECK_TEST-abc-X"
+    finally:
+        get_settings.cache_clear()

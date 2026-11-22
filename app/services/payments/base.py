@@ -168,6 +168,21 @@ class PaymentGateway(ABC):
             )
             raise AppError(f"{self.label} returned an unreadable response", status_code=502)
 
+        if resp.status_code in (401, 403):
+            # The gateway refused *our* credentials (wrong, revoked, or the
+            # wrong kind of key). Nothing the payer did or can fix, so they get
+            # a generic failure and the detail goes to the log for us.
+            log.error(
+                "gateway_credentials_rejected",
+                provider=self.provider.value,
+                status=resp.status_code,
+                url=url,
+                detail=_first_message(data),
+            )
+            raise AppError(
+                f"{self.label} could not process this right now. Please try again.",
+                status_code=502,
+            )
         if resp.status_code >= 400:
             message = _first_message(data) or f"{self.label} rejected the request"
             log.info(
