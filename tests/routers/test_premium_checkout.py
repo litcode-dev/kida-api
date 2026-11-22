@@ -66,14 +66,14 @@ async def _sub(db, user_id, *, source, expires_in, locked=False):
 
 
 def _verified(user, reference, *, plan="monthly", succeeded=True,
-              amount=None, kobo=None, currency="NGN"):
-    kobo = kobo if kobo is not None else (200000 if plan == "monthly" else 2000000)
+              amount=None, cents=None, currency="USD"):
+    cents = cents if cents is not None else (299 if plan == "monthly" else 2999)
     return VerifiedTransaction(
         reference=reference, succeeded=succeeded,
-        amount=amount if amount is not None else Decimal(kobo) / 100,
+        amount=amount if amount is not None else Decimal(cents) / 100,
         currency=currency,
         metadata={"user_id": str(user.id), "type": "premium", "plan": plan,
-                  "amount_kobo": kobo},
+                  "currency": "USD", "amount_minor": cents},
     )
 
 
@@ -103,9 +103,10 @@ async def test_plans_lists_monthly_and_yearly_prices(client):
     resp = await client.get("/api/v1/subscriptions/premium/plans")
     assert resp.status_code == 200
     plans = {p["plan"]: p for p in resp.json()["data"]["plans"]}
-    assert plans["monthly"]["amount"] == "2000"
+    assert plans["monthly"]["amount"] == "2.99"
+    assert plans["monthly"]["currency"] == "USD"
     assert plans["monthly"]["period_days"] == 30
-    assert plans["yearly"]["amount"] == "20000"
+    assert plans["yearly"]["amount"] == "29.99"
     assert plans["yearly"]["period_days"] == 365
     assert plans["yearly"]["product_id"] == "kida.premium.yearly"
 
@@ -127,15 +128,17 @@ async def test_checkout_sends_plan_price_and_user_to_the_gateway(client, db_sess
     data = resp.json()["data"]
     assert data["checkout_url"] == "https://pay.example/abc"
     assert data["payment_reference"] == "ref-1"
-    assert data["amount"] == "20000"
+    assert data["amount"] == "29.99"
+    assert data["currency"] == "USD"
     kwargs = fake.call_args.kwargs
-    assert kwargs["amount"] == Decimal("20000")
-    assert kwargs["currency"] == "NGN"
+    assert kwargs["amount"] == Decimal("29.99")
+    assert kwargs["currency"] == "USD"
     assert kwargs["email"] == user.email
     assert kwargs["metadata"]["type"] == "premium"
     assert kwargs["metadata"]["plan"] == "yearly"
     assert kwargs["metadata"]["user_id"] == str(user.id)
-    assert kwargs["metadata"]["amount_kobo"] == 2000000
+    assert kwargs["metadata"]["currency"] == "USD"
+    assert kwargs["metadata"]["amount_minor"] == 2999
 
 
 @pytest.mark.asyncio
@@ -216,7 +219,8 @@ async def test_confirmed_payment_unlocks_premium(client, db_session):
     assert sub.source == IapSubscriptionSource.web
     payment = await db_session.scalar(select(PremiumPayment))
     assert payment.reference == "ref-ok"
-    assert payment.amount == Decimal("2000.00")
+    assert payment.amount == Decimal("2.99")
+    assert payment.currency == "USD"
 
 
 @pytest.mark.asyncio
@@ -281,7 +285,7 @@ async def test_non_premium_payment_is_not_found(client, db_session):
 async def test_short_payment_is_not_applied(client, db_session):
     user = await _user(db_session)
     resp = await _confirm(
-        client, user, "ref-short", _verified(user, "ref-short", amount=Decimal("100"))
+        client, user, "ref-short", _verified(user, "ref-short", amount=Decimal("1.00"))
     )
     assert resp.json()["data"]["paid"] is False
     assert (await _entitlement(client, user))["active"] is False
@@ -291,8 +295,9 @@ async def test_short_payment_is_not_applied(client, db_session):
 async def test_wrong_currency_is_not_applied(client, db_session):
     user = await _user(db_session)
     resp = await _confirm(
-        client, user, "ref-usd",
-        _verified(user, "ref-usd", amount=Decimal("2000"), currency="USD"),
+        client, user, "ref-ngn",
+        # 2.99 of the wrong currency is not $2.99.
+        _verified(user, "ref-ngn", amount=Decimal("2.99"), currency="NGN"),
     )
     assert resp.json()["data"]["paid"] is False
 
@@ -301,15 +306,44 @@ async def test_wrong_currency_is_not_applied(client, db_session):
 async def test_price_change_after_checkout_does_not_reject_the_payment(
     client, db_session, monkeypatch
 ):
-    # Checkout was opened at ₦2,000; the price has since gone up.
+    # Checkout was opened at $2.99; the price has since gone up.
     get_settings.cache_clear()
-    monkeypatch.setenv("SUBSCRIPTION_MONTHLY_PRICE", "300000")
+    monkeypatch.setenv("PREMIUM_MONTHLY_PRICE_USD_CENTS", "499")
     try:
         user = await _user(db_session)
-        resp = await _confirm(client, user, "ref-old", _verified(user, "ref-old", kobo=200000))
+        resp = await _confirm(client, user, "ref-old", _verified(user, "ref-old", cents=299))
         assert resp.json()["data"]["paid"] is True
     finally:
         get_settings.cache_clear()
+
+
+def _naira_checkout(user, reference, amount):
+    """A payment on a checkout opened before Premium moved to dollars."""
+    return VerifiedTransaction(
+        reference=reference, succeeded=True, amount=amount, currency="NGN",
+        metadata={"user_id": str(user.id), "type": "premium", "plan": "monthly",
+                  "amount_kobo": 200000},
+    )
+
+
+@pytest.mark.asyncio
+async def test_naira_checkout_opened_before_the_switch_is_honoured(client, db_session):
+    user = await _user(db_session)
+    resp = await _confirm(
+        client, user, "ref-ngn-old", _naira_checkout(user, "ref-ngn-old", Decimal("2000"))
+    )
+    assert resp.json()["data"]["paid"] is True
+    payment = await db_session.scalar(select(PremiumPayment))
+    assert payment.currency == "NGN"
+
+
+@pytest.mark.asyncio
+async def test_short_naira_payment_on_an_old_checkout_is_refused(client, db_session):
+    user = await _user(db_session)
+    resp = await _confirm(
+        client, user, "ref-ngn-short", _naira_checkout(user, "ref-ngn-short", Decimal("2.99"))
+    )
+    assert resp.json()["data"]["paid"] is False
 
 
 @pytest.mark.asyncio

@@ -44,19 +44,28 @@ from app.services.payments import VerifiedTransaction
 
 log = structlog.get_logger()
 
-CURRENCY = "NGN"
+CURRENCY = "USD"
 PAYMENT_TYPE = "premium"
+# Checkouts opened before Premium moved to dollars were in naira, in kobo, and
+# carry no currency in their metadata. A payment on one of those is still
+# honoured at the price it was opened at.
+_LEGACY_CURRENCY = "NGN"
 
 # Sources that renew through an app store. Selling a card period on top of one
 # would charge the user twice, and the store's next event would overwrite it.
 _STORE_SOURCES = {IapSubscriptionSource.store, IapSubscriptionSource.revenuecat}
 
 
-def price_kobo(plan: PremiumPlan) -> int:
+def price_cents(plan: PremiumPlan) -> int:
     settings = get_settings()
     if plan is PremiumPlan.yearly:
-        return settings.subscription_yearly_price
-    return settings.subscription_monthly_price
+        return settings.premium_yearly_price_usd_cents
+    return settings.premium_monthly_price_usd_cents
+
+
+def _major(minor: int) -> Decimal:
+    """Cents (or kobo) to dollars (or naira): both currencies have 100 subunits."""
+    return (Decimal(minor) / 100).quantize(Decimal("0.01"))
 
 
 def plans() -> list[dict]:
@@ -65,7 +74,7 @@ def plans() -> list[dict]:
         {
             "plan": plan.value,
             "product_id": PLAN_PRODUCT_IDS[plan],
-            "amount": str(Decimal(price_kobo(plan)) / 100),
+            "amount": str(_major(price_cents(plan))),
             "currency": CURRENCY,
             "period_days": PLAN_PERIODS[plan].days,
         }
@@ -92,10 +101,10 @@ async def start_checkout(
             status_code=409,
         )
 
-    kobo = price_kobo(plan)
+    cents = price_cents(plan)
     reference = str(uuid.uuid4())
     session = await payments.get_gateway(provider).create_checkout(
-        amount=Decimal(kobo) / 100,
+        amount=_major(cents),
         currency=CURRENCY,
         reference=reference,
         email=user.email,
@@ -104,9 +113,10 @@ async def start_checkout(
             "user_id": str(user.id),
             "type": PAYMENT_TYPE,
             "plan": plan.value,
-            # The price at checkout, so a price change between checkout and
-            # payment does not make an honest payment look short.
-            "amount_kobo": kobo,
+            # The price and currency at checkout, so a price change between
+            # checkout and payment does not make an honest payment look short.
+            "currency": CURRENCY,
+            "amount_minor": cents,
             "customer_name": user.full_name,
         },
     )
@@ -114,7 +124,7 @@ async def start_checkout(
         "checkout_url": session.checkout_url,
         "payment_reference": session.reference,
         "plan": plan.value,
-        "amount": str(Decimal(kobo) / 100),
+        "amount": str(_major(cents)),
         "currency": CURRENCY,
     }
 
@@ -168,13 +178,14 @@ async def apply_verified(
     if already is not None:
         return await iap_subscription_service.get_subscription(db, user_id)
 
-    expected = Decimal(_as_int(meta.get("amount_kobo"), price_kobo(plan))) / 100
-    if (verified.currency or "").upper() != CURRENCY or verified.amount < expected:
+    currency, expected = _expected_charge(meta, plan)
+    paid_currency = (verified.currency or "").upper()
+    if paid_currency != currency or verified.amount < expected:
         log.error(
             "premium_payment.amount_mismatch",
             provider=provider.value, reference=verified.reference,
             amount=str(verified.amount), currency=verified.currency,
-            expected=str(expected),
+            expected=str(expected), expected_currency=currency,
         )
         return None
 
@@ -229,7 +240,7 @@ async def apply_verified(
         provider_transaction_id=verified.provider_transaction_id,
         plan=plan.value,
         amount=verified.amount,
-        currency=CURRENCY,
+        currency=paid_currency,
         period_start=start,
         period_end=end,
     ))
@@ -248,6 +259,16 @@ async def apply_verified(
         expires_at=end.isoformat(),
     )
     return sub
+
+
+def _expected_charge(meta: dict, plan: PremiumPlan) -> tuple[str, Decimal]:
+    """The currency and minimum amount a payment must match, as set at checkout."""
+    if "amount_kobo" in meta and "currency" not in meta:
+        # Opened before the switch to dollars.
+        kobo = _as_int(meta.get("amount_kobo"), 0)
+        return _LEGACY_CURRENCY, _major(kobo) if kobo else Decimal("Infinity")
+    currency = str(meta.get("currency") or CURRENCY).upper()
+    return currency, _major(_as_int(meta.get("amount_minor"), price_cents(plan)))
 
 
 def _as_int(value, default: int) -> int:

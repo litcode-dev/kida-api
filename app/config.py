@@ -228,9 +228,11 @@ class Settings(BaseSettings):
 
     # Subscription pricing (amounts in kobo for Paystack; divide by 100 for Flutterwave major units)
     subscription_monthly_price: int = 200000   # ₦2,000 in kobo
-    # Prepaid yearly Kiɗa Premium bought by card (desktop app). About two
-    # months free against twelve monthly payments.
-    subscription_yearly_price: int = 2000000   # ₦20,000 in kobo
+    # Prepaid Kiɗa Premium bought by card (desktop app), charged in US dollars.
+    # In cents. Separate from subscription_monthly_price above, which is the
+    # naira price of the older web checkout.
+    premium_monthly_price_usd_cents: int = 299    # $2.99
+    premium_yearly_price_usd_cents: int = 2999    # $29.99
     ai_extra_credits_price: int = 50000        # ₦500 in kobo
     ai_extra_credits_quantity: int = 5         # slots per extra purchase
     # Extra downloads sold once a user's monthly allowance is spent.
