@@ -4,6 +4,7 @@ One route now serves every provider, so these tests are parameterized across
 all four: whatever is added to the registry next gets the same coverage by
 appearing in PaymentProvider.
 """
+import base64
 import hashlib
 import hmac
 import json
@@ -66,8 +67,9 @@ async def _make_loop(db, user_id):
 def _body_and_signature(provider: str, reference: str):
     """A webhook body this provider would send, signed the way it signs."""
     bodies = {
-        "flutterwave": {"event": "charge.completed",
-                        "data": {"status": "successful", "tx_ref": reference, "id": 1}},
+        "flutterwave": {"type": "charge.completed", "id": "wbk_1",
+                        "data": {"status": "succeeded", "reference": reference,
+                                 "id": "chg_1"}},
         "paystack": {"event": "charge.success", "data": {"reference": reference}},
         "squad": {"Event": "charge_successful", "Body": {"transaction_ref": reference}},
         "stripe": {"type": "checkout.session.completed",
@@ -75,7 +77,9 @@ def _body_and_signature(provider: str, reference: str):
     }
     body = json.dumps(bodies[provider]).encode()
     if provider == "flutterwave":
-        signature = "flw-hash"
+        signature = base64.b64encode(
+            hmac.new(b"flw-hash", body, hashlib.sha256).digest()
+        ).decode()
     elif provider == "paystack":
         signature = hmac.new(b"pk-secret", body, hashlib.sha512).hexdigest()
     elif provider == "squad":
@@ -227,3 +231,46 @@ async def test_providers_endpoint_lists_what_is_configured(client, gateways_conf
     data = resp.json()["data"]
     assert set(data["supported"]) == {p.value for p in PaymentProvider}
     assert set(data["providers"]) == {p.value for p in PaymentProvider}
+
+
+@pytest.mark.asyncio
+async def test_legacy_flutterwave_v3_webhook_still_records_the_purchase(
+    client, db_session, gateways_configured
+):
+    """Until the dashboard is moved to v4, Flutterwave sends the v3 shape with
+    the secret hash itself in `verif-hash`."""
+    user = await _make_user(db_session)
+    loop = await _make_loop(db_session, user.id)
+    reference = f"ref-{uuid.uuid4().hex[:8]}"
+    body = json.dumps({"event": "charge.completed",
+                       "data": {"status": "successful", "tx_ref": reference, "id": 1}}).encode()
+    verified = VerifiedTransaction(
+        reference=reference, succeeded=True, amount=Decimal("10.00"), currency="NGN",
+        metadata={"user_id": str(user.id), "loop_id": str(loop.id)},
+    )
+    gateway_cls = type(payments.get_gateway("flutterwave"))
+    with patch.object(gateway_cls, "verify_transaction",
+                      new=AsyncMock(return_value=verified)) as verify:
+        resp = await client.post(
+            "/api/v1/payments/webhook/flutterwave", content=body,
+            headers={"verif-hash": "flw-hash"},
+        )
+
+    assert resp.status_code == 200
+    verify.assert_awaited_once_with(reference)
+    assert await db_session.scalar(
+        select(Purchase).where(Purchase.payment_reference == reference)
+    ) is not None
+
+
+@pytest.mark.asyncio
+async def test_flutterwave_webhook_with_a_bad_v4_signature_is_rejected(
+    client, gateways_configured
+):
+    body = json.dumps({"type": "charge.completed",
+                       "data": {"status": "succeeded", "reference": "r"}}).encode()
+    resp = await client.post(
+        "/api/v1/payments/webhook/flutterwave", content=body,
+        headers={"flutterwave-signature": base64.b64encode(b"forged").decode()},
+    )
+    assert resp.status_code == 400

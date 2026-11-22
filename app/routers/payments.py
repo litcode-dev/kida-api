@@ -36,7 +36,7 @@ async def payment_webhook(
     working because they match this path.
     """
     gateway = payments.get_gateway(provider)
-    signature = request.headers.get(gateway.signature_header)
+    signature = gateway.signature_from(request.headers)
     payload = await request.body()
     await payment_service.handle_webhook(db, gateway.provider, payload, signature)
     return {"received": True}
