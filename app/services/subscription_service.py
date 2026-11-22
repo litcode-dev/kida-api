@@ -125,24 +125,25 @@ async def handle_webhook(
     payload: bytes,
     signature: str | None,
 ) -> None:
-    """Apply a subscription or credit-pack payment from any provider.
+    """Any provider's payment webhook, through the one shared handler.
 
-    Same shape as the purchase handler: verify the signature, then re-read the
-    transaction from the gateway and act on that answer rather than on the
-    body, so what a payment bought is decided by the gateway's record of it.
+    A gateway like Flutterwave lets a dashboard register only one webhook URL,
+    so this URL and /payments/webhook/... both accept every payment. The shared
+    handler checks the signature, re-reads the transaction from the gateway and
+    hands subscription and credit-pack payments back to
+    :func:`apply_verified_payment`.
     """
-    gateway = payments.get_gateway(provider)
-    if not gateway.verify_webhook(payload, signature):
-        raise AppError("Invalid webhook signature", status_code=400)
+    from app.services import payment_service
+    await payment_service.handle_webhook(db, provider, payload, signature)
 
-    event = gateway.parse_webhook(payload)
-    if not event.is_payment_success or not event.reference:
-        return
 
-    verified = await gateway.verify_transaction(event.reference)
-    if not verified.succeeded:
-        return
+# What checkout puts in metadata["type"] for payments this module applies.
+# Anything else (loops, stem packs, app downloads) is a one-time purchase.
+PAYMENT_TYPES = frozenset({"premium", "subscription", "ai_extras", "download_extras"})
 
+
+async def apply_verified_payment(db: AsyncSession, gateway, verified) -> None:
+    """Apply a subscription or credit-pack payment the gateway has confirmed."""
     # Deduplicate before doing anything, on the gateway's own reference.
     existing = await db.scalar(
         select(Subscription).where(Subscription.payment_reference == verified.reference)

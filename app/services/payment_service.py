@@ -52,7 +52,13 @@ async def handle_webhook(
     payload: bytes,
     signature: str | None,
 ) -> None:
-    """Record a one-time purchase from any provider's webhook.
+    """Act on any provider's payment webhook, whatever the payment bought.
+
+    Both webhook URLs (/payments/webhook/... and /subscriptions/webhook/...)
+    land here, because a gateway like Flutterwave lets a dashboard register
+    only one URL. The verified metadata decides where the payment goes: a
+    subscription, Premium or credit-pack ``type`` to the subscription service,
+    anything else to the one-time purchase and app-download path below.
 
     The body is only ever a notification. Once its signature checks out the
     transaction is re-read from the gateway, and the amount and metadata used
@@ -73,6 +79,11 @@ async def handle_webhook(
             "webhook_transaction_not_successful",
             provider=gateway.provider.value, reference=event.reference,
         )
+        return
+
+    from app.services import subscription_service
+    if verified.metadata.get("type") in subscription_service.PAYMENT_TYPES:
+        await subscription_service.apply_verified_payment(db, gateway, verified)
         return
 
     app_request_id = await app_download_service.find_paid_request_id(

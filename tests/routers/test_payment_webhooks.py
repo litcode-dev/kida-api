@@ -274,3 +274,60 @@ async def test_flutterwave_webhook_with_a_bad_v4_signature_is_rejected(
         headers={"flutterwave-signature": base64.b64encode(b"forged").decode()},
     )
     assert resp.status_code == 400
+
+
+# --- one URL for every payment ----------------------------------------------
+# Flutterwave's dashboard holds a single webhook URL, so whichever of the two
+# routes is registered has to handle what the other one used to.
+
+@pytest.mark.asyncio
+async def test_credit_pack_paid_through_the_payments_url_is_applied(
+    client, db_session, gateways_configured
+):
+    user = await _make_user(db_session)
+    reference = f"ref-{uuid.uuid4().hex[:8]}"
+    body, signature = _body_and_signature("flutterwave", reference)
+    verified = VerifiedTransaction(
+        reference=reference, succeeded=True, amount=Decimal("500"), currency="NGN",
+        metadata={"user_id": str(user.id), "type": "ai_extras", "quantity": "3"},
+    )
+    gateway_cls = type(payments.get_gateway("flutterwave"))
+    with patch.object(gateway_cls, "verify_transaction",
+                      new=AsyncMock(return_value=verified)):
+        resp = await client.post(
+            "/api/v1/payments/webhook/flutterwave", content=body,
+            headers={"flutterwave-signature": signature},
+        )
+
+    assert resp.status_code == 200
+    await db_session.refresh(user)
+    assert user.ai_extra_credits == 3
+    assert await db_session.scalar(
+        select(Purchase).where(Purchase.payment_reference == reference)
+    ) is None
+
+
+@pytest.mark.asyncio
+async def test_loop_bought_through_the_subscriptions_url_is_recorded(
+    client, db_session, gateways_configured
+):
+    user = await _make_user(db_session)
+    loop = await _make_loop(db_session, user.id)
+    reference = f"ref-{uuid.uuid4().hex[:8]}"
+    body, signature = _body_and_signature("flutterwave", reference)
+    verified = VerifiedTransaction(
+        reference=reference, succeeded=True, amount=Decimal("10.00"), currency="NGN",
+        metadata={"user_id": str(user.id), "loop_id": str(loop.id)},
+    )
+    gateway_cls = type(payments.get_gateway("flutterwave"))
+    with patch.object(gateway_cls, "verify_transaction",
+                      new=AsyncMock(return_value=verified)):
+        resp = await client.post(
+            "/api/v1/subscriptions/webhook/flutterwave", content=body,
+            headers={"flutterwave-signature": signature},
+        )
+
+    assert resp.status_code == 200
+    assert await db_session.scalar(
+        select(Purchase).where(Purchase.payment_reference == reference)
+    ) is not None
