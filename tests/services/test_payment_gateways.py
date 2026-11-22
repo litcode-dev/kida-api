@@ -5,6 +5,7 @@ they are tested for real. Checkout and verification are tested through a
 stubbed transport: what matters there is that each adapter sends the shape its
 provider documents and normalizes the answer into the same dataclass.
 """
+import base64
 import hashlib
 import hmac
 import json
@@ -298,3 +299,192 @@ async def test_gateway_outage_is_502_not_500(gateways_configured):
         with pytest.raises(AppError, match="could not process this right now") as exc:
             await payments.get_gateway("paystack").verify_transaction("r")
     assert exc.value.status_code == 502
+
+
+# --- Flutterwave v4 ----------------------------------------------------------
+
+@pytest.fixture
+def flutterwave_v4(monkeypatch, gateways_configured):
+    """v4 client credentials on top of the v3 key the hosted page needs."""
+    from app.services.payments.flutterwave import clear_token_cache
+
+    get_settings.cache_clear()
+    monkeypatch.setenv("FLUTTERWAVE_CLIENT_ID", "client-id")
+    monkeypatch.setenv("FLUTTERWAVE_CLIENT_SECRET", "client-secret")
+    monkeypatch.setenv("FLUTTERWAVE_V4_BASE_URL", "https://v4.flw.test/")
+    clear_token_cache()
+    yield
+    clear_token_cache()
+    get_settings.cache_clear()
+
+
+def _v4_transport(*responses, token_payload=None):
+    """A client whose POST answers the token request and whose request()
+    answers the API calls, in order."""
+    client = _transport(responses[0] if responses else _response())
+    client.request = AsyncMock(side_effect=list(responses))
+    client.post = AsyncMock(return_value=_response(
+        200, token_payload or {"access_token": "tok-1", "expires_in": 600,
+                               "token_type": "Bearer"},
+    ))
+    return client
+
+
+def _v4_signature(body: bytes, secret: str = "flw-hash") -> str:
+    return base64.b64encode(hmac.new(secret.encode(), body, hashlib.sha256).digest()).decode()
+
+
+V4_SUCCESS = {
+    "id": "wbk_W5p6ktwU0jQ8RO4By860",
+    "timestamp": 1735116884019,
+    "type": "charge.completed",
+    "data": {"id": "chg_Hq4oBRTJ4r", "amount": 2500, "currency": "NGN",
+             "meta": {}, "reference": "ref-v4", "status": "succeeded"},
+}
+
+
+def test_flutterwave_v4_hmac_signature(gateways_configured):
+    gateway = payments.get_gateway("flutterwave")
+    body = json.dumps(V4_SUCCESS).encode()
+    assert gateway.verify_webhook(body, _v4_signature(body)) is True
+    assert gateway.verify_webhook(body + b" ", _v4_signature(body)) is False
+    assert gateway.verify_webhook(body, _v4_signature(body, "other-secret")) is False
+
+
+def test_flutterwave_reads_either_signature_header(gateways_configured):
+    gateway = payments.get_gateway("flutterwave")
+    assert gateway.signature_from({"flutterwave-signature": "v4", "verif-hash": "v3"}) == "v4"
+    assert gateway.signature_from({"verif-hash": "v3"}) == "v3"
+    assert gateway.signature_from({}) is None
+
+
+def test_flutterwave_v4_webhook_parses(gateways_configured):
+    event = payments.get_gateway("flutterwave").parse_webhook(json.dumps(V4_SUCCESS).encode())
+    assert event.is_payment_success is True
+    assert event.reference == "ref-v4"
+    assert event.provider_transaction_id == "chg_Hq4oBRTJ4r"
+    assert event.raw_event == "charge.completed"
+
+
+@pytest.mark.parametrize("status", ["pending", "failed", "voided"])
+def test_flutterwave_v4_unsuccessful_charge_is_not_a_success(gateways_configured, status):
+    body = {**V4_SUCCESS, "data": {**V4_SUCCESS["data"], "status": status}}
+    event = payments.get_gateway("flutterwave").parse_webhook(json.dumps(body).encode())
+    assert event.is_payment_success is False
+
+
+@pytest.mark.asyncio
+async def test_flutterwave_v4_verifies_by_reference(flutterwave_v4):
+    transport = _v4_transport(_response(200, {
+        "status": "success",
+        "data": [
+            {"id": "chg_old", "reference": "ref-1", "status": "failed",
+             "amount": 2500.5, "currency": "NGN", "meta": {}},
+            {"id": "chg_new", "reference": "ref-1", "status": "succeeded",
+             "amount": 2500.5, "currency": "NGN", "meta": {"user_id": "u1"}},
+        ],
+    }))
+    with patch("app.services.payments.base.httpx.AsyncClient", return_value=transport):
+        verified = await payments.get_gateway("flutterwave").verify_transaction("ref-1")
+
+    assert verified.succeeded is True
+    assert verified.amount == Decimal("2500.5")
+    assert verified.metadata == {"user_id": "u1"}
+    assert verified.provider_transaction_id == "chg_new"
+
+    token_call = transport.post.call_args
+    assert token_call.kwargs["data"] == {
+        "client_id": "client-id", "client_secret": "client-secret",
+        "grant_type": "client_credentials",
+    }
+    method, url = transport.request.call_args.args
+    assert (method, url) == ("GET", "https://v4.flw.test/charges")
+    assert transport.request.call_args.kwargs["params"] == {"reference": "ref-1"}
+    headers = transport.request.call_args.kwargs["headers"]
+    assert headers["Authorization"] == "Bearer tok-1"
+    assert 12 <= len(headers["X-Trace-Id"]) <= 255 and headers["X-Trace-Id"].isalnum()
+
+
+@pytest.mark.asyncio
+async def test_flutterwave_v4_never_takes_another_references_charge(flutterwave_v4, monkeypatch):
+    """If the filter were ignored, the first charge listed must not count."""
+    monkeypatch.setenv("FLUTTERWAVE_SECRET_KEY", "")
+    get_settings.cache_clear()
+    transport = _v4_transport(_response(200, {"status": "success", "data": [
+        {"id": "chg_x", "reference": "someone-else", "status": "succeeded", "amount": 1},
+    ]}))
+    with patch("app.services.payments.base.httpx.AsyncClient", return_value=transport):
+        verified = await payments.get_gateway("flutterwave").verify_transaction("ref-1")
+    assert verified.succeeded is False
+    assert verified.reference == "ref-1"
+
+
+@pytest.mark.asyncio
+async def test_flutterwave_falls_back_to_v3_when_v4_has_no_charge(flutterwave_v4):
+    transport = _v4_transport(
+        _response(200, {"status": "success", "data": []}),
+        _response(200, {"status": "success", "data": {
+            "status": "successful", "tx_ref": "ref-1", "amount": 10, "currency": "USD",
+            "meta": {"user_id": "u1"}, "id": 77}}),
+    )
+    with patch("app.services.payments.base.httpx.AsyncClient", return_value=transport):
+        verified = await payments.get_gateway("flutterwave").verify_transaction("ref-1")
+    assert verified.succeeded is True
+    assert verified.currency == "USD"
+    v3_call = transport.request.call_args_list[1]
+    assert v3_call.args[1].endswith("/transactions/verify_by_reference")
+    assert v3_call.kwargs["headers"] == {"Authorization": "Bearer flw-secret"}
+
+
+@pytest.mark.asyncio
+async def test_flutterwave_v4_token_is_cached(flutterwave_v4):
+    listing = {"status": "success", "data": []}
+    transport = _v4_transport(_response(200, listing), _response(200, listing))
+    gateway_v4_only = {"FLUTTERWAVE_SECRET_KEY": ""}
+    with patch.dict("os.environ", gateway_v4_only):
+        get_settings.cache_clear()
+        with patch("app.services.payments.base.httpx.AsyncClient", return_value=transport):
+            await payments.get_gateway("flutterwave").verify_transaction("a")
+            await payments.get_gateway("flutterwave").verify_transaction("b")
+    get_settings.cache_clear()
+    assert transport.post.await_count == 1
+    assert transport.request.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_flutterwave_v4_bad_credentials_are_502(flutterwave_v4):
+    transport = _v4_transport(_response(200, {}))
+    transport.post = AsyncMock(return_value=_response(
+        401, {"error": "unauthorized_client", "error_description": "Invalid client secret"}))
+    with patch("app.services.payments.base.httpx.AsyncClient", return_value=transport):
+        with pytest.raises(AppError) as exc:
+            await payments.get_gateway("flutterwave").verify_transaction("ref-1")
+    assert exc.value.status_code == 502
+    transport.request.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_flutterwave_v4_verifies_by_charge_id(flutterwave_v4):
+    transport = _v4_transport(_response(200, {"status": "success", "data": {
+        "id": "chg_1", "reference": "ref-1", "status": "succeeded", "amount": 5,
+        "currency": "USD", "meta": {"type": "premium"}}}))
+    with patch("app.services.payments.base.httpx.AsyncClient", return_value=transport):
+        verified = await payments.get_gateway("flutterwave").verify_transaction_by_id("chg_1")
+    assert verified.succeeded is True
+    assert verified.reference == "ref-1"
+    assert transport.request.call_args.args == ("GET", "https://v4.flw.test/charges/chg_1")
+
+
+@pytest.mark.asyncio
+async def test_flutterwave_checkout_still_uses_the_hosted_page(flutterwave_v4):
+    """v4 has no hosted page, so checkout keeps using v3 Checkout."""
+    transport = _v4_transport(_response(200, {
+        "status": "success", "data": {"link": "https://checkout.flutterwave.com/x"}}))
+    with patch("app.services.payments.base.httpx.AsyncClient", return_value=transport):
+        session = await payments.get_gateway("flutterwave").create_checkout(
+            amount=Decimal("10"), currency="USD", reference="ref-1",
+            email="a@b.com", description="Premium", metadata={},
+        )
+    assert session.checkout_url == "https://checkout.flutterwave.com/x"
+    assert transport.request.call_args.args[1].endswith("/payments")
+    transport.post.assert_not_awaited()

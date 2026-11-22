@@ -45,7 +45,20 @@ class Settings(BaseSettings):
     flutterwave_public_key: str = ""
     flutterwave_secret_key: str = ""
     flutterwave_secret_hash: str = ""
-    flutterwave_base_url: str = "https://api.flutterwave.com/v3"
+    flutterwave_base_url: str = "https://api.flutterwave.com/v3"  # v3: hosted Checkout
+    # Flutterwave v4 (OAuth 2.0 client credentials). With these set, payments
+    # are verified through v4; the hosted Checkout page still uses the v3 key
+    # above because v4 has no hosted equivalent. FLW_CLIENT_ID/FLW_CLIENT_SECRET
+    # are the names Flutterwave's own docs use.
+    flutterwave_client_id: str = ""
+    flutterwave_client_secret: str = ""
+    flw_client_id: str = ""
+    flw_client_secret: str = ""
+    # Sandbox: https://developersandbox-api.flutterwave.com
+    flutterwave_v4_base_url: str = "https://f4bexperience.flutterwave.com"
+    flutterwave_token_url: str = (
+        "https://idp.flutterwave.com/realms/flutterwave/protocol/openid-connect/token"
+    )
 
     # Paystack
     paystack_secret_key: str = ""

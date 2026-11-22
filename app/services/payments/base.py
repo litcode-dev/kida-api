@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from typing import ClassVar
@@ -109,6 +110,14 @@ class PaymentGateway(ABC):
         """Ask the gateway what really happened to a transaction."""
 
     # -- webhooks ------------------------------------------------------------
+
+    def signature_from(self, headers: Mapping[str, str]) -> str | None:
+        """The webhook signature out of a request's headers.
+
+        Most gateways use one header; one that moved header between API
+        versions overrides this to read both.
+        """
+        return headers.get(self.signature_header)
 
     @abstractmethod
     def verify_webhook(self, payload: bytes, signature: str | None) -> bool:

@@ -360,7 +360,7 @@ async def subscription_payment_webhook(
     one of the card gateways behind the factory.
     """
     gateway = payments.get_gateway(provider)
-    signature = request.headers.get(gateway.signature_header)
+    signature = gateway.signature_from(request.headers)
     payload = await request.body()
     await subscription_service.handle_webhook(db, gateway.provider, payload, signature)
     return {"received": True}
